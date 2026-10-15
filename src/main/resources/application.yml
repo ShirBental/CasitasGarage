@@ -6,3 +6,11 @@ server:
   # Never listen on a public interface: 'tailscale serve' publishes Casita to the tailnet.
   address: 127.0.0.1
   port: 8080
+
+casita:
+  # Which door Casita talks to. 'simulated' until the Meross client lands.
+  door: simulated
+  garage:
+    travel-time: 10s        # how long our door takes to fully open or close
+    verify-grace: 2s        # extra wait before checking it got there
+    allow-remote-close: true
