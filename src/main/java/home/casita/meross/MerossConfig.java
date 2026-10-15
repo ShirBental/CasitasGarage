@@ -1,12 +1,14 @@
 package home.casita.meross;
 
+import java.time.Clock;
+
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import home.casita.garage.DoorDevice;
 
-/** Wires the Meross door in when {@code casita.door=meross}. */
+/** Wires the Meross door in when {@code casita.door=meross}. Commands stay off unless enabled. */
 @Configuration
 @ConditionalOnProperty(name = "casita.door", havingValue = "meross")
 class MerossConfig {
@@ -17,12 +19,12 @@ class MerossConfig {
     }
 
     @Bean
-    MerossMqttTransport merossTransport(MerossCloudApi api, MerossProperties properties) {
-        return new MerossMqttTransport(api, properties);
+    MerossSession merossSession(MerossCloudApi api, MerossProperties properties, Clock clock) {
+        return new MerossSession(api, new HiveMqConnector(), properties, clock);
     }
 
     @Bean
-    DoorDevice merossDoor(MerossMqttTransport transport, MerossProperties properties) {
-        return new MerossDoor(transport, properties.deviceUuid(), properties.channel());
+    DoorDevice merossDoor(MerossSession session, MerossProperties properties) {
+        return new MerossDoor(session, properties.deviceUuid(), properties.channel(), properties.commandsEnabled());
     }
 }

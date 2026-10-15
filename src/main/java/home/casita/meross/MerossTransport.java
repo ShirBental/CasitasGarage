@@ -3,19 +3,24 @@ package home.casita.meross;
 import java.util.List;
 import java.util.Map;
 
+import home.casita.garage.DoorCommandRejectedException;
 import home.casita.garage.DoorException;
 
-/** How {@link MerossDoor} reaches the opener. The real one goes through Meross's cloud. */
+/** How {@link MerossDoor} reaches the opener. The real one is {@link MerossSession}. */
 interface MerossTransport {
 
     /** Devices on the Meross account. */
     List<MerossDeviceInfo> devices() throws DoorException;
 
+    /** Reads from a device (method {@code GET}). Safe to repeat. Returns the reply payload. */
+    Map<String, Object> get(String deviceUuid, String namespace) throws DoorException;
+
     /**
-     * Sends one signed message to a device and returns the reply's payload.
+     * Sends one {@code SET} to a device, at most once, never retried. A returned payload only
+     * means the device answered; it doesn't prove anything physical happened.
      *
-     * @throws DoorException if it can't be sent, the device doesn't answer in time, or answers with an error
+     * @throws DoorCommandRejectedException if nothing was sent
+     * @throws DoorException                if the outcome is unknown
      */
-    Map<String, Object> request(String deviceUuid, String method, String namespace, Map<String, Object> payload)
-            throws DoorException;
+    Map<String, Object> setOnce(String deviceUuid, String namespace, Map<String, Object> payload) throws DoorException;
 }

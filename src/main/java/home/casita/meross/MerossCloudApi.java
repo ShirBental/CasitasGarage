@@ -5,6 +5,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -13,12 +14,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import home.casita.garage.DoorException;
+import home.casita.meross.MerossException.Kind;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Meross's HTTP API: sign in and list devices. Unofficial and reverse-engineered by the
- * community (MerossIot), so every failure surfaces as a clear {@link DoorException}.
+ * community (see docs/MEROSS.md), so every failure surfaces as a classified
+ * {@link MerossException}. Never logs; callers log without credentials.
  *
  * <p>Every request is {@code {"params": base64(json), "timestamp": ms, "nonce": 16 chars,
  * "sign": md5(secret + timestamp + nonce + params)}}, and every reply is
@@ -29,7 +31,11 @@ class MerossCloudApi {
     static final String LOGIN_PATH = "/v1/Auth/signIn";
     static final String DEVICES_PATH = "/v1/Device/devList";
 
+    static final int STATUS_WRONG_REGION = 1030;
+    static final int STATUS_MFA_REQUIRED = 1033;
+
     private static final String APP_VERSION = "0.1.0";
+    private static final int MAX_INFO_LENGTH = 120;
 
     private final String defaultBaseUrl;
     private final Duration timeout;
@@ -43,9 +49,9 @@ class MerossCloudApi {
         this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
     }
 
-    MerossCredentials login(String email, String password) throws DoorException {
+    MerossCredentials login(String email, String password) throws MerossException {
         if (email == null || email.isBlank() || password == null || password.isBlank()) {
-            throw new DoorException("Meross email and password aren't configured");
+            throw new MerossException(Kind.AUTH, "Meross email and password aren't configured");
         }
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("email", email);
@@ -67,32 +73,35 @@ class MerossCloudApi {
             int status = number(reply.get("apiStatus"));
             Map<String, Object> data = map(reply.get("data"));
             if (status == 0) {
-                return new MerossCredentials(
-                        string(data.get("userid")),
-                        string(data.get("key")),
-                        string(data.get("token")),
-                        stripSlash(data.get("domain") == null ? baseUrl : string(data.get("domain"))),
-                        string(data.get("mqttDomain")));
+                String userId = string(data.get("userid"));
+                String key = string(data.get("key"));
+                String mqttHost = string(data.get("mqttDomain"));
+                if (isBlank(userId) || isBlank(key) || isBlank(mqttHost)) {
+                    throw new MerossException(Kind.PROTOCOL, "Meross sign-in reply is missing userid, key or mqttDomain");
+                }
+                return new MerossCredentials(userId, key, string(data.get("token")),
+                        stripSlash(data.get("domain") == null ? baseUrl : string(data.get("domain"))), mqttHost);
             }
-            // Wrong region: Meross says which server to use. Retry there once.
+            // Wrong region: Meross says which server to use. Try there once.
             Object domain = data.get("domain");
-            if (status == 1030 && domain != null && attempt == 0) {
+            if (status == STATUS_WRONG_REGION && domain != null && attempt == 0) {
                 baseUrl = stripSlash(string(domain));
                 continue;
             }
-            if (status == 1033) {
-                throw new DoorException("The Meross account asks for a two-factor code, which Casita doesn't support");
+            if (status == STATUS_MFA_REQUIRED) {
+                throw new MerossException(Kind.AUTH, "The Meross account asks for a two-factor code, which Casita doesn't support");
             }
-            throw new DoorException("Meross sign-in failed (apiStatus " + status + "): " + reply.get("info"));
+            throw new MerossException(Kind.AUTH, "Meross sign-in refused (apiStatus " + status + "): " + info(reply));
         }
-        throw new DoorException("Meross kept redirecting the sign-in");
+        throw new MerossException(Kind.PROTOCOL, "Meross redirected the sign-in more than once");
     }
 
-    List<MerossDeviceInfo> listDevices(MerossCredentials creds) throws DoorException {
+    List<MerossDeviceInfo> listDevices(MerossCredentials creds) throws MerossException {
         Map<String, Object> reply = post(creds.apiBaseUrl(), DEVICES_PATH, Map.of(), creds.token());
         int status = number(reply.get("apiStatus"));
         if (status != 0) {
-            throw new DoorException("Meross device list failed (apiStatus " + status + "): " + reply.get("info"));
+            // Which codes mean "token expired" isn't documented: treat any refusal as an auth problem.
+            throw new MerossException(Kind.AUTH, "Meross device list refused (apiStatus " + status + "): " + info(reply));
         }
         List<MerossDeviceInfo> devices = new ArrayList<>();
         if (reply.get("data") instanceof List<?> list) {
@@ -106,7 +115,7 @@ class MerossCloudApi {
     }
 
     private Map<String, Object> post(String baseUrl, String path, Map<String, Object> params, String token)
-            throws DoorException {
+            throws MerossException {
         String encodedParams = Base64.getEncoder().encodeToString(json.writeValueAsBytes(params));
         long timestamp = System.currentTimeMillis();
         String nonce = MerossCrypto.newNonce();
@@ -130,20 +139,28 @@ class MerossCloudApi {
         HttpResponse<byte[]> response;
         try {
             response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (HttpTimeoutException e) {
+            throw new MerossException(Kind.TIMEOUT, "Meross didn't answer " + path + " within " + timeout.toSeconds() + "s", e);
         } catch (IOException e) {
-            throw new DoorException("Can't reach Meross: " + e.getMessage(), e);
+            throw new MerossException(Kind.UNAVAILABLE, "Can't reach Meross for " + path + ": " + e.getClass().getSimpleName(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new DoorException("Interrupted while calling Meross", e);
+            throw new MerossException(Kind.UNAVAILABLE, "Interrupted while calling Meross", e);
         }
         if (response.statusCode() != 200) {
-            throw new DoorException("Meross answered HTTP " + response.statusCode() + " for " + path);
+            throw new MerossException(Kind.UNAVAILABLE, "Meross answered HTTP " + response.statusCode() + " for " + path);
         }
         try {
             return map(json.readValue(response.body(), Map.class));
         } catch (RuntimeException e) {
-            throw new DoorException("Meross sent something that isn't JSON for " + path, e);
+            throw new MerossException(Kind.PROTOCOL, "Meross sent something that isn't JSON for " + path, e);
         }
+    }
+
+    /** Meross's own message, shortened. It's text from Meross, never our request. */
+    private static String info(Map<String, Object> reply) {
+        String info = String.valueOf(reply.get("info"));
+        return info.length() > MAX_INFO_LENGTH ? info.substring(0, MAX_INFO_LENGTH) + "…" : info;
     }
 
     @SuppressWarnings("unchecked")
@@ -153,12 +170,22 @@ class MerossCloudApi {
 
     static int number(Object o) {
         if (o instanceof Number n) return n.intValue();
-        if (o instanceof String s && !s.isBlank()) return Integer.parseInt(s.trim());
+        if (o instanceof String s && !s.isBlank()) {
+            try {
+                return Integer.parseInt(s.trim());
+            } catch (NumberFormatException e) {
+                return -1;
+            }
+        }
         return -1;
     }
 
     static String string(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 
     private static String stripSlash(String url) {
