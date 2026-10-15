@@ -8,8 +8,15 @@ server:
   port: 8080
 
 casita:
-  # Which door Casita talks to. 'simulated' until the Meross client lands.
+  # Which door Casita talks to: 'simulated' (pretend door) or 'meross' (the real one).
   door: simulated
+  meross:
+    api-base-url: https://iotx-us.meross.com
+    # email / password: from the environment for now (CASITA_MEROSS_EMAIL, CASITA_MEROSS_PASSWORD);
+    # they move to Parameter Store next. Never put them in this file.
+    # device-uuid: only needed if the account has more than one garage opener.
+    channel: 0
+    request-timeout: 8s
   garage:
     travel-time: 10s        # how long our door takes to fully open or close
     verify-grace: 2s        # extra wait before checking it got there
