@@ -56,17 +56,50 @@ Notes:
   6 months** (no sliding renewal, so a stolen cookie can't keep itself alive).
 - The cookie is `HttpOnly`, `Secure` and `SameSite=Strict`, and is signed with HMAC using a
   per-user secret from Parameter Store.
-- **Revoking access:** remove the person's passkeys or rotate their secret, and they're
-  signed out right away. Rotating every user's secret signs everyone out (the panic button).
+- Server-side sessions (after a passkey sign-in) live in memory. A restart ends them; the
+  remember-me cookie signs the person back in.
 - CSRF protection stays on (Spring default). The web app sends the CSRF token on POSTs.
+
+### Revoking access
+Deleting a passkey **does not** sign anyone out on its own: an existing session and a
+remember-me cookie don't depend on the passkey after sign-in. So revoking is one operation
+that cuts off every kind of credential:
+
+| Credential | Lives in | Cut off by | Takes effect |
+|---|---|---|---|
+| Passkey | `/casita/passkeys/<id>` + in-memory cache | delete the parameter and the cache entry | next sign-in |
+| Server-side session | Casita's memory | Spring Security `SessionRegistry`: expire all of the person's sessions | next request |
+| Remember-me cookie | the phone (HMAC, per-user secret) | rotate the person's secret in Parameter Store and in the cache; the cookie is checked against the cached secret on every use | next request |
+| Shortcut token | `/casita/shortcut-tokens/<id>` + cache | delete the parameter and the cache entry | next request |
+| Invite (one-time token) | Casita's memory | delete it (it also expires after 10 minutes) | at once |
+
+- **Revoke through Casita.** `casita revoke hubby` (or `--device <credentialId>`) talks to
+  the running service on localhost. In one operation Casita writes Parameter Store and
+  updates its caches (write-through), expires sessions, rotates the secret and deletes
+  Shortcut tokens. That is what makes it immediate.
+- **Remember-me is per person, not per device.** Removing one phone rotates that person's
+  secret, which signs out all their devices; they sign back in with their passkey (Face ID
+  once). Accepted trade-off: per-device remember-me would need tokens rewritten on every use.
+- **Changes made outside Casita** (AWS console or CLI) are picked up by a refresh of all
+  caches every 60 seconds, so they take effect within a minute. A refresh replaces the
+  cache as a whole; a failed refresh keeps the last good cache and logs an error. The
+  CloudTrail alarm on `/casita/*` writes flags these changes.
+- **Panic button:** `casita revoke --all` rotates every secret, expires every session and
+  deletes every Shortcut token. Passkeys stay, so the family can sign back in. If the server
+  itself may be compromised, stop the instance and remove its IAM role.
+- **One instance.** Caches and sessions are in one process. Running more than one Casita
+  would need shared invalidation, which is out of scope.
+- Build step 6 implements this. Its tests must show: an expired session is rejected, a
+  cookie signed with a rotated secret is rejected, a deleted Shortcut token is rejected, and
+  a passkey deleted outside Casita stops working after the next refresh.
 
 ### Moving the door
 - **Decided: no extra Face ID per action.** A signed-in session can open and close.
   The iPhone's own lock screen (Face ID) is the guard.
 - Risk we accept: anyone holding an *unlocked* phone, or a copy of the cookie, can move the
   door until the session ends.
-- What limits it: hold-to-open in the UI, a push notification on every move, instant
-  revocation, and the safety rules in section 5.
+- What limits it: hold-to-open in the UI, a push notification on every move, revocation
+  (below), and the safety rules in section 5.
 
 ### Shortcuts and Siri
 - Shortcuts can't use passkeys. They get a per-phone **status-only token** (random 256-bit;
@@ -88,7 +121,9 @@ Notes:
 /casita/shortcut-tokens/<id>       SecureString   JSON: user, SHA-256 hash, scope
 ```
 
-- Loaded once at startup with `GetParametersByPath` and cached in memory. Sign-ins never call AWS.
+- Loaded at startup with `GetParametersByPath` and cached in memory, so sign-ins don't call
+  AWS. Casita's own changes update the cache as they're written; everything is refreshed
+  every 60 seconds to pick up changes made elsewhere (see *Revoking access*).
 - Written only on enroll, remove or rotate, plus `lastUsedAt` at most once a day.
 - One parameter per passkey keeps each well under the 4 KB standard-tier limit.
 - Invites (one-time tokens) live in memory only.
@@ -102,19 +137,57 @@ Notes:
 
 ## 5. Garage safety rules
 
-The opener only "presses the button", so the rules live in `GarageService`:
+### What Casita can and can't know
+`DoorDevice` spells out the contract. In short:
+- **One binary sensor.** "Closed" means fully closed. "Not closed" means anything else:
+  opening, closing, stopped partway or fully open. There's no position, no motion signal
+  and no obstruction signal.
+- **The command may act like a button press** (a toggle), so it isn't idempotent. Sending
+  "open" to an open door, or anything to a moving door, may stop or reverse it.
+- **A failed command may still have run.** Only a failure that guarantees nothing was sent
+  (`DoorCommandRejectedException`) means nothing moved. Anything else is an unknown outcome.
+- **The wall button and remote are invisible** except through sensor changes Casita
+  happens to read.
 
-1. **Read the sensor first.** If the door's position is unknown, refuse and change nothing.
-2. **Open and close are separate commands.** "Open" never closes; "close" never opens.
-   Asking to open an open door is a no-op.
-3. **One move at a time.** Ignore commands while the door is moving (door travel time is
-   configurable, ~20 s).
-4. **Check afterwards.** After the travel time, read the sensor again. If the door didn't
-   get where it was going, log it and push "The garage door didn't close. Something may
-   be in the way."
-5. **Remote close can be switched off** in configuration.
-6. **Fail safe.** Any error means the door doesn't move. The wall button and remote always
-   keep working.
+### Rules (`GarageService`)
+1. **Read first.** If the sensor can't be read, send nothing.
+2. **Only toward the opposite.** Send "open" only when the sensor reports closed, and
+   "close" only when it reports not closed. Never send a command toward the state the
+   sensor already reports.
+3. **One movement at a time, until checked.** After a command, nothing else is sent until
+   Casita has checked the sensor, at travel time + grace (10 s + 2 s; a close finishes early
+   once the sensor reports closed). If that check is overdue when a new request arrives, it
+   runs first, so a failure is never skipped or blamed on a newer movement.
+4. **Unknown outcomes aren't failures.** If a command fails without a guarantee that
+   nothing was sent, Casita says it isn't sure, assumes the door may be moving, blocks
+   other commands and checks after the travel time ("it went through after all" or "the
+   door is still closed"). It never says "nothing moved" without that guarantee, and never
+   retries on its own.
+5. **Let a "not closed" door settle.** Casita sends "close" only after it has watched the
+   sensor report "not closed" for at least the travel time. This covers the wall button,
+   the remote, and a Casita restart while the door may be moving. "Closed" is the only
+   reading that proves the door's position, so "open" from closed is allowed at once.
+6. **Say what happened.** Every command and check is recorded. Moves, unconfirmed commands
+   and failed checks are pushed to the family.
+7. **Remote close can be switched off** in configuration.
+8. **Bad configuration stops startup.** Travel time must be positive and the grace period
+   zero or more.
+9. **Physical safety is the opener's job.** Its photo-eye sensors and auto-reverse stop the
+   door for people, pets and cars. The wall button and remote keep working without Casita.
+
+### Known limitations
+These rules don't solve:
+- If someone starts *closing* the door with the wall button while it was settled open,
+  Casita can't tell. A "close" from Casita then acts as a second press and may stop the
+  door partway; the check reports it as not closed.
+- "Open" on a door stopped partway answers "already open".
+- In the instant before the sensor trips, a door that has started opening still reads closed.
+- Casita only notices outside movement when it reads the sensor. If nobody has looked, the
+  first "close" after an outside open waits the travel time.
+- State is in memory. A restart during a movement loses its check: rule 5 protects the next
+  close, but an "open" in flight at restart isn't reported.
+- The tests run against a fake door. They show the rules are implemented, not that the real
+  opener behaves as assumed. See *Hardware prerequisites* in section 6.
 
 ## 6. Meross cloud
 
@@ -127,6 +200,28 @@ The opener only "presses the button", so the rules live in `GarageService`:
   behind a `DoorDevice` interface so it's easy to fix or replace.
 - *Open:* does our Meross account have two-factor login turned on?
 - Re-login when the token expires; reconnect MQTT with backoff.
+
+### Hardware prerequisites
+Before switching Casita to the real door (`casita.door: meross`), check these on our MSG100
+with someone at the garage watching. Until then they are **assumptions, not guarantees**,
+and the rules in section 5 assume the worst case:
+
+1. **Command semantics.** Does `SET open: 1` on an already-open door do nothing, or press
+   the button? `open: 0` on a closed door? Any command while the door is moving?
+2. **Sensor.** Does "closed" mean fully closed and nothing else? How soon after the door
+   starts opening does it read "not closed"? Does a door stopped partway read "not closed"?
+3. **Acknowledgement.** Does `SETACK` mean the relay fired, or only that the message
+   arrived? Can the device act while its reply never reaches us?
+4. **Duplicates.** MQTT QoS 1 may deliver a message twice. Would a duplicate `SET` press
+   the button twice and reverse the door? If so, commands must use QoS 0 or the device must
+   de-duplicate by message id.
+5. **`lmTime`.** What it records, and on which clock. Not used for safety today.
+6. **Travel time.** Time a full open and a full close; set `travel-time` to the slower one
+   plus a margin (10 s measured so far).
+7. **The opener's own safety.** Photo eyes aligned, auto-reverse tested, and whether the
+   opener or MSG100 warns (beeps or flashes) before a close it can't see.
+8. **Which client failures guarantee nothing was sent.** Only those may raise
+   `DoorCommandRejectedException`. Everything else must stay an unknown outcome.
 
 ## 7. Activity and notifications
 
