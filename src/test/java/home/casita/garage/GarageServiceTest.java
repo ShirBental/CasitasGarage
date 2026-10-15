@@ -212,7 +212,7 @@ class GarageServiceTest {
 
     private void assertLatest(String who, Action action, Outcome outcome) {
         ActivityEvent latest = activity.recent(1).get(0);
-        assertThat(List.of(latest.who(), latest.action(), latest.outcome())).containsExactly(who, action, outcome);
+        assertThat(List.<Object>of(latest.who(), latest.action(), latest.outcome())).containsExactly(who, action, outcome);
     }
 
     private String lastPush() {
