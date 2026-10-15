@@ -155,7 +155,7 @@ class MerossSessionTest {
     /* ---------- failures and backoff ---------- */
 
     @Test
-    void aRefusedSignInBacksOffWithoutHammeringMeross() {
+    void aRefusedSignInBacksOffWithoutHammeringMeross() throws Exception {
         api.loginFailure = new MerossException(Kind.AUTH, "Meross sign-in refused (apiStatus 1004): Wrong password");
 
         assertKind(() -> session.get(DOOR, NS), Kind.AUTH);
@@ -226,7 +226,7 @@ class MerossSessionTest {
     }
 
     @Test
-    void aRefusedDeviceListDropsTheSignIn() {
+    void aRefusedDeviceListDropsTheSignIn() throws Exception {
         api.devicesFailure = new MerossException(Kind.AUTH, "Meross device list refused (apiStatus 1022): Token expired");
 
         assertKind(() -> session.devices(), Kind.AUTH);
