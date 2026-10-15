@@ -1,0 +1,15 @@
+# Maven
+target/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+
+# Local config and secrets: never commit these
+*.local.properties
+application-local.yml
+.env
