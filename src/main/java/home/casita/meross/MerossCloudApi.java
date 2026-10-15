@@ -84,7 +84,8 @@ class MerossCloudApi {
             }
             // Wrong region: Meross says which server to use. Try there once.
             Object domain = data.get("domain");
-            if (status == STATUS_WRONG_REGION && domain != null && attempt == 0) {
+            if (status == STATUS_WRONG_REGION && domain != null) {
+                if (attempt > 0) break; // redirected again: not an auth problem, a protocol one
                 baseUrl = stripSlash(string(domain));
                 continue;
             }
