@@ -1,0 +1,8 @@
+spring:
+  application:
+    name: casita
+
+server:
+  # Never listen on a public interface: 'tailscale serve' publishes Casita to the tailnet.
+  address: 127.0.0.1
+  port: 8080
