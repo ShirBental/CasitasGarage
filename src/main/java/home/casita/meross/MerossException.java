@@ -23,7 +23,9 @@ class MerossException extends DoorException {
         /** The device answered with an error. */
         DEVICE_ERROR,
         /** No (single) garage door opener on the account. */
-        NOT_FOUND
+        NOT_FOUND,
+        /** Casita's settings don't fit the opener: no channel chosen, or the chosen door is disabled. */
+        CONFIG
     }
 
     private final Kind kind;

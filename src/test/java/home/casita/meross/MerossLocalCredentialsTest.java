@@ -144,7 +144,7 @@ class MerossLocalCredentialsTest {
 
     @Test
     void credentialsDoNotChangeTheCommandSafetyDefault() {
-        MerossProperties configured = new MerossProperties("https://iotx-us.meross.com", null, null, null, 0, Duration.ofSeconds(8), false);
+        MerossProperties configured = new MerossProperties("https://iotx-us.meross.com", null, null, null, 0, Duration.ofSeconds(8), false, java.util.Map.of());
 
         MerossProperties withCreds = configured.withCredentials(new MerossLocalCredentials("a@example.com", "p", "uuid-1"));
 

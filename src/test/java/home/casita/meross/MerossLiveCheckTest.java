@@ -1,25 +1,30 @@
 package home.casita.meross;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeSet;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
+import home.casita.garage.DoorCommandRejectedException;
 import home.casita.garage.DoorDevice;
 
 /**
- * Checks the Meross client against a real account. READ-ONLY: it signs in, lists devices, asks the
- * opener which namespaces it supports, and reads the garage door's state. Every request is a GET and
- * commands stay disabled, so it can't move the door. Device uuids are never printed in full.
+ * Checks the Meross client against a real account. READ-ONLY: it signs in, lists devices, and reads
+ * each configured door through the same {@link MerossDoor} the app uses (for an MSG200,
+ * {@code GET Appliance.System.All} and its {@code digest.garageDoor}). Every request is a GET; commands
+ * stay disabled and are checked to be refused before anything is sent, so it can't move a door.
+ * Device uuids are never printed in full, and the session's DEBUG trace shows each MQTT message
+ * without secrets or payload values.
  *
- * <p>For a multi-door MSG200, set {@code MEROSS_CHANNEL} to the door's channel; the run prints the
- * channels the opener reports.
+ * <p>The doors default to ours, 1 = Ford and 2 = Toyota, as in application.yml; override with e.g.
+ * {@code MEROSS_DOORS=1:Ford,2:Toyota}.
  *
  * <p>Skipped unless you ask for it, so a plain {@code mvn test} never signs in to the real account.
  * Run it yourself with the environment:
@@ -41,44 +46,60 @@ class MerossLiveCheckTest {
         return (email != null && !email.isBlank()) || Boolean.getBoolean("meross.live");
     }
 
+    static Map<Integer, String> doors() {
+        Map<Integer, String> doors = new LinkedHashMap<>();
+        for (String pair : System.getenv().getOrDefault("MEROSS_DOORS", "1:Ford,2:Toyota").split(",")) {
+            String[] parts = pair.trim().split(":", 2);
+            doors.put(Integer.parseInt(parts[0].trim()), parts.length > 1 ? parts[1].trim() : "channel " + parts[0].trim());
+        }
+        return doors;
+    }
+
     @Test
-    void signsInListsDevicesAndReadsTheDoor() throws Exception {
+    void signsInFindsTheOpenerAndReadsEachConfiguredDoor() throws Exception {
+        // Trace every MQTT request and incoming message (safe fields only; see MerossSession's logging notes).
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(MerossSession.class)).setLevel(ch.qos.logback.classic.Level.DEBUG);
         MerossLocalCredentials credentials = MerossLocalCredentials.resolve(System.getenv("MEROSS_EMAIL"),
                 System.getenv("MEROSS_PASSWORD"), System.getenv("MEROSS_DEVICE_UUID"), MerossLocalCredentials.FILE,
                 "MEROSS_EMAIL and MEROSS_PASSWORD");
-        int channel = Integer.parseInt(System.getenv().getOrDefault("MEROSS_CHANNEL", "0"));
+        Map<Integer, String> doors = doors();
         MerossProperties props = new MerossProperties(
                 System.getenv().getOrDefault("MEROSS_API", "https://iotx-us.meross.com"),
-                null, null, null, channel, Duration.ofSeconds(10), false).withCredentials(credentials);
+                null, null, null, null, Duration.ofSeconds(10), false, doors).withCredentials(credentials);
         MerossCloudApi api = new MerossCloudApi(props.apiBaseUrl(), props.requestTimeout());
         MerossSession session = new MerossSession(api, new HiveMqConnector(), props, Clock.systemUTC());
         try {
             List<MerossDeviceInfo> devices = session.devices();
             System.out.println("Meross devices: " + devices);
-            assertThat(devices).isNotEmpty();
 
-            MerossDoor door = new MerossDoor(session, props.deviceUuid(), props.channel(), false);
-            String uuid = door.uuid();
+            MerossDoor.Opener opener = new MerossDoor(session, props.deviceUuid(), null, false).opener();
+            System.out.println("Opener: " + opener);
 
-            // Does this opener speak the namespace the door reads? Ask it rather than assume from its type.
-            Map<String, Object> abilities = MerossCloudApi.map(session.get(uuid, "Appliance.System.Ability").get("ability"));
-            List<String> garageAbilities = abilities.keySet().stream().filter(k -> k.startsWith("Appliance.GarageDoor.")).sorted().toList();
-            System.out.println("Garage door namespaces the opener supports: " + garageAbilities);
-            assertThat(abilities).containsKey(MerossDoor.NS_GARAGE_DOOR);
+            // The read path must be one the opener advertises.
+            Map<String, Object> abilities = MerossCloudApi.map(session.get(opener.uuid(), "Appliance.System.Ability").get("ability"));
+            String readNamespace = MerossDoor.MSG200.equals(opener.type()) ? MerossDoor.NS_SYSTEM_ALL : MerossDoor.NS_GARAGE_DOOR;
+            assertThat(abilities).as("the opener advertises " + readNamespace).containsKey(readNamespace);
 
-            // The reply's shape: which channels, which keys. Values only for channel and open.
-            Object state = session.get(uuid, MerossDoor.NS_GARAGE_DOOR).get("state");
-            List<?> entries = state instanceof List<?> list ? list : state == null ? List.of() : List.of(state);
-            System.out.println("State reply: " + (state instanceof List<?> ? "a list" : "a single object") + " of " + entries.size() + " entr"
-                    + (entries.size() == 1 ? "y" : "ies"));
-            for (Object entry : entries) {
-                Map<String, Object> e = MerossCloudApi.map(entry);
-                System.out.println("  channel=" + e.get("channel") + " open=" + e.get("open") + " keys=" + new TreeSet<>(e.keySet()));
+            for (Map.Entry<Integer, String> door : doors.entrySet()) {
+                MerossDoor merossDoor = new MerossDoor(session, opener.uuid(), door.getKey(), false);
+                DoorDevice.Reading reading = merossDoor.read();
+                System.out.println(door.getValue() + " (channel " + door.getKey() + "): " + (reading.open() ? "NOT CLOSED" : "CLOSED")
+                        + " (lmTime " + reading.changedAt() + ")");
+
+                // Commands are off: refused before anything is sent.
+                assertThatThrownBy(() -> merossDoor.command(true)).isInstanceOf(DoorCommandRejectedException.class);
             }
 
-            DoorDevice.Reading reading = door.read();
-            System.out.println("Garage door sensor on channel " + channel + ": " + (reading.open() ? "NOT CLOSED" : "CLOSED")
-                    + " (lmTime " + reading.changedAt() + ")");
+            if (MerossDoor.MSG200.equals(opener.type())) {
+                // A disabled channel must be refused, not read as "open". Our opener's channel 3 is disabled;
+                // on another account this may not apply, so it's reported rather than required.
+                try {
+                    DoorDevice.Reading third = new MerossDoor(session, opener.uuid(), 3, false).read();
+                    System.out.println("Channel 3 is enabled on this opener: " + (third.open() ? "NOT CLOSED" : "CLOSED"));
+                } catch (MerossException e) {
+                    System.out.println("Channel 3: refused, " + e.kind() + " (" + e.getMessage() + ")");
+                }
+            }
         } finally {
             session.destroy();
         }

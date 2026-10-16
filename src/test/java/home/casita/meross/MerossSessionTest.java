@@ -61,7 +61,7 @@ class MerossSessionTest {
         connector = new FakeConnector();
         clock = new MutableClock(Instant.parse("2026-10-15T22:00:00Z"));
         session = new MerossSession(api, connector,
-                new MerossProperties("https://iotx-us.meross.com", EMAIL, PASSWORD, null, 0, TIMEOUT, false),
+                new MerossProperties("https://iotx-us.meross.com", EMAIL, PASSWORD, null, 0, TIMEOUT, false, Map.of()),
                 clock, Runnable::run);
         logs = new ListAppender<>();
         logs.start();

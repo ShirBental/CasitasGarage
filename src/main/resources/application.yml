@@ -16,7 +16,12 @@ casita:
     # or locally from the git-ignored config/meross.local.json (docs/MEROSS.md); the environment wins.
     # They move to Parameter Store next. Never put them in this file.
     # device-uuid: only needed if the account has more than one garage opener.
-    channel: 0
+    # The opener's doors, by channel. Our MSG200 reports channels 1-3; channel 3 is disabled.
+    doors:
+      1: Ford
+      2: Toyota
+    # channel: which of those doors this Casita reads (1 = Ford, 2 = Toyota). Required with the real
+    # door: there is no default, and an MSG200 has no channel 0. Set it with CASITA_MEROSS_CHANNEL.
     request-timeout: 8s
     # Sending open/close to the real door. Keep false until the hardware prerequisites in
     # docs/DESIGN.md are checked. While false, every command is rejected before sending.

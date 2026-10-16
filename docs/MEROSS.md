@@ -64,26 +64,52 @@ Legend:
 
 Casita treats a device as a garage door opener when the account's device list reports its type
 as `msg100` or `msg200` (case-insensitive). With exactly one opener it's found automatically;
-with several, set `casita.meross.device-uuid`. The error lists the openers by name and the last
-four characters of each uuid. Full uuids are never logged or printed.
+with several, set `casita.meross.device-uuid` (it must be an opener on the account). The error
+lists the openers by name and the last four characters of each uuid. Full uuids are never
+logged or printed.
+
+How each is read:
+
+| Opener | Read | Channel |
+|---|---|---|
+| MSG100 | `GET Appliance.GarageDoor.State`, `state` (unchanged; not yet checked on a real MSG100) | `casita.meross.channel`, 0 when unset |
+| MSG200 | `GET Appliance.System.All`, `all.digest.garageDoor` | `casita.meross.channel`, **required** (no default) |
+
+In both, a door the opener reports as disabled (`doorEnable: 0`) is refused rather than read: a
+disabled MSG200 channel reports `open: 1`. A channel the opener doesn't report fails with the
+channels it did report. Commands to an MSG200 are refused even if commands are enabled: its
+write path is unverified.
+
+Our doors, in `application.yml`:
+
+```yaml
+casita:
+  meross:
+    doors:
+      1: Ford
+      2: Toyota
+    # channel: 1 or 2 (CASITA_MEROSS_CHANNEL); required with the real door
+```
+
+`casita.meross.channel` must be one of `doors` when doors are listed. With `casita.door=meross`
+and several doors but no channel, Casita refuses to start. Casita's garage logic drives one door,
+so one instance reads one of these; driving both from one instance is a separate change.
 
 | Fact | Status |
 |---|---|
+| Our MSG200 answers `GET Appliance.System.Ability` and `GET Appliance.System.All` over MQTT | **Confirmed (our device)** |
+| Our MSG200 never answers `GET Appliance.GarageDoor.State`, with payload `{}` or `{"state": {}}` | **Confirmed (our device)**: both time out with the request published and acknowledged |
+| `digest.garageDoor` lists channels 1 (Ford, enabled), 2 (Toyota, enabled), 3 (disabled, reports `open: 1`) | **Confirmed (our device)** |
+| Our MSG200 sends signed PUSH notifications on `/app/<userId>/subscribe` | **Confirmed (our device)**; traced, not used yet |
 | The MSG200 handles up to three garage doors | Confirmed (Meross product page) [8] |
-| Community code recognises an opener by the `Appliance.GarageDoor.State` ability, not by its type name, and has no MSG200-specific code | Confirmed (source) [6] |
-| The state reply is a list with one `{channel, open, lmTime}` entry per door, for every opener | Confirmed (source) [6] |
-| On an opener with two or more channels, community code defaults to channel **1**, not 0 | Confirmed (source) [6] |
-| A user reported only the first door of a two-door MSG200 showing up in Home Assistant | Confirmed (source) [7]. The cause isn't known |
-| Our MSG200 advertises `Appliance.GarageDoor.State`, and replies in the same format | **Assumed until the live check prints it.** The check asks the opener for its abilities (`Appliance.System.Ability`) and prints the state reply's channels and keys |
-| Which channel numbers our MSG200 uses for its doors | **Unknown**. The live check prints them; `casita.meross.channel` (default 0) must name the door |
-
-Reading the wrong channel fails with a protocol error that lists the channels the opener did
-report, instead of guessing one. Commands are unchanged and stay off.
+| Community code reads opener state from `System.All`'s `digest.garageDoor` | Confirmed (source) [6], (trace) [9] |
+| meross_lan sends `GET Appliance.GarageDoor.State` with `{"state": {}}` and a recorded MSG200 answers it | Confirmed (source) [9]. Ours doesn't; firmware or cloud-vs-local routing may differ |
+| How an MSG200 takes a command (`SET`) | **Unknown**. Not tried; commands to an MSG200 are refused |
 
 ## What this PR implements
 
 - Sign-in, session lifecycle and backoff, MQTT connection and reconnection, subscriptions.
-- **Read-only** door status (`GET`) from an MSG100 or MSG200 (see above for what's unverified on the MSG200).
+- **Read-only** door status (`GET`): an MSG200 through `System.All`, an MSG100 through `GarageDoor.State` (see above).
 - Local credentials from the environment or a git-ignored file (see "Local credentials").
 - The command path exists but is **off by default** (`casita.meross.commands-enabled: false`):
   every command is rejected before anything is sent. When it's turned on (only after the
@@ -105,7 +131,7 @@ chmod 600 config/meross.local.json
 | | Environment (wins) | File key |
 |---|---|---|
 | App (`casita.door=meross`) | `CASITA_MEROSS_EMAIL`, `CASITA_MEROSS_PASSWORD`, `CASITA_MEROSS_DEVICEUUID` | `email`, `password`, `deviceUuid` |
-| Live check | `MEROSS_EMAIL`, `MEROSS_PASSWORD`, `MEROSS_DEVICE_UUID`, `MEROSS_CHANNEL` | same |
+| Live check | `MEROSS_EMAIL`, `MEROSS_PASSWORD`, `MEROSS_DEVICE_UUID`, `MEROSS_DOORS` (default `1:Ford,2:Toyota`) | same |
 
 The live check never runs on a plain `mvn test`, so tests don't sign in to the real account by
 accident. Ask for it:
@@ -113,7 +139,7 @@ accident. Ask for it:
 ```bash
 mvn test -Dtest=MerossLiveCheckTest -Dmeross.live=true                 # credentials from the file
 MEROSS_EMAIL=... MEROSS_PASSWORD='...' mvn test -Dtest=MerossLiveCheckTest   # or from the environment
-MEROSS_CHANNEL=1 mvn test -Dtest=MerossLiveCheckTest -Dmeross.live=true      # another door channel
+MEROSS_DOORS=1:Ford mvn test -Dtest=MerossLiveCheckTest -Dmeross.live=true       # read only some doors
 ```
 
 If the email or password is missing from both places, the app refuses to start and the live check
@@ -140,3 +166,6 @@ Credentials move to Parameter Store later; this file is for local use only.
 7. meross-homeassistant issue #363 (MSG200 support; only the first door shown):
    https://github.com/albertogeniola/meross-homeassistant/issues/363
 8. Meross MSG200HK product page: https://shop.meross.com/collections/deals/products/smart-garage-door-opener
+9. meross_lan: namespace payloads (`merossclient/protocol/namespaces/__init__.py`, GET payload `{key: {}}`)
+   and a recorded MSG200 trace (`emulator_traces/U0123456789012345678901234567891C-Kpippo-msg200.json.txt`):
+   https://github.com/krahabb/meross_lan

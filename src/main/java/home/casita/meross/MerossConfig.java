@@ -31,8 +31,13 @@ class MerossConfig {
         return new MerossSession(api, new HiveMqConnector(), properties.withCredentials(credentials), clock);
     }
 
+    /** Several doors configured but none chosen: refuse to start rather than guess (an MSG200 has no door 0). */
     @Bean
     DoorDevice merossDoor(MerossSession session, MerossProperties properties, MerossLocalCredentials credentials) {
+        if (properties.channel() == null && properties.doors().size() > 1) {
+            throw new IllegalStateException("Several doors are configured (casita.meross.doors " + new java.util.TreeMap<>(properties.doors())
+                    + "); set casita.meross.channel to the one this Casita reads");
+        }
         return new MerossDoor(session, credentials.deviceUuid(), properties.channel(), properties.commandsEnabled());
     }
 }
