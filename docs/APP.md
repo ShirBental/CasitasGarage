@@ -72,11 +72,17 @@ casita:
     family: [shir, hubby]
 ```
 
-- `tailscale serve` gives Casita HTTPS on that name and forwards to `http://127.0.0.1:8080`.
+- `tailscale serve` gives Casita HTTPS on that name and forwards to `http://127.0.0.1:8080`, adding
+  `X-Forwarded-Proto: https` and `X-Forwarded-Host`.
+- Casita trusts those two headers **from 127.0.0.1 only** (`server.forward-headers-strategy: native`,
+  `server.tomcat.remoteip.internal-proxies`). It listens on 127.0.0.1 alone, so only a local proxy can
+  set them. With them, Casita knows it is `https://<name>.ts.net`: cookies are `Secure`, and redirects
+  (which are also relative) never point at `http://127.0.0.1:8080`. Without this, a successful invite
+  sign-in redirected the phone to `http://127.0.0.1:8080/passkey`; Safari blocked it, and a second
+  tap of *Sign in* got 403 because the sign-in had already rotated the CSRF token.
 - Passkeys need HTTPS and a fixed name. If the tailnet name changes, everyone enrolls again.
-- Redirects are relative, so the proxy's local address never reaches the phone. Before relying on
-  it, check behind the real `tailscale serve` (deployment, build step 8) that sign-in, the CSRF
-  cookie and logout all work.
+- An invite works once. If a sign-in shows an error page, ask for a fresh invite rather than
+  tapping again.
 
 ## The app
 

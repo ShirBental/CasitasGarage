@@ -6,6 +6,14 @@ server:
   # Never listen on a public interface: 'tailscale serve' publishes Casita to the tailnet.
   address: 127.0.0.1
   port: 8080
+  # Behind tailscale serve, requests arrive as http://127.0.0.1:8080. Trust its X-Forwarded-Proto and
+  # X-Forwarded-Host, from this machine only, so Casita knows it is https://<name>.ts.net: redirects
+  # and cookies then use the real address (an http://127.0.0.1 redirect breaks sign-in on the phone).
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      internal-proxies: 127\.0\.0\.1|0:0:0:0:0:0:0:1
+    use-relative-redirects: true
   servlet:
     session:
       # Sessions live in memory: a restart signs everyone out (Face ID signs them back in). Until the
