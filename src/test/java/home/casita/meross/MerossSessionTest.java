@@ -91,7 +91,7 @@ class MerossSessionTest {
         assertThat(conn.settings.username()).isEqualTo(USER_ID);
         assertThat(new String(conn.settings.password(), StandardCharsets.UTF_8)).isEqualTo(MerossCrypto.mqttPassword(USER_ID, KEY));
         String appId = conn.settings.clientId().substring("app:".length());
-        assertThat(conn.subscriptions).containsOnlyKeys("/app/" + USER_ID + "-" + appId + "/subscribe");
+        assertThat(conn.subscriptions).containsOnlyKeys("/app/" + USER_ID + "-" + appId + "/subscribe", "/app/" + USER_ID + "/subscribe");
     }
 
     @Test
@@ -135,7 +135,122 @@ class MerossSessionTest {
         };
 
         assertKind(() -> session.get(DOOR, NS), Kind.TIMEOUT);
-        assertThat(logText()).contains("reason=bad_signature");
+        assertThat(logText()).contains("reason=signature_bad")
+                .contains("outcome=timeout").contains("published=yes acked=yes reply=none received_meanwhile={bad_signature=1}");
+    }
+
+    /* ---------- diagnosing a read that times out ---------- */
+
+    @Test
+    void aSilentDeviceTimesOutAndTheLogSaysThePublishWasAcknowledged() {
+        connector.nextResponder = request -> null;
+
+        assertKind(() -> session.get(DOOR, NS), Kind.TIMEOUT);
+
+        assertThat(logText()).contains("event=read outcome=timeout namespace=" + NS)
+                .contains("published=yes acked=yes reply=none received_meanwhile={}");
+    }
+
+    @Test
+    void aPublishTheBrokerNeverAcknowledgesIsReportedAsSuch() throws Exception {
+        connector.nextResponder = door(Map.of("state", List.of()));
+        session.get(DOOR, NS); // connected
+        connector.only().publishMode = PublishMode.NEVER_COMPLETES;
+
+        assertKind(() -> session.get(DOOR, NS), Kind.TIMEOUT);
+
+        assertThat(logText()).contains("published=yes acked=no reply=none (the broker never acknowledged the publish)");
+    }
+
+    @Test
+    void aReplyForAnotherRequestIsReportedUnmatched() {
+        connector.nextResponder = request -> {
+            Map<String, Object> reply = signedReply(request, "GETACK", Map.of("state", List.of()));
+            Map<String, Object> header = MerossCloudApi.map(reply.get("header"));
+            String other = "f".repeat(32);
+            long timestamp = ((Number) header.get("timestamp")).longValue();
+            header.put("messageId", other);
+            header.put("sign", MerossCrypto.messageSign(other, KEY, timestamp));
+            return reply;
+        };
+
+        assertKind(() -> session.get(DOOR, NS), Kind.TIMEOUT);
+
+        assertThat(logText()).contains("event=reply_ignored topic=REPLY correlation=unmatched method=GETACK namespace=" + NS + " mid=ffffffff")
+                .contains("received_meanwhile={unmatched=1}");
+    }
+
+    @Test
+    void aReplyThatArrivesAfterTheTimeoutIsRecognisedAsLate() {
+        connector.nextResponder = request -> null;
+        assertKind(() -> session.get(DOOR, NS), Kind.TIMEOUT);
+        FakeConnection conn = connector.only();
+        Map<String, Object> request = conn.published.get(0).message();
+        String from = String.valueOf(MerossCloudApi.map(request.get("header")).get("from"));
+
+        conn.subscriptions.get(from).accept(json.writeValueAsBytes(signedReply(request, "GETACK", Map.of("state", List.of()))));
+
+        String mid = MerossSession.shortId(String.valueOf(MerossCloudApi.map(request.get("header")).get("messageId")));
+        assertThat(logText()).contains("correlation=late method=GETACK namespace=" + NS + " mid=" + mid);
+    }
+
+    @Test
+    void aReplyOnThePushTopicIsTracedButNotUsed() {
+        connector.nextResponder = request -> {
+            FakeConnection conn = connector.created.get(0);
+            Consumer<byte[]> push = conn.subscriptions.get("/app/" + USER_ID + "/subscribe");
+            push.accept(json.writeValueAsBytes(signedReply(request, "GETACK", Map.of("state", List.of()))));
+            return null;
+        };
+
+        assertKind(() -> session.get(DOOR, NS), Kind.TIMEOUT);
+
+        assertThat(logText()).contains("event=message_on_push_topic correlation=pending_request method=GETACK namespace=" + NS)
+                .contains("received_meanwhile={push=1}");
+    }
+
+    @Test
+    void unreadableMessagesAreDroppedAndCounted() {
+        connector.nextResponder = request -> {
+            Consumer<byte[]> reply = connector.created.get(0).subscriptions.get(String.valueOf(MerossCloudApi.map(request.get("header")).get("from")));
+            reply.accept("not json".getBytes(StandardCharsets.UTF_8));
+            return null;
+        };
+
+        assertKind(() -> session.get(DOOR, NS), Kind.TIMEOUT);
+
+        assertThat(logText()).contains("reason=unreadable").contains("received_meanwhile={unreadable=1}");
+    }
+
+    @Test
+    void theDebugTraceFollowsOneExchangeWithoutSecretsUuidsOrPayloadValues() throws Exception {
+        Logger sessionLog = (Logger) LoggerFactory.getLogger(MerossSession.class);
+        ch.qos.logback.classic.Level previous = sessionLog.getLevel();
+        sessionLog.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        try {
+            String device = "1912089283245425180234298f1a2b3c";
+            connector.nextResponder = door(Map.of("state", List.of(Map.of("channel", 1, "open", 0, "note", "SENTINEL-VALUE"))));
+
+            session.get(device, NS);
+
+            String mid = MerossSession.shortId(String.valueOf(MerossCloudApi.map(connector.only().published.get(0).message().get("header")).get("messageId")));
+            assertThat(logText())
+                    .contains("event=request_published method=GET namespace=" + NS + " mid=" + mid + " qos=1 payload_keys=[]")
+                    .contains("event=publish_acked method=GET namespace=" + NS + " mid=" + mid)
+                    .contains("event=reply topic=REPLY correlation=matched method=GETACK namespace=" + NS + " mid=" + mid + " sign=ok")
+                    .doesNotContain(KEY).doesNotContain(TOKEN).doesNotContain(PASSWORD).doesNotContain(EMAIL)
+                    .doesNotContain(device).doesNotContain("/app/" + USER_ID).doesNotContain("SENTINEL-VALUE");
+        } finally {
+            sessionLog.setLevel(previous);
+        }
+    }
+
+    @Test
+    void anErrorReplyIsReportedByCodeNotByPayload() {
+        connector.nextResponder = request -> signedReply(request, "ERROR", Map.of("error", Map.of("code", 5000, "detail", "SENTINEL-DETAIL")));
+
+        assertThatThrownBy(() -> session.get(DOOR, NS)).hasMessageContaining("error code 5000").hasMessageNotContaining("SENTINEL");
+        assertThat(logText()).contains("error_code=5000").doesNotContain("SENTINEL");
     }
 
     @Test

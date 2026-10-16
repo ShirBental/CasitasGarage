@@ -4,9 +4,12 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -14,6 +17,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +51,11 @@ import tools.jackson.databind.json.JsonMapper;
  * queued.
  *
  * <h2>Logging</h2>
- * {@code meross event=... key=value} lines. Never the email, password, key, token or MQTT password.
+ * {@code meross event=... key=value} lines. Never the email, password, key, token or MQTT password,
+ * never a full device uuid or account id, never a message payload's values. At DEBUG, every request
+ * and every incoming message is traced (namespace, method, the first 8 characters of the messageId,
+ * signature and correlation outcome); anything rejected or unmatched is logged at WARN, and a read
+ * that times out says whether it was published, acknowledged, and what else arrived meanwhile.
  */
 class MerossSession implements MerossTransport, DisposableBean {
 
@@ -71,6 +79,15 @@ class MerossSession implements MerossTransport, DisposableBean {
     private final JsonMapper json = JsonMapper.builder().build();
     private final String appId = MerossCrypto.newAppId();
     private final Map<String, CompletableFuture<Map<String, Object>>> pending = new ConcurrentHashMap<>();
+    /** messageIds we stopped waiting for (namespace by id), so a reply that comes too late is recognised. */
+    private final Map<String, String> expired = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, false) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+            return size() > 64;
+        }
+    });
+    /** Everything that arrived, by outcome: matched, bad_signature, unmatched, late, unreadable, push. */
+    private final Map<String, AtomicLong> received = new ConcurrentHashMap<>();
 
     // All guarded by this.
     private MerossCredentials creds;
@@ -169,7 +186,10 @@ class MerossSession implements MerossTransport, DisposableBean {
         self[0] = l;
         try {
             connection.connect().get(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            connection.subscribe(replyTopic(c), bytes -> onReply(c, bytes)).get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            connection.subscribe(replyTopic(c), bytes -> onMessage(c, Topic.REPLY, bytes)).get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            // The account's push topic, as Meross's apps subscribe to it too. Only traced: replies are taken
+            // from the reply topic alone, but a reply routed here instead would show up in the logs.
+            connection.subscribe(pushTopic(c), bytes -> onMessage(c, Topic.PUSH, bytes)).get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (ExecutionException e) {
             connection.close();
             if (causedByAuthRejection(e)) {
@@ -272,9 +292,14 @@ class MerossSession implements MerossTransport, DisposableBean {
         byte[] bytes = json.writeValueAsBytes(message);
         String topic = "/appliance/" + deviceUuid + "/subscribe";
 
-        long deadline = System.nanoTime() + timeout.toNanos();
+        long started = System.nanoTime();
+        long deadline = started + timeout.toNanos();
         CompletableFuture<Map<String, Object>> reply = new CompletableFuture<>();
+        Map<String, Long> before = receivedSnapshot();
+        boolean acked = false;
         pending.put(messageId, reply);
+        log.debug("meross event=request_published method={} namespace={} mid={} qos={} payload_keys={}",
+                method, namespace, shortId(messageId), command ? 0 : 1, new TreeSet<>(payload.keySet()));
         try {
             CompletableFuture<Void> published;
             try {
@@ -290,6 +315,10 @@ class MerossSession implements MerossTransport, DisposableBean {
 
             try {
                 published.get(remainingMillis(deadline), TimeUnit.MILLISECONDS);
+                acked = true;
+                // QoS 1 (reads): the broker acknowledged the publish. QoS 0 (commands): the client sent it.
+                log.debug("meross event=publish_acked method={} namespace={} mid={} elapsed_ms={}",
+                        method, namespace, shortId(messageId), TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
             } catch (TimeoutException e) {
                 if (command) {
                     // It may still be queued: drop the connection so it can't go out later.
@@ -298,6 +327,8 @@ class MerossSession implements MerossTransport, DisposableBean {
                     throw new MerossException(Kind.TIMEOUT, "The command may or may not have been sent (not confirmed within "
                             + seconds(timeout) + ")");
                 }
+                log.warn("meross event=read outcome=timeout namespace={} mid={} published=yes acked=no reply=none "
+                        + "(the broker never acknowledged the publish)", namespace, shortId(messageId));
                 throw new MerossException(Kind.TIMEOUT, "Couldn't send to the opener within " + seconds(timeout));
             } catch (ExecutionException e) {
                 if (command) {
@@ -318,7 +349,9 @@ class MerossSession implements MerossTransport, DisposableBean {
                     throw new MerossException(Kind.TIMEOUT,
                             "No reply from the opener within " + seconds(timeout) + "; the command may or may not have been carried out");
                 }
-                log.warn("meross event=read outcome=timeout namespace={}", namespace);
+                expired.put(messageId, namespace);
+                log.warn("meross event=read outcome=timeout namespace={} mid={} published=yes acked={} reply=none "
+                        + "received_meanwhile={}", namespace, shortId(messageId), acked ? "yes" : "no", receivedSince(before));
                 throw new MerossException(Kind.TIMEOUT, "The opener didn't answer within " + seconds(timeout));
             } catch (ExecutionException e) {
                 throw new MerossException(Kind.PROTOCOL, "Couldn't read the opener's reply", e.getCause());
@@ -328,8 +361,11 @@ class MerossSession implements MerossTransport, DisposableBean {
             Map<String, Object> answerPayload = MerossCloudApi.map(answer.get("payload"));
             String answerMethod = String.valueOf(answerHeader.get("method"));
             if (!answerMethod.equals(method + "ACK")) {
-                log.warn("meross event={} outcome=device_error method={}", command ? "command" : "read", answerMethod);
-                throw new MerossException(Kind.DEVICE_ERROR, "The opener answered " + answerMethod + ": " + shorten(String.valueOf(answerPayload)));
+                // The error code only: the payload itself may carry device details and is never logged.
+                Object code = answerPayload.get("error") instanceof Map<?, ?> error ? error.get("code") : null;
+                log.warn("meross event={} outcome=device_error method={} namespace={} mid={} error_code={}",
+                        command ? "command" : "read", answerMethod, namespace, shortId(messageId), code);
+                throw new MerossException(Kind.DEVICE_ERROR, "The opener answered " + answerMethod + " (error code " + code + ")");
             }
             if (command) log.info("meross event=command outcome=acknowledged namespace={}", namespace);
             return answerPayload;
@@ -341,35 +377,96 @@ class MerossSession implements MerossTransport, DisposableBean {
         }
     }
 
-    /** Matches a reply to its request. Replies with a bad signature are dropped. */
-    private void onReply(MerossCredentials c, byte[] bytes) {
+    /** Which of our two subscriptions a message came in on. */
+    enum Topic { REPLY, PUSH }
+
+    /**
+     * Matches a reply to its request. Replies come only from the reply topic and must be signed with
+     * our key; everything else is traced and counted, never used.
+     */
+    private void onMessage(MerossCredentials c, Topic topic, byte[] bytes) {
+        String method = null;
+        String namespace = null;
+        String mid = null;
         try {
             Map<String, Object> message = MerossCloudApi.map(json.readValue(bytes, Map.class));
             Map<String, Object> header = MerossCloudApi.map(message.get("header"));
+            method = MerossCloudApi.string(header.get("method"));
+            namespace = MerossCloudApi.string(header.get("namespace"));
             String messageId = MerossCloudApi.string(header.get("messageId"));
+            mid = shortId(messageId);
             Object timestamp = header.get("timestamp");
             if (messageId == null || timestamp == null) {
-                log.warn("meross event=reply outcome=dropped reason=incomplete_header");
+                count("unreadable");
+                log.warn("meross event=message_dropped topic={} reason=incomplete_header method={} namespace={}", topic, method, namespace);
                 return;
             }
             String expected = MerossCrypto.messageSign(messageId, c.key(), Long.parseLong(String.valueOf(timestamp)));
-            if (!expected.equalsIgnoreCase(String.valueOf(header.get("sign")))) {
-                log.warn("meross event=reply outcome=dropped reason=bad_signature");
+            String sign = header.get("sign") == null ? "missing" : expected.equalsIgnoreCase(String.valueOf(header.get("sign"))) ? "ok" : "bad";
+            if (!"ok".equals(sign)) {
+                count("bad_signature");
+                log.warn("meross event=message_dropped topic={} reason=signature_{} method={} namespace={} mid={}", topic, sign, method, namespace, mid);
+                return;
+            }
+            if (topic == Topic.PUSH) {
+                count("push");
+                if (pending.containsKey(messageId)) {
+                    log.warn("meross event=message_on_push_topic correlation=pending_request method={} namespace={} mid={} sign=ok "
+                            + "(not used: replies are only taken from the reply topic)", method, namespace, mid);
+                } else {
+                    log.debug("meross event=push method={} namespace={} sign=ok", method, namespace);
+                }
                 return;
             }
             CompletableFuture<Map<String, Object>> waiting = pending.get(messageId);
             if (waiting == null) {
-                log.debug("meross event=reply outcome=ignored reason=nobody_waiting");
+                String late = expired.get(messageId);
+                count(late != null ? "late" : "unmatched");
+                log.warn("meross event=reply_ignored topic=REPLY correlation={} method={} namespace={} mid={} sign=ok",
+                        late != null ? "late" : "unmatched", method, namespace, mid);
                 return;
             }
+            count("matched");
+            log.debug("meross event=reply topic=REPLY correlation=matched method={} namespace={} mid={} sign=ok", method, namespace, mid);
             waiting.complete(message);
         } catch (RuntimeException e) {
-            log.warn("meross event=reply outcome=dropped reason=unreadable error={}", errorName(e));
+            count("unreadable");
+            log.warn("meross event=message_dropped topic={} reason=unreadable error={} method={} namespace={} mid={}",
+                    topic, errorName(e), method, namespace, mid);
         }
+    }
+
+    private void count(String outcome) {
+        received.computeIfAbsent(outcome, k -> new AtomicLong()).incrementAndGet();
+    }
+
+    private Map<String, Long> receivedSnapshot() {
+        Map<String, Long> snapshot = new LinkedHashMap<>();
+        received.forEach((k, v) -> snapshot.put(k, v.get()));
+        return snapshot;
+    }
+
+    /** What arrived since {@code before}, as {outcome=count}, outcomes with nothing new left out. */
+    private Map<String, Long> receivedSince(Map<String, Long> before) {
+        Map<String, Long> since = new TreeMap<>();
+        received.forEach((k, v) -> {
+            long n = v.get() - before.getOrDefault(k, 0L);
+            if (n > 0) since.put(k, n);
+        });
+        return since;
+    }
+
+    /** Enough of a messageId to follow one exchange through the log; it identifies nothing else. */
+    static String shortId(String messageId) {
+        return messageId == null ? null : messageId.length() <= 8 ? messageId : messageId.substring(0, 8);
     }
 
     private String replyTopic(MerossCredentials c) {
         return "/app/" + c.userId() + "-" + appId + "/subscribe";
+    }
+
+    private static String pushTopic(MerossCredentials c) {
+        return "/app/" + c.userId() + "/subscribe";
     }
 
     /* ---------- helpers ---------- */
