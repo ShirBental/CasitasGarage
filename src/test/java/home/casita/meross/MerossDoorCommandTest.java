@@ -276,7 +276,7 @@ class MerossDoorCommandTest {
         doors(1, 0); // the sensor changes
         rig.runDueChecks();
 
-        assertThat(rig.outcomes()).containsExactly(Outcome.MOVING);
+        assertThat(rig.outcomes()).containsExactly(Outcome.MOVING, Outcome.OPEN_INFERRED); // judged by the sensor, recorded
         assertThat(rig.notifications).anyMatch(n -> n.startsWith("Opening the garage"));
         assertThat(rig.notifications).noneMatch(n -> n.contains("didn't open"));
     }

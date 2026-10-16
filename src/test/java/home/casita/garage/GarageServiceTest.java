@@ -82,7 +82,7 @@ class GarageServiceTest {
 
         clock.advance(GRACE);
         GarageStatus status = garage.status(); // check is due: runs before answering
-        assertThat(status.door()).isEqualTo(DoorState.OPEN);
+        assertThat(status.door()).isEqualTo(DoorState.NOT_CLOSED);
         assertThat(status.canClose()).isTrue();
     }
 
@@ -178,9 +178,9 @@ class GarageServiceTest {
         // The check finds it went through.
         clock.advance(GRACE);
         tasks.runDue();
-        assertLatest(GarageService.CASITA, Action.OPEN, Outcome.CONFIRMED);
+        assertLatest(GarageService.CASITA, Action.OPEN, Outcome.OPEN_INFERRED);
         assertThat(lastPush()).contains("went through");
-        assertThat(garage.status().door()).isEqualTo(DoorState.OPEN);
+        assertThat(garage.status().door()).isEqualTo(DoorState.NOT_CLOSED);
     }
 
     @Test
@@ -208,7 +208,7 @@ class GarageServiceTest {
         assertThat(door.commands).isEmpty();
 
         clock.advance(TRAVEL);
-        assertThat(garage.status().door()).isEqualTo(DoorState.OPEN);
+        assertThat(garage.status().door()).isEqualTo(DoorState.NOT_CLOSED);
         assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
     }
 
@@ -230,7 +230,7 @@ class GarageServiceTest {
         assertThat(door.commands).isEmpty();
 
         clock.advance(TRAVEL);
-        assertThat(garage.status().door()).isEqualTo(DoorState.OPEN);
+        assertThat(garage.status().door()).isEqualTo(DoorState.NOT_CLOSED);
         assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
     }
 
@@ -332,6 +332,121 @@ class GarageServiceTest {
     }
 
     /* ---------- helpers ---------- */
+
+    /* ---------- the state model: every movement ends with one final outcome ---------- */
+
+    @Test
+    void anAcknowledgedOpenEndsWithOpenInferredNotMoving() {
+        garage.open("Shir");
+        door.open = true;
+
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue();
+
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.OPEN_INFERRED);
+        assertLatest(GarageService.CASITA, Action.OPEN, Outcome.OPEN_INFERRED);
+        GarageStatus status = garage.status();
+        assertThat(status.door()).isEqualTo(DoorState.NOT_CLOSED); // inferred open: the sensor can't say "fully open"
+        assertThat(status.canClose()).isTrue();
+    }
+
+    @Test
+    void anAcknowledgedCloseEndsWithClosedConfirmedWhenTheSensorReadsClosed() {
+        doorSettledOpen();
+        garage.close("Shir");
+        door.open = false;
+
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue();
+
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.CLOSED_CONFIRMED);
+        assertThat(garage.status().door()).isEqualTo(DoorState.CLOSED);
+    }
+
+    @Test
+    void aCloseFinishedEarlyIsRecordedOnceEvenWhenTheScheduledCheckRunsLater() {
+        doorSettledOpen();
+        garage.close("Shir");
+        clock.advance(Duration.ofSeconds(6));
+        door.open = false;
+        garage.status(); // reads closed: the close is checked now
+
+        clock.advance(TRAVEL);
+        tasks.runDue(); // the scheduled check finds nothing left to check
+
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.CLOSED_CONFIRMED);
+    }
+
+    @Test
+    void aMovementNeverStaysMovingEvenIfTheScheduledCheckNeverRuns() {
+        garage.open("Shir");
+        door.open = true;
+
+        clock.advance(TRAVEL.plus(GRACE).plusSeconds(60)); // the scheduled task is lost
+        GarageStatus status = garage.status(); // the overdue check runs first
+
+        assertThat(status.door()).isEqualTo(DoorState.NOT_CLOSED);
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.OPEN_INFERRED);
+    }
+
+    @Test
+    void aCloseThatTimesOutEndsStuckAndTheDoorStaysNotClosed() {
+        doorSettledOpen();
+        garage.close("Shir");
+
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue();
+
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.STUCK);
+        assertThat(lastPush()).contains("didn't close");
+        assertThat(garage.status().door()).isEqualTo(DoorState.NOT_CLOSED);
+        assertThat(door.commands).containsExactly(false); // never retried, never reversed
+    }
+
+    @Test
+    void anUnacknowledgedCloseThatDidCloseEndsClosedConfirmed() {
+        doorSettledOpen();
+        door.timeoutAfterDelivery = true;
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.UNCONFIRMED);
+        assertThat(garage.status().door()).isEqualTo(DoorState.CHECKING);
+        door.open = false;
+
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue();
+
+        assertThat(outcomes()).containsExactly(Outcome.UNCONFIRMED, Outcome.CLOSED_CONFIRMED);
+        assertThat(lastPush()).isEqualTo("It went through after all: the garage is closed.");
+    }
+
+    @Test
+    void anUnreadableSensorAtTheCheckEndsLostAndTheStatusIsUnknown() {
+        garage.open("Shir");
+        door.readFails = true;
+
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue();
+
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.LOST);
+        assertThat(garage.status().door()).isEqualTo(DoorState.UNKNOWN);
+    }
+
+    @Test
+    void noOppositeCommandIsEverSentAutomatically() {
+        garage.open("Shir");
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue(); // STUCK: the door didn't open
+        garage.status();
+        clock.advance(Duration.ofMinutes(5));
+        tasks.runDue();
+        garage.status();
+
+        assertThat(door.commands).containsExactly(true);
+    }
+
+    /** Outcomes in the order they happened, ignoring who. */
+    private List<Outcome> outcomes() {
+        return activity.recent(50).reversed().stream().map(ActivityEvent::outcome).toList();
+    }
 
     private void assertLatest(String who, Action action, Outcome outcome) {
         ActivityEvent latest = activity.recent(1).get(0);

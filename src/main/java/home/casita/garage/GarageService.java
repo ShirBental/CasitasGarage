@@ -36,6 +36,16 @@ import org.springframework.stereotype.Service;
  *   <li>Closing from the app can be switched off.</li>
  * </ol>
  *
+ * <h2>What Casita reports</h2>
+ * The sensor proves only "closed". So the status ({@link DoorState}) is {@code CLOSED} (proven),
+ * {@code NOT_CLOSED} (settled; open is inferred, never verified), {@code OPENING} / {@code CLOSING}
+ * (a command is being checked), {@code CHECKING} (moving or not is unknown) or {@code UNKNOWN} (the
+ * sensor can't be read). In the activity log, every {@code MOVING} or {@code UNCONFIRMED} command is
+ * followed by exactly one check: {@code CLOSED_CONFIRMED}, {@code OPEN_INFERRED}, {@code STUCK} (not
+ * where it was sent after travel time + grace) or {@code LOST} (sensor unreadable). The check is
+ * scheduled, and an overdue one also runs before any status or command, so no movement stays
+ * "moving".
+ *
  * <p>All state is in memory. A restart forgets any unverified movement, so rule 5 applies
  * after startup. These rules are tested against a fake door only; how they hold up with the
  * real opener is listed as hardware prerequisites in the design doc.
@@ -105,7 +115,7 @@ public class GarageService {
         if (!settled()) {
             return new GarageStatus(sawChange ? DoorState.OPENING : DoorState.CHECKING, lastSensorChange, false, false);
         }
-        return new GarageStatus(DoorState.OPEN, since(reading), false, properties.allowRemoteClose());
+        return new GarageStatus(DoorState.NOT_CLOSED, since(reading), false, properties.allowRemoteClose());
     }
 
     public synchronized CommandResult open(String who) {
@@ -201,9 +211,11 @@ public class GarageService {
         if (reading.open() == m.action().wantsOpen()) {
             // The door has had the full travel time (or the sensor reports closed), so it's settled.
             if (lastSensorChange == null || lastSensorChange.isAfter(m.startedAt())) lastSensorChange = m.startedAt();
+            // Always a final record, so the history never ends on MOVING. "Closed" is proven by the sensor;
+            // after an open, "not closed" is all it can say.
+            record(CASITA, m.action(), m.action() == Action.CLOSE ? Outcome.CLOSED_CONFIRMED : Outcome.OPEN_INFERRED);
             if (!m.acknowledged()) {
-                record(CASITA, m.action(), Outcome.CONFIRMED);
-                notifier.send("It went through after all: the garage is " + (reading.open() ? "open." : "closed."));
+                notifier.send("It went through after all: the garage is " + (reading.open() ? "not closed." : "closed."));
             } else if (m.action() == Action.CLOSE) {
                 notifier.send("The garage is closed. All tucked in.");
             }
