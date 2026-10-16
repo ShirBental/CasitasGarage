@@ -114,7 +114,7 @@ so one instance reads one of these; driving both from one instance is a separate
 
 ## Commands
 
-**No command has been sent to our MSG200 yet.** The first physical test waits for review.
+**Confirmed on our MSG200 (2026-10-15):** one `SET` to Ford (channel 1) over the cloud opened it; a `SETACK` came back and the sensor then read not closed. Closing by command hasn't been tried yet.
 
 | Fact | Status |
 |---|---|
@@ -123,7 +123,7 @@ so one instance reads one of these; driving both from one instance is a separate
 | The reply is `SETACK` with `state` (an object or a one-item list) carrying `channel`, `open`, `lmTime` and `execute` | Confirmed (source) [9], from real devices' traces in meross_lan |
 | `execute: 1`: the opener acted. `execute: 0`: it didn't (seen when the door was already in that position) | Confirmed (source) [9]. meross_lan says it has rarely seen 0 |
 | The `open` in a SETACK is the state *before* moving; the door changes after its travel time (15 s by default in `Appliance.GarageDoor.MultipleConfig`) | Confirmed (source) [9], emulator and traces |
-| Our MSG200 answers this SET over the cloud | **Unknown.** It never answered a *GET* on this namespace over the cloud. A SET that gets no reply is an unknown outcome, and the sensor decides |
+| Our MSG200 answers this SET over the cloud | **Confirmed (our device)** for an open of Ford: `SETACK` received, door opened fully (seen), sensor not closed. Not yet tried: close, Toyota. Its GET on this namespace still never answers |
 
 How Casita sends one (`MerossDoor.command`), in order; anything failing before the send means
 nothing was sent:
@@ -157,10 +157,11 @@ Live tests (`MerossLiveCommandTest`, Ford only):
 # Dry run: GETs only; checks on the MQTT connection that no SET was published.
 mvn test -Dtest=MerossLiveCommandTest#dryRunForFordBuildsTheCommandAndPublishesNoSet -Dmeross.live=true
 
-# One real command to Ford, after review, with someone watching the door. The confirmation names
-# the action, Ford, channel 1 and today's date.
-mvn test -Dtest=MerossLiveCommandTest#oneConfirmedCommandToFord -Dmeross.live=true \
-    -Dmeross.command.confirm=open-ford-channel-1-YYYY-MM-DD
+# One real command to Ford, with someone watching the door. Each confirmation names its own
+# action, Ford, channel 1 and today's date. The close needs Ford already not closed, and watches it
+# stay so for the travel time first. Set MEROSS_TRAVEL_SECONDS to Ford's real travel time (default 20).
+mvn test -Dtest=MerossLiveCommandTest#confirmedOpenOfFord -Dmeross.live=true -Dmeross.command.confirm=open-ford-channel-1-YYYY-MM-DD
+mvn test -Dtest=MerossLiveCommandTest#confirmedCloseOfFord -Dmeross.live=true -Dmeross.command.confirm=close-ford-channel-1-YYYY-MM-DD
 ```
 
 ## Local credentials
