@@ -102,14 +102,92 @@ class MerossDoorTest {
     }
 
     @Test
-    void asksForAUuidWhenThereAreSeveralOpeners() {
+    void findsAnMsg200AsTheOnlyOpener() throws Exception {
         transport.devices = List.of(
-                new MerossDeviceInfo("door-1", "Front", "msg100", true),
-                new MerossDeviceInfo("door-2", "Back", "MSG100", true));
+                new MerossDeviceInfo("plug-1", "Lamp", "mss310", true),
+                new MerossDeviceInfo("door-200", "Garage", "msg200", true));
+        transport.reply = Map.of("state", List.of(Map.of("channel", 0, "open", 0)));
+
+        new MerossDoor(transport, null, 0, false).read();
+
+        assertThat(transport.sent.get(0)).isEqualTo("GET door-200 Appliance.GarageDoor.State");
+    }
+
+    @Test
+    void openerTypesAreMatchedIgnoringCase() throws Exception {
+        transport.devices = List.of(new MerossDeviceInfo("door-200", "Garage", "MSG200", true));
+        transport.reply = Map.of("state", List.of(Map.of("channel", 0, "open", 0)));
+
+        new MerossDoor(transport, null, 0, false).read();
+
+        assertThat(transport.sent.get(0)).startsWith("GET door-200 ");
+    }
+
+    @Test
+    void asksForAUuidWhenThereAreSeveralOpenersWithoutPrintingTheirUuids() {
+        transport.devices = List.of(
+                new MerossDeviceInfo("1912089283245425180234298f1a0001", "Front", "msg100", true),
+                new MerossDeviceInfo("1912089283245425180234298f1a0002", "Back", "MSG200", true),
+                new MerossDeviceInfo("plug-1", "Lamp", "mss310", true));
 
         assertThatThrownBy(() -> new MerossDoor(transport, "", 0, false).read())
-                .isInstanceOf(DoorException.class)
-                .hasMessageContaining("casita.meross.device-uuid");
+                .isInstanceOfSatisfying(MerossException.class, e -> assertThat(e.kind()).isEqualTo(MerossException.Kind.NOT_FOUND))
+                .hasMessageContaining("casita.meross.device-uuid")
+                .hasMessageContaining("Front").hasMessageContaining("Back").hasMessageNotContaining("Lamp")
+                .hasMessageContaining("…0001").hasMessageContaining("…0002")
+                .hasMessageNotContaining("1912089283245425180234298f1a");
+    }
+
+    @Test
+    void aConfiguredUuidIsUsedWithoutListingDevices() throws Exception {
+        transport.devices = List.of(
+                new MerossDeviceInfo("door-1", "Front", "msg100", true),
+                new MerossDeviceInfo("door-2", "Back", "msg200", true));
+        transport.reply = Map.of("state", List.of(Map.of("channel", 0, "open", 0)));
+
+        new MerossDoor(transport, "door-2", 0, false).read();
+
+        assertThat(transport.sent).containsExactly("GET door-2 Appliance.GarageDoor.State");
+    }
+
+    @Test
+    void readsOneDoorOfAMultiDoorOpener() throws Exception {
+        // The shape community code describes for multi-door openers: one entry per channel, doors from 1.
+        transport.reply = Map.of("state", List.of(
+                Map.of("channel", 1, "open", 0, "lmTime", 1700000000),
+                Map.of("channel", 2, "open", 1, "lmTime", 1700000100),
+                Map.of("channel", 3, "open", 0, "lmTime", 0)));
+
+        DoorDevice.Reading reading = new MerossDoor(transport, "door-200", 2, false).read();
+
+        assertThat(reading.open()).isTrue();
+        assertThat(reading.changedAt()).isEqualTo(Instant.ofEpochSecond(1700000100));
+    }
+
+    @Test
+    void aMissingChannelErrorNamesTheChannelsTheOpenerReported() {
+        transport.reply = Map.of("state", List.of(Map.of("channel", 1, "open", 0), Map.of("channel", 2, "open", 0)));
+
+        assertThatThrownBy(() -> new MerossDoor(transport, "door-200", 0, false).read())
+                .isInstanceOfSatisfying(MerossException.class, e -> assertThat(e.kind()).isEqualTo(MerossException.Kind.PROTOCOL))
+                .hasMessageContaining("door channel 0")
+                .hasMessageContaining("reported channels [1, 2]");
+    }
+
+    @Test
+    void deviceInfoNeverPrintsAFullUuid() {
+        String shown = new MerossDeviceInfo("1912089283245425180234298f1a2b3c", "Garage", "msg200", true).toString();
+
+        assertThat(shown).contains("Garage", "msg200", "…2b3c").doesNotContain("1912089283245425180234298f1a");
+    }
+
+    @Test
+    void commandsStayOffForAnMsg200Too() {
+        transport.devices = List.of(new MerossDeviceInfo("door-200", "Garage", "msg200", true));
+
+        assertThatThrownBy(() -> new MerossDoor(transport, null, 1, false).command(true))
+                .isInstanceOf(DoorCommandRejectedException.class);
+        assertThat(transport.sent).isEmpty();
     }
 
     @Test

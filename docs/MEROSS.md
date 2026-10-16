@@ -60,10 +60,30 @@ Legend:
 | How fast the sensor reports after the door starts moving | **Unknown** |
 | Push notifications on state change | Confirmed (source) that a push topic exists [1][2]. Casita **reads on demand with `GET`** and doesn't subscribe to pushes yet |
 
+## MSG100 and MSG200
+
+Casita treats a device as a garage door opener when the account's device list reports its type
+as `msg100` or `msg200` (case-insensitive). With exactly one opener it's found automatically;
+with several, set `casita.meross.device-uuid`. The error lists the openers by name and the last
+four characters of each uuid. Full uuids are never logged or printed.
+
+| Fact | Status |
+|---|---|
+| The MSG200 handles up to three garage doors | Confirmed (Meross product page) [8] |
+| Community code recognises an opener by the `Appliance.GarageDoor.State` ability, not by its type name, and has no MSG200-specific code | Confirmed (source) [6] |
+| The state reply is a list with one `{channel, open, lmTime}` entry per door, for every opener | Confirmed (source) [6] |
+| On an opener with two or more channels, community code defaults to channel **1**, not 0 | Confirmed (source) [6] |
+| A user reported only the first door of a two-door MSG200 showing up in Home Assistant | Confirmed (source) [7]. The cause isn't known |
+| Our MSG200 advertises `Appliance.GarageDoor.State`, and replies in the same format | **Assumed until the live check prints it.** The check asks the opener for its abilities (`Appliance.System.Ability`) and prints the state reply's channels and keys |
+| Which channel numbers our MSG200 uses for its doors | **Unknown**. The live check prints them; `casita.meross.channel` (default 0) must name the door |
+
+Reading the wrong channel fails with a protocol error that lists the channels the opener did
+report, instead of guessing one. Commands are unchanged and stay off.
+
 ## What this PR implements
 
 - Sign-in, session lifecycle and backoff, MQTT connection and reconnection, subscriptions.
-- **Read-only** door status (`GET`).
+- **Read-only** door status (`GET`) from an MSG100 or MSG200 (see above for what's unverified on the MSG200).
 - Local credentials from the environment or a git-ignored file (see "Local credentials").
 - The command path exists but is **off by default** (`casita.meross.commands-enabled: false`):
   every command is rejected before anything is sent. When it's turned on (only after the
@@ -85,7 +105,7 @@ chmod 600 config/meross.local.json
 | | Environment (wins) | File key |
 |---|---|---|
 | App (`casita.door=meross`) | `CASITA_MEROSS_EMAIL`, `CASITA_MEROSS_PASSWORD`, `CASITA_MEROSS_DEVICEUUID` | `email`, `password`, `deviceUuid` |
-| Live check | `MEROSS_EMAIL`, `MEROSS_PASSWORD`, `MEROSS_DEVICE_UUID` | same |
+| Live check | `MEROSS_EMAIL`, `MEROSS_PASSWORD`, `MEROSS_DEVICE_UUID`, `MEROSS_CHANNEL` | same |
 
 The live check never runs on a plain `mvn test`, so tests don't sign in to the real account by
 accident. Ask for it:
@@ -93,13 +113,14 @@ accident. Ask for it:
 ```bash
 mvn test -Dtest=MerossLiveCheckTest -Dmeross.live=true                 # credentials from the file
 MEROSS_EMAIL=... MEROSS_PASSWORD='...' mvn test -Dtest=MerossLiveCheckTest   # or from the environment
+MEROSS_CHANNEL=1 mvn test -Dtest=MerossLiveCheckTest -Dmeross.live=true      # another door channel
 ```
 
 If the email or password is missing from both places, the app refuses to start and the live check
 fails, naming what's missing and where it looked. A malformed file, an unknown key (a typo such as
 `pasword`) or a non-string value fails the same way. Messages never include a value, and the JSON
-parser's own message isn't passed on, because it can quote the file. Credentials and tokens are
-not logged.
+parser's own message isn't passed on, because it can quote the file. Credentials, tokens and
+device uuids are not logged.
 
 Credentials move to Parameter Store later; this file is for local use only.
 
@@ -113,3 +134,9 @@ Credentials move to Parameter Store later; this file is for local use only.
 4. MerossIot wiki, HTTP APIs (2019): https://github.com/albertogeniola/MerossIot/wiki/HTTP-APIs
 5. HiveMQ MQTT client 1.2.0 release notes (resubscribe on by default, republish off by default):
    https://github.com/hivemq/hivemq-mqtt-client/releases/tag/v1.2.0
+6. MerossIot, `meross_iot/controller/mixins/garage.py` and `meross_iot/device_factory.py` (state per
+   channel, default channel, devices built from their abilities):
+   https://github.com/albertogeniola/MerossIot/blob/0.4.X.X/meross_iot/controller/mixins/garage.py
+7. meross-homeassistant issue #363 (MSG200 support; only the first door shown):
+   https://github.com/albertogeniola/meross-homeassistant/issues/363
+8. Meross MSG200HK product page: https://shop.meross.com/collections/deals/products/smart-garage-door-opener
