@@ -8,7 +8,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 /**
  * Meross cloud settings. The email and password move to Parameter Store in a later step;
  * until then they come from the environment ({@code CASITA_MEROSS_EMAIL},
- * {@code CASITA_MEROSS_PASSWORD}), never from a committed file.
+ * {@code CASITA_MEROSS_PASSWORD}) or, for local development, the git-ignored
+ * {@code config/meross.local.json} ({@link MerossLocalCredentials}). Never from a committed file.
  *
  * @param apiBaseUrl      Meross API for our region; sign-in redirects if it's the wrong one
  * @param email           Meross account email
@@ -33,6 +34,13 @@ public record MerossProperties(
         if (requestTimeout == null || requestTimeout.isZero() || requestTimeout.isNegative()) {
             throw new IllegalArgumentException("casita.meross.request-timeout must be positive, but was " + requestTimeout);
         }
+    }
+
+    /** The same settings with the account and device from {@code credentials}. Everything else, including
+     *  {@code commandsEnabled}, stays as configured. */
+    MerossProperties withCredentials(MerossLocalCredentials credentials) {
+        return new MerossProperties(apiBaseUrl, credentials.email(), credentials.password(), credentials.deviceUuid(), channel,
+                requestTimeout, commandsEnabled);
     }
 
     @Override

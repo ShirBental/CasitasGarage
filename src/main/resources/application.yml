@@ -12,8 +12,9 @@ casita:
   door: simulated
   meross:
     api-base-url: https://iotx-us.meross.com
-    # email / password: from the environment for now (CASITA_MEROSS_EMAIL, CASITA_MEROSS_PASSWORD);
-    # they move to Parameter Store next. Never put them in this file.
+    # email / password: from the environment for now (CASITA_MEROSS_EMAIL, CASITA_MEROSS_PASSWORD),
+    # or locally from the git-ignored config/meross.local.json (docs/MEROSS.md); the environment wins.
+    # They move to Parameter Store next. Never put them in this file.
     # device-uuid: only needed if the account has more than one garage opener.
     channel: 0
     request-timeout: 8s

@@ -18,13 +18,21 @@ class MerossConfig {
         return new MerossCloudApi(properties.apiBaseUrl(), properties.requestTimeout());
     }
 
+    /** The environment (CASITA_MEROSS_*, bound into the properties) first, then config/meross.local.json.
+     *  Startup fails here, with a message naming what's missing, when there is no email or password. */
     @Bean
-    MerossSession merossSession(MerossCloudApi api, MerossProperties properties, Clock clock) {
-        return new MerossSession(api, new HiveMqConnector(), properties, clock);
+    MerossLocalCredentials merossLocalCredentials(MerossProperties properties) {
+        return MerossLocalCredentials.resolve(properties.email(), properties.password(), properties.deviceUuid(),
+                MerossLocalCredentials.FILE, "CASITA_MEROSS_EMAIL and CASITA_MEROSS_PASSWORD");
     }
 
     @Bean
-    DoorDevice merossDoor(MerossSession session, MerossProperties properties) {
-        return new MerossDoor(session, properties.deviceUuid(), properties.channel(), properties.commandsEnabled());
+    MerossSession merossSession(MerossCloudApi api, MerossProperties properties, MerossLocalCredentials credentials, Clock clock) {
+        return new MerossSession(api, new HiveMqConnector(), properties.withCredentials(credentials), clock);
+    }
+
+    @Bean
+    DoorDevice merossDoor(MerossSession session, MerossProperties properties, MerossLocalCredentials credentials) {
+        return new MerossDoor(session, credentials.deviceUuid(), properties.channel(), properties.commandsEnabled());
     }
 }

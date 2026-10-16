@@ -13,3 +13,4 @@ target/
 *.local.properties
 application-local.yml
 .env
+config/meross.local.json

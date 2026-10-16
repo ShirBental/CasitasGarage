@@ -64,10 +64,44 @@ Legend:
 
 - Sign-in, session lifecycle and backoff, MQTT connection and reconnection, subscriptions.
 - **Read-only** door status (`GET`).
+- Local credentials from the environment or a git-ignored file (see "Local credentials").
 - The command path exists but is **off by default** (`casita.meross.commands-enabled: false`):
   every command is rejected before anything is sent. When it's turned on (only after the
   hardware checklist), commands are QoS 0, sent once, only while connected, and any failure
   after the publish starts is an unknown outcome.
+
+## Local credentials
+
+For local development and the read-only live check, the Meross email and password can come from
+the environment or from `config/meross.local.json`. Each value is taken from the environment when
+set, otherwise from the file. The file is git-ignored; never put real values in the example.
+
+```bash
+cp config/meross.local.example.json config/meross.local.json
+chmod 600 config/meross.local.json
+# edit config/meross.local.json: email, password, and deviceUuid if the account has several openers
+```
+
+| | Environment (wins) | File key |
+|---|---|---|
+| App (`casita.door=meross`) | `CASITA_MEROSS_EMAIL`, `CASITA_MEROSS_PASSWORD`, `CASITA_MEROSS_DEVICEUUID` | `email`, `password`, `deviceUuid` |
+| Live check | `MEROSS_EMAIL`, `MEROSS_PASSWORD`, `MEROSS_DEVICE_UUID` | same |
+
+The live check never runs on a plain `mvn test`, so tests don't sign in to the real account by
+accident. Ask for it:
+
+```bash
+mvn test -Dtest=MerossLiveCheckTest -Dmeross.live=true                 # credentials from the file
+MEROSS_EMAIL=... MEROSS_PASSWORD='...' mvn test -Dtest=MerossLiveCheckTest   # or from the environment
+```
+
+If the email or password is missing from both places, the app refuses to start and the live check
+fails, naming what's missing and where it looked. A malformed file, an unknown key (a typo such as
+`pasword`) or a non-string value fails the same way. Messages never include a value, and the JSON
+parser's own message isn't passed on, because it can quote the file. Credentials and tokens are
+not logged.
+
+Credentials move to Parameter Store later; this file is for local use only.
 
 ## Sources
 
