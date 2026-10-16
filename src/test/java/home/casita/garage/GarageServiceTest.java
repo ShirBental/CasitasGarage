@@ -251,10 +251,17 @@ class GarageServiceTest {
         clock.advance(Duration.ofSeconds(1));
         tasks.runDue();
         assertLatest(GarageService.CASITA, Action.CLOSE, Outcome.STUCK);
-        assertThat(lastPush()).contains("didn't close");
+        assertThat(lastPush()).contains("didn't close").contains("won't move it again");
 
-        // Once checked and reported, a new attempt is allowed.
+        // Reported, but not cleared: the door may be auto-reversing or blocked. Nothing is sent until a person
+        // has checked it and resumed, and then the door is watched for the travel time again before a close.
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.HELD);
+        assertThat(door.commands).containsExactly(false);
+        garage.resume("Hubby");
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.BUSY);
+        clock.advance(TRAVEL);
         assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(door.commands).containsExactly(false, false);
     }
 
     @Test
@@ -269,13 +276,14 @@ class GarageServiceTest {
         List<ActivityEvent> events = activity.recent(2);
         assertThat(events.get(1).who()).isEqualTo(GarageService.CASITA);
         assertThat(events.get(1).outcome()).isEqualTo(Outcome.STUCK); // Shir's close, reported first
-        assertThat(second.outcome()).isEqualTo(Outcome.MOVING);      // then Hubby's starts fresh
+        assertThat(second.outcome()).isEqualTo(Outcome.HELD);        // then Hubby's is held, not sent
         assertThat(events.get(0).who()).isEqualTo("Hubby");
+        assertThat(door.commands).containsExactly(false);
 
-        // The late task for Shir's close finally runs: it must not report again or touch Hubby's.
+        // The late task for Shir's close finally runs: it must not report again.
         tasks.runDue();
         assertThat(activity.recent(10)).filteredOn(e -> e.outcome() == Outcome.STUCK).hasSize(1);
-        assertThat(garage.status().door()).isEqualTo(DoorState.CLOSING);
+        assertThat(garage.status().held()).isTrue();
     }
 
     @Test
@@ -400,6 +408,7 @@ class GarageServiceTest {
         assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.STUCK);
         assertThat(lastPush()).contains("didn't close");
         assertThat(garage.status().door()).isEqualTo(DoorState.NOT_CLOSED);
+        assertThat(garage.status().held()).isTrue();
         assertThat(door.commands).containsExactly(false); // never retried, never reversed
     }
 
@@ -441,6 +450,99 @@ class GarageServiceTest {
         garage.status();
 
         assertThat(door.commands).containsExactly(true);
+    }
+
+    /* ---------- after STUCK or LOST: held until a person resumes ---------- */
+
+    @Test
+    void afterAStuckOpenANewOpenIsHeldEvenThoughTheSensorReadsClosed() {
+        garage.open("Shir");
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue(); // STUCK: still closed
+
+        CommandResult again = garage.open("Shir");
+
+        assertThat(again.outcome()).isEqualTo(Outcome.HELD);
+        assertThat(again.message()).contains("checked it");
+        assertThat(door.commands).containsExactly(true);
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.STUCK, Outcome.HELD);
+    }
+
+    @Test
+    void afterALostCheckCommandsAreHeldEvenOnceTheSensorIsBack() {
+        garage.open("Shir");
+        door.readFails = true;
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue(); // LOST
+        door.readFails = false;
+        door.open = true;
+        clock.advance(TRAVEL.multipliedBy(3));
+
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.HELD);
+        assertThat(garage.open("Shir").outcome()).isEqualTo(Outcome.HELD);
+        assertThat(door.commands).containsExactly(true);
+    }
+
+    @Test
+    void whileHeldTheStatusSaysSoAndNothingCanBeDone() {
+        garage.open("Shir");
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue(); // STUCK, door closed
+
+        GarageStatus status = garage.status();
+
+        assertThat(status.door()).isEqualTo(DoorState.CLOSED); // where the sensor says it is
+        assertThat(status.held()).isTrue();
+        assertThat(status.canOpen()).isFalse();
+        assertThat(status.canClose()).isFalse();
+    }
+
+    @Test
+    void resumeIsRecordedSendsNothingAndAllowsCommandsAgain() {
+        garage.open("Shir");
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue(); // STUCK
+
+        GarageStatus status = garage.resume("Hubby");
+
+        assertThat(status.held()).isFalse();
+        assertThat(status.canOpen()).isTrue();
+        assertLatest("Hubby", Action.OPEN, Outcome.RESUMED);
+        assertThat(door.commands).containsExactly(true);
+        assertThat(garage.open("Hubby").outcome()).isEqualTo(Outcome.MOVING);
+    }
+
+    @Test
+    void resumeNeedsAReadableSensor() {
+        garage.open("Shir");
+        door.readFails = true;
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue(); // LOST
+
+        GarageStatus status = garage.resume("Hubby");
+
+        assertThat(status.door()).isEqualTo(DoorState.UNKNOWN);
+        assertThat(status.held()).isTrue();
+        assertThat(outcomes()).doesNotContain(Outcome.RESUMED);
+    }
+
+    @Test
+    void resumeWhenNothingIsHeldChangesNothing() {
+        GarageStatus status = garage.resume("Hubby");
+
+        assertThat(status.held()).isFalse();
+        assertThat(activity.recent(10)).isEmpty();
+    }
+
+    @Test
+    void successfulMovementsNeverHold() {
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(TRAVEL.plus(GRACE));
+        tasks.runDue(); // OPEN_INFERRED
+
+        assertThat(garage.status().held()).isFalse();
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
     }
 
     /** Outcomes in the order they happened, ignoring who. */

@@ -52,6 +52,7 @@ class GarageControllerTest {
         mvc.perform(get("/api/activity")).andExpect(status().isUnauthorized());
         mvc.perform(post("/api/open").with(csrf())).andExpect(status().isUnauthorized());
         mvc.perform(post("/api/close").with(csrf())).andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/resume").with(csrf())).andExpect(status().isUnauthorized());
         assertThat(activity.recent(10)).isEmpty();
     }
 
@@ -67,7 +68,17 @@ class GarageControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.door").value("CLOSED"))
                 .andExpect(jsonPath("$.canOpen").value(true))
-                .andExpect(jsonPath("$.canClose").value(false));
+                .andExpect(jsonPath("$.canClose").value(false))
+                .andExpect(jsonPath("$.held").value(false));
+    }
+
+    @Test
+    void resumeNeedsCsrfAndWhenNothingIsHeldChangesNothing() throws Exception {
+        mvc.perform(post("/api/resume").with(user("shir"))).andExpect(status().isForbidden());
+        mvc.perform(post("/api/resume").with(user("shir")).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.held").value(false));
+        assertThat(activity.recent(10)).isEmpty();
     }
 
     @Test

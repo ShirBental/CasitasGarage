@@ -3,7 +3,8 @@ package home.casita.garage;
 /**
  * What happened when someone asked the door to move, or when Casita checked on it afterwards.
  * Every {@link #MOVING} or {@link #UNCONFIRMED} is followed by exactly one check outcome:
- * {@link #CLOSED_CONFIRMED}, {@link #OPEN_INFERRED}, {@link #STUCK} or {@link #LOST}.
+ * {@link #CLOSED_CONFIRMED}, {@link #OPEN_INFERRED}, {@link #STUCK} or {@link #LOST}. After a
+ * stuck or lost movement every command is {@link #HELD} until someone {@link #RESUMED}.
  */
 public enum Outcome {
     /** The command was acknowledged and the door should be moving. */
@@ -30,5 +31,9 @@ public enum Outcome {
     /** Check after a command, at travel time + grace: the door isn't where it was sent. */
     STUCK,
     /** Check after a command: the sensor couldn't be read, so the outcome is unknown. */
-    LOST
+    LOST,
+    /** A movement ended {@link #STUCK} or {@link #LOST} and nobody has resumed yet; nothing was sent. */
+    HELD,
+    /** Someone checked the door after a stuck or lost movement, and commands are allowed again. */
+    RESUMED
 }

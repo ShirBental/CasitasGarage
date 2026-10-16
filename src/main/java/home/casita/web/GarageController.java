@@ -49,6 +49,12 @@ class GarageController {
         return garage.close(user.getName());
     }
 
+    /** After a stuck or lost movement: the signed-in user has checked the door. Sends nothing to it. */
+    @PostMapping("/resume")
+    GarageStatus resume(Principal user) {
+        return garage.resume(user.getName());
+    }
+
     @GetMapping("/activity")
     List<ActivityEvent> activity() {
         return activity.recent(ACTIVITY_LIMIT);

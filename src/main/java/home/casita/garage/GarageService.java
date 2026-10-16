@@ -33,6 +33,10 @@ import org.springframework.stereotype.Service;
  *       position.</li>
  *   <li><b>Say what happened.</b> Every command and check is recorded; failed or unconfirmed
  *       movements are pushed to the family.</li>
+ *   <li><b>After a failure, wait for a person.</b> A movement that ended {@code STUCK} or {@code LOST}
+ *       leaves the door's position and the command's fate uncertain (an obstruction, an auto-reverse,
+ *       a late command). Every command is then refused ({@code HELD}) until someone has checked the
+ *       door and calls {@link #resume}; a later sensor reading alone never lifts it.</li>
  *   <li>Closing from the app can be switched off.</li>
  * </ol>
  *
@@ -74,6 +78,8 @@ public class GarageService {
     private Boolean lastSensorOpen;
     private Instant lastSensorChange;
     private boolean sawChange;
+    /** The action of the movement that ended stuck or lost, while commands are held; null when not held. */
+    private Action heldAfter;
 
     public GarageService(DoorDevice door, ActivityLog activity, Notifier notifier, DelayedTasks tasks,
                          Clock clock, GarageProperties properties) {
@@ -97,25 +103,50 @@ public class GarageService {
             reading = readSensor();
         } catch (DoorException e) {
             log.warn("Can't read the garage door: {}", e.getMessage());
-            return new GarageStatus(DoorState.UNKNOWN, null, false, false);
+            return new GarageStatus(DoorState.UNKNOWN, null, false, false, held());
         }
 
         if (m != null) {
-            if (!m.acknowledged()) return new GarageStatus(DoorState.CHECKING, m.startedAt(), false, false);
+            if (!m.acknowledged()) return new GarageStatus(DoorState.CHECKING, m.startedAt(), false, false, held());
             // "Not closed" proves nothing about an opening door, so wait for the check.
-            if (m.action() == Action.OPEN) return new GarageStatus(DoorState.OPENING, m.startedAt(), false, false);
-            if (reading.open()) return new GarageStatus(DoorState.CLOSING, m.startedAt(), false, false);
+            if (m.action() == Action.OPEN) return new GarageStatus(DoorState.OPENING, m.startedAt(), false, false, held());
+            if (reading.open()) return new GarageStatus(DoorState.CLOSING, m.startedAt(), false, false, held());
             // "Closed" proves the close finished: check it now.
             check(m, reading);
         }
 
         if (!reading.open()) {
-            return new GarageStatus(DoorState.CLOSED, since(reading), true, false);
+            return new GarageStatus(DoorState.CLOSED, since(reading), !held(), false, held());
         }
         if (!settled()) {
-            return new GarageStatus(sawChange ? DoorState.OPENING : DoorState.CHECKING, lastSensorChange, false, false);
+            return new GarageStatus(sawChange ? DoorState.OPENING : DoorState.CHECKING, lastSensorChange, false, false, held());
         }
-        return new GarageStatus(DoorState.NOT_CLOSED, since(reading), false, properties.allowRemoteClose());
+        return new GarageStatus(DoorState.NOT_CLOSED, since(reading), false, properties.allowRemoteClose() && !held(), held());
+    }
+
+    /**
+     * Someone has checked the door after a stuck or lost movement: allow commands again. The sensor must
+     * be readable, or the hold stays. The settle watch restarts, so an open door is watched for the
+     * travel time again before it may be closed. Nothing is sent. Does nothing when not held.
+     */
+    public synchronized GarageStatus resume(String who) {
+        if (heldAfter != null) {
+            try {
+                readSensor();
+            } catch (DoorException e) {
+                log.warn("Won't resume the garage: can't read the door: {}", e.getMessage());
+                return status();
+            }
+            record(who, heldAfter, Outcome.RESUMED);
+            heldAfter = null;
+            lastSensorChange = clock.instant();
+            sawChange = false;
+        }
+        return status();
+    }
+
+    private boolean held() {
+        return heldAfter != null;
     }
 
     public synchronized CommandResult open(String who) {
@@ -136,6 +167,11 @@ public class GarageService {
                 return result(Outcome.BUSY, "Give me a moment, I'm still checking on the door.");
             }
             check(pending, null); // overdue: settle the last movement before anything new
+        }
+        if (held()) {
+            record(who, action, Outcome.HELD);
+            return result(Outcome.HELD, "My last move didn't finish as expected, so I won't move the door until someone has "
+                    + "checked it and tells me it's OK.");
         }
 
         DoorDevice.Reading reading;
@@ -201,9 +237,10 @@ public class GarageService {
                 reading = readSensor();
             } catch (DoorException e) {
                 record(CASITA, m.action(), Outcome.LOST);
+                heldAfter = m.action();
                 notifier.send("I lost sight of the garage door after "
                         + (m.acknowledged() ? verbIng(m.action()) : "trying to " + verb(m.action()))
-                        + " it. Please check it.");
+                        + " it. Please check it; I won't move it again until someone tells me it's OK.");
                 return;
             }
         }
@@ -223,13 +260,16 @@ public class GarageService {
         }
 
         record(CASITA, m.action(), Outcome.STUCK);
+        heldAfter = m.action();
         if (!m.acknowledged()) {
             notifier.send("The garage door is still " + (reading.open() ? "not closed" : "closed")
-                    + ". My " + verb(m.action()) + " command may not have reached it. Please check before trying again.");
+                    + ". My " + verb(m.action()) + " command may not have reached it. Please check it; I won't move it again until "
+                    + "someone tells me it's OK.");
         } else if (m.action() == Action.OPEN) {
-            notifier.send("The garage door didn't open. Please check it.");
+            notifier.send("The garage door didn't open. Please check it; I won't move it again until someone tells me it's OK.");
         } else {
-            notifier.send("The garage door didn't close. Something may be in the way. Please check it.");
+            notifier.send("The garage door didn't close. Something may be in the way. Please check it; I won't move it again "
+                    + "until someone tells me it's OK.");
         }
     }
 

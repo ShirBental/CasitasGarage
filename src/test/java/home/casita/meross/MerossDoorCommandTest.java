@@ -264,6 +264,10 @@ class MerossDoorCommandTest {
         rig.runDueChecks(); // Ford still reports closed after the travel time
         assertThat(rig.outcomes()).containsExactly(Outcome.MOVING, Outcome.STUCK);
         assertThat(transport.sets()).isOne(); // never retried
+
+        // Asking again doesn't send a second SET: held until someone checks Ford and resumes.
+        assertThat(rig.service.open("Shir").outcome()).isEqualTo(Outcome.HELD);
+        assertThat(transport.sets()).isOne();
     }
 
     @Test
