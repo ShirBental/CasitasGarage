@@ -40,16 +40,17 @@ import tools.jackson.databind.json.JsonMapper;
  * that no SET was published.
  *
  * <h2>One real command to Ford: moves the door</h2>
- * Only after review, with someone at the garage watching it. Needs a confirmation naming the action,
- * Ford, channel 1 and today's date, so it can't be reused another day or for another door:
+ * Only with someone at the garage watching it. Each needs a confirmation naming its own action, Ford,
+ * channel 1 and today's date, so it can't be reused another day, for another door or the other way:
  * <pre>
- * mvn test -Dtest=MerossLiveCommandTest#oneConfirmedCommandToFord -Dmeross.live=true \
- *     -Dmeross.command.confirm=open-ford-channel-1-2026-10-16
+ * mvn test -Dtest=MerossLiveCommandTest#confirmedOpenOfFord  -Dmeross.live=true -Dmeross.command.confirm=open-ford-channel-1-2026-10-16
+ * mvn test -Dtest=MerossLiveCommandTest#confirmedCloseOfFord -Dmeross.live=true -Dmeross.command.confirm=close-ford-channel-1-2026-10-16
  * </pre>
- * It goes through GarageService, so every rule there applies: read first, only toward the opposite of
- * a settled reading, one command, never retried, a timeout is an unknown outcome. It then waits the
- * travel time ({@code MEROSS_TRAVEL_SECONDS}, default 20) and judges by the sensor, not by the SETACK.
- * Toyota and channel 3 are never sent anything.
+ * Both go through GarageService, so every rule there applies: read first, only toward the opposite of
+ * a settled reading, one command, never retried, a timeout is an unknown outcome. The close needs Ford
+ * already not closed, and watches it stay that way for the travel time ({@code MEROSS_TRAVEL_SECONDS},
+ * default 20) before sending. Afterwards both wait the travel time and judge by the sensor, never by
+ * the SETACK. Toyota and channel 3 are never sent anything.
  */
 @EnabledIf("home.casita.meross.MerossLiveCheckTest#requested")
 class MerossLiveCommandTest {
@@ -130,43 +131,75 @@ class MerossLiveCommandTest {
     }
 
     @Test
-    void oneConfirmedCommandToFord() throws Exception {
-        String action = confirmedAction();
-        assumeThat(action).as("needs -Dmeross.command.confirm=<open|close>-ford-channel-1-" + LocalDate.now()).isNotNull();
+    void confirmedOpenOfFord() throws Exception {
+        runConfirmed("open");
+    }
+
+    /**
+     * Ford must already be open (by hand, wall button or the open test) and stay "not closed" while it is
+     * watched for the travel time; then exactly one close, judged by the sensor afterwards.
+     */
+    @Test
+    void confirmedCloseOfFord() throws Exception {
+        runConfirmed("close");
+    }
+
+    /** One command to Ford through GarageService, only with today's confirmation for exactly this action. */
+    private static void runConfirmed(String action) throws Exception {
+        assumeThat(confirmedAction()).as("needs -Dmeross.command.confirm=" + action + "-ford-channel-1-" + LocalDate.now())
+                .isEqualTo(action);
+        boolean open = "open".equals(action);
         Duration travel = Duration.ofSeconds(Long.parseLong(System.getenv().getOrDefault("MEROSS_TRAVEL_SECONDS", "20")));
 
         Live live = connect(CommandMode.LIVE);
         try {
             MerossDoor ford = new MerossDoor(live.session(), live.opener().uuid(), FORD, CommandMode.LIVE, Set.of(FORD));
+
+            // 1. The starting state, read before anything else: open needs CLOSED, close needs NOT CLOSED.
+            DoorDevice.Reading start = ford.read();
+            System.out.println("Ford (channel 1) reads " + (start.open() ? "NOT CLOSED" : "CLOSED") + " before the " + action);
+            assertThat(start.open()).as(open ? "Ford must be closed before an open test" : "Ford must be open before a close test "
+                    + "(open it by hand or with the open test first); nothing was sent").isEqualTo(!open);
+
             InMemoryActivityLog activity = new InMemoryActivityLog();
             List<String> notifications = new ArrayList<>();
             List<Runnable> checks = new CopyOnWriteArrayList<>();
             GarageService garage = new GarageService(ford, activity, notifications::add, (when, task) -> checks.add(task),
                     Clock.systemUTC(), new GarageProperties(travel, Duration.ofSeconds(3), true));
+            System.out.println("Status: " + garage.status());
 
-            System.out.println("Before: " + garage.status());
-            if ("close".equals(action)) {
-                // GarageService closes only a door it has watched report "not closed" for the travel time.
-                Thread.sleep(travel.plusSeconds(1).toMillis());
-                System.out.println("Watched for " + travel.toSeconds() + "s: " + garage.status());
+            if (!open) {
+                // 2. GarageService closes only a door it has watched report "not closed" for the travel time.
+                //    Watch it every 2 s: if it ever reads closed, someone moved it, and nothing is sent.
+                long until = System.nanoTime() + travel.plusSeconds(2).toNanos();
+                while (System.nanoTime() < until) {
+                    Thread.sleep(2000);
+                    assertThat(ford.read().open()).as("Ford stayed not closed while watched; it changed, so nothing was sent").isTrue();
+                }
+                System.out.println("Watched Ford not closed for " + travel.toSeconds() + "s: " + garage.status());
+                System.out.println("Closing Ford now. Keep the doorway clear; the opener's photo eyes are the physical safety.");
             }
-            CommandResult result = "open".equals(action) ? garage.open("live test") : garage.close("live test");
+
+            // 3. Exactly one command, through all of GarageService's rules.
+            CommandResult result = open ? garage.open("live test") : garage.close("live test");
+            long sets = live.connector().publishedMethods.stream().filter("SET"::equals).count();
             System.out.println("Command: " + result.outcome() + " (" + result.message() + ")");
             System.out.println("Published on MQTT: " + live.connector().publishedMethods);
-            assertThat(live.connector().publishedMethods.stream().filter("SET"::equals).count()).as("at most one SET").isLessThanOrEqualTo(1);
-
-            if (result.outcome() == Outcome.MOVING || result.outcome() == Outcome.UNCONFIRMED) {
-                Thread.sleep(travel.plusSeconds(4).toMillis());
-                checks.forEach(Runnable::run); // the check GarageService scheduled: judged by the sensor
-            }
-            System.out.println("Activity: " + activity.recent(10).reversed().stream().map(ActivityEvent::outcome).toList());
-            System.out.println("Notifications: " + notifications);
-            DoorDevice.Reading after = ford.read();
-            System.out.println("Ford (channel 1) now reads " + (after.open() ? "NOT CLOSED" : "CLOSED"));
-            assertThat(live.connector().publishedMethods.stream().filter("SET"::equals).count()).as("never retried").isLessThanOrEqualTo(1);
             assertThat(result.outcome()).as("the command was sent").isIn(Outcome.MOVING, Outcome.UNCONFIRMED);
-            assertThat(after.open()).as("the sensor shows Ford " + ("open".equals(action) ? "not closed" : "closed"))
-                    .isEqualTo("open".equals(action));
+            assertThat(sets).as("exactly one SET").isEqualTo(1);
+
+            // 4. Judged by the sensor after the travel time, never by the SETACK. No retry, whatever happens.
+            Thread.sleep(travel.plusSeconds(4).toMillis());
+            checks.forEach(Runnable::run); // the check GarageService scheduled
+            List<Outcome> outcomes = activity.recent(10).reversed().stream().map(ActivityEvent::outcome).toList();
+            DoorDevice.Reading after = ford.read();
+            System.out.println("Activity: " + outcomes);
+            System.out.println("Notifications: " + notifications);
+            System.out.println("Ford (channel 1) now reads " + (after.open() ? "NOT CLOSED" : "CLOSED") + "; status " + garage.status());
+
+            assertThat(live.connector().publishedMethods.stream().filter("SET"::equals).count()).as("never retried").isEqualTo(1);
+            assertThat(after.open()).as("the sensor shows Ford " + (open ? "not closed" : "closed")).isEqualTo(open);
+            assertThat(outcomes).as("the final check").last().isEqualTo(open ? Outcome.OPEN_INFERRED : Outcome.CLOSED_CONFIRMED);
         } finally {
             live.session().destroy();
         }
