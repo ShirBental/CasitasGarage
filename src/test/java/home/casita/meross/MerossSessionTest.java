@@ -61,7 +61,7 @@ class MerossSessionTest {
         connector = new FakeConnector();
         clock = new MutableClock(Instant.parse("2026-10-15T22:00:00Z"));
         session = new MerossSession(api, connector,
-                new MerossProperties("https://iotx-us.meross.com", EMAIL, PASSWORD, null, 0, TIMEOUT, false, Map.of()),
+                new MerossProperties("https://iotx-us.meross.com", EMAIL, PASSWORD, null, 0, TIMEOUT, CommandMode.OFF, Map.of(), java.util.Set.of()),
                 clock, Runnable::run);
         logs = new ListAppender<>();
         logs.start();
@@ -137,6 +137,28 @@ class MerossSessionTest {
         assertKind(() -> session.get(DOOR, NS), Kind.TIMEOUT);
         assertThat(logText()).contains("reason=signature_bad")
                 .contains("outcome=timeout").contains("published=yes acked=yes reply=none received_meanwhile={bad_signature=1}");
+    }
+
+    /* ---------- dry run ---------- */
+
+    @Test
+    void aDryRunBuildsAndSignsTheSetButPublishesNothing() throws Exception {
+        connector.nextResponder = door(Map.of("state", List.of()));
+        session.get(DOOR, NS); // connected
+        int before = connector.only().published.size();
+
+        String built = session.dryRunSet(DOOR, NS, Map.of("state", Map.of("channel", 1, "open", 1, "uuid", DOOR)));
+
+        assertThat(connector.only().published).hasSize(before);
+        assertThat(built).contains("SET " + NS).contains("payload keys [state]").contains("signed").doesNotContain(KEY);
+        assertThat(logText()).contains("event=command outcome=dry_run namespace=" + NS).doesNotContain(KEY);
+    }
+
+    @Test
+    void aDryRunNeedsAConnectedSessionLikeARealCommand() {
+        assertThatThrownBy(() -> session.dryRunSet(DOOR, NS, Map.of("state", Map.of())))
+                .isInstanceOf(DoorCommandRejectedException.class);
+        assertThat(connector.created).isEmpty(); // it never signs in or connects on the spot
     }
 
     /* ---------- diagnosing a read that times out ---------- */

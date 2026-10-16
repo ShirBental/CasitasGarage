@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 
 import home.casita.garage.DoorDevice;
 
-/** Wires the Meross door in when {@code casita.door=meross}. Commands stay off unless enabled. */
+/** Wires the Meross door in when {@code casita.door=meross}. Commands stay off unless command-mode says otherwise. */
 @Configuration
 @ConditionalOnProperty(name = "casita.door", havingValue = "meross")
 class MerossConfig {
@@ -38,6 +38,7 @@ class MerossConfig {
             throw new IllegalStateException("Several doors are configured (casita.meross.doors " + new java.util.TreeMap<>(properties.doors())
                     + "); set casita.meross.channel to the one this Casita reads");
         }
-        return new MerossDoor(session, credentials.deviceUuid(), properties.channel(), properties.commandsEnabled());
+        return new MerossDoor(session, credentials.deviceUuid(), properties.channel(), properties.commandMode(),
+                properties.commandChannels());
     }
 }
