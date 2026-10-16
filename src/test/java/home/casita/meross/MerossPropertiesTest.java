@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -26,7 +27,8 @@ class MerossPropertiesTest {
 
         assertThat(props.doors()).isEqualTo(Map.of(1, "Ford", 2, "Toyota"));
         assertThat(props.channel()).isNull();
-        assertThat(props.commandsEnabled()).isFalse();
+        assertThat(props.commandMode()).isEqualTo(CommandMode.OFF);
+        assertThat(props.commandChannels()).isEmpty();
     }
 
     @Test
@@ -34,36 +36,79 @@ class MerossPropertiesTest {
         assertThat(bind(Map.of("casita.meross.doors.1", "Ford", "casita.meross.doors.2", "Toyota", "casita.meross.channel", "2")).channel())
                 .isEqualTo(2);
 
-        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, 3, Duration.ofSeconds(8), false,
-                Map.of(1, "Ford", 2, "Toyota")))
+        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, 3, Duration.ofSeconds(8), CommandMode.OFF,
+                Map.of(1, "Ford", 2, "Toyota"), Set.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("casita.meross.channel 3").hasMessageContaining("{1=Ford, 2=Toyota}");
     }
 
     @Test
     void withoutNamedDoorsAnyChannelIsAccepted() {
-        assertThat(new MerossProperties("https://iotx-us.meross.com", null, null, null, 0, Duration.ofSeconds(8), false, null).doors()).isEmpty();
+        assertThat(new MerossProperties("https://iotx-us.meross.com", null, null, null, 0, Duration.ofSeconds(8), CommandMode.OFF, null, null).doors()).isEmpty();
     }
 
     @Test
     void credentialsKeepTheDoorsAndChannel() {
-        MerossProperties props = new MerossProperties("https://iotx-us.meross.com", null, null, null, 1, Duration.ofSeconds(8), false,
-                Map.of(1, "Ford", 2, "Toyota"));
+        MerossProperties props = new MerossProperties("https://iotx-us.meross.com", null, null, null, 1, Duration.ofSeconds(8), CommandMode.OFF,
+                Map.of(1, "Ford", 2, "Toyota"), Set.of());
 
         MerossProperties withCreds = props.withCredentials(new MerossLocalCredentials("a@example.com", "p", null));
 
         assertThat(withCreds.channel()).isEqualTo(1);
         assertThat(withCreds.doors()).isEqualTo(Map.of(1, "Ford", 2, "Toyota"));
-        assertThat(withCreds.commandsEnabled()).isFalse();
+        assertThat(withCreds.commandMode()).isEqualTo(CommandMode.OFF);
     }
 
     @Test
     void toStringShowsDoorsButNeitherCredentialsNorTheFullUuid() {
         String shown = new MerossProperties("https://iotx-us.meross.com", "a@example.com", "hunter2-secret",
-                "1912089283245425180234298f1a2b3c", 1, Duration.ofSeconds(8), false, Map.of(1, "Ford", 2, "Toyota")).toString();
+                "1912089283245425180234298f1a2b3c", 1, Duration.ofSeconds(8), CommandMode.OFF, Map.of(1, "Ford", 2, "Toyota"), Set.of()).toString();
 
         assertThat(shown).contains("channel=1", "{1=Ford, 2=Toyota}", "…2b3c")
                 .doesNotContain("a@example.com").doesNotContain("hunter2").doesNotContain("1912089283245425180234298f1a");
+    }
+
+    @Test
+    void theCommittedApplicationYmlKeepsCommandsOffAndOnlyFordAllowed() throws Exception {
+        // YAML reads a bare `off` as false; this proves the committed file binds to OFF, not a binding error.
+        var sources = new org.springframework.boot.env.YamlPropertySourceLoader()
+                .load("application.yml", new org.springframework.core.io.ClassPathResource("application.yml"));
+        MerossProperties props = new Binder(org.springframework.boot.context.properties.source.ConfigurationPropertySources.from(sources))
+                .bind("casita.meross", MerossProperties.class).get();
+
+        assertThat(props.commandMode()).isEqualTo(CommandMode.OFF);
+        assertThat(props.commandChannels()).containsExactly(1);
+        assertThat(props.doors()).isEqualTo(Map.of(1, "Ford", 2, "Toyota"));
+        assertThat(props.channel()).isNull();
+    }
+
+    @Test
+    void bindsEachCommandModeAndTheAllowedChannels() {
+        for (Map.Entry<String, CommandMode> mode : Map.of("off", CommandMode.OFF, "dry-run", CommandMode.DRY_RUN, "live", CommandMode.LIVE).entrySet()) {
+            MerossProperties props = bind(Map.of("casita.meross.command-mode", mode.getKey(), "casita.meross.channel", "1",
+                    "casita.meross.command-channels[0]", "1"));
+            assertThat(props.commandMode()).isEqualTo(mode.getValue());
+            assertThat(props.commandChannels()).containsExactly(1);
+        }
+    }
+
+    @Test
+    void liveNeedsTheChannelSetAndAllowed() {
+        Map<Integer, String> doors = Map.of(1, "Ford", 2, "Toyota");
+        assertThat(new MerossProperties("https://iotx-us.meross.com", null, null, null, 1, Duration.ofSeconds(8), CommandMode.LIVE, doors,
+                Set.of(1)).commandMode()).isEqualTo(CommandMode.LIVE);
+
+        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, 2, Duration.ofSeconds(8), CommandMode.LIVE,
+                doors, Set.of(1))).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("command-mode live");
+        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, null, Duration.ofSeconds(8), CommandMode.LIVE,
+                doors, Set.of(1))).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("command-mode live");
+    }
+
+    @Test
+    void allowedCommandChannelsMustBeNamedDoors() {
+        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, 1, Duration.ofSeconds(8), CommandMode.OFF,
+                Map.of(1, "Ford", 2, "Toyota"), Set.of(1, 3)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("command-channels [1, 3]");
     }
 
     @Test

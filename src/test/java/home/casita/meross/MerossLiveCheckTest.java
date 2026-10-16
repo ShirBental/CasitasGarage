@@ -65,14 +65,14 @@ class MerossLiveCheckTest {
         Map<Integer, String> doors = doors();
         MerossProperties props = new MerossProperties(
                 System.getenv().getOrDefault("MEROSS_API", "https://iotx-us.meross.com"),
-                null, null, null, null, Duration.ofSeconds(10), false, doors).withCredentials(credentials);
+                null, null, null, null, Duration.ofSeconds(10), CommandMode.OFF, doors, java.util.Set.of()).withCredentials(credentials);
         MerossCloudApi api = new MerossCloudApi(props.apiBaseUrl(), props.requestTimeout());
         MerossSession session = new MerossSession(api, new HiveMqConnector(), props, Clock.systemUTC());
         try {
             List<MerossDeviceInfo> devices = session.devices();
             System.out.println("Meross devices: " + devices);
 
-            MerossDoor.Opener opener = new MerossDoor(session, props.deviceUuid(), null, false).opener();
+            MerossDoor.Opener opener = MerossDoor.readOnly(session, props.deviceUuid(), null).opener();
             System.out.println("Opener: " + opener);
 
             // The read path must be one the opener advertises.
@@ -81,7 +81,7 @@ class MerossLiveCheckTest {
             assertThat(abilities).as("the opener advertises " + readNamespace).containsKey(readNamespace);
 
             for (Map.Entry<Integer, String> door : doors.entrySet()) {
-                MerossDoor merossDoor = new MerossDoor(session, opener.uuid(), door.getKey(), false);
+                MerossDoor merossDoor = MerossDoor.readOnly(session, opener.uuid(), door.getKey());
                 DoorDevice.Reading reading = merossDoor.read();
                 System.out.println(door.getValue() + " (channel " + door.getKey() + "): " + (reading.open() ? "NOT CLOSED" : "CLOSED")
                         + " (lmTime " + reading.changedAt() + ")");
@@ -94,7 +94,7 @@ class MerossLiveCheckTest {
                 // A disabled channel must be refused, not read as "open". Our opener's channel 3 is disabled;
                 // on another account this may not apply, so it's reported rather than required.
                 try {
-                    DoorDevice.Reading third = new MerossDoor(session, opener.uuid(), 3, false).read();
+                    DoorDevice.Reading third = MerossDoor.readOnly(session, opener.uuid(), 3).read();
                     System.out.println("Channel 3 is enabled on this opener: " + (third.open() ? "NOT CLOSED" : "CLOSED"));
                 } catch (MerossException e) {
                     System.out.println("Channel 3: refused, " + e.kind() + " (" + e.getMessage() + ")");

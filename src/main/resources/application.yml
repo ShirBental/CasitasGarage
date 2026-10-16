@@ -23,9 +23,12 @@ casita:
     # channel: which of those doors this Casita reads (1 = Ford, 2 = Toyota). Required with the real
     # door: there is no default, and an MSG200 has no channel 0. Set it with CASITA_MEROSS_CHANNEL.
     request-timeout: 8s
-    # Sending open/close to the real door. Keep false until the hardware prerequisites in
-    # docs/DESIGN.md are checked. While false, every command is rejected before sending.
-    commands-enabled: false
+    # Sending open/close to the real door: off (every command rejected before anything is built),
+    # dry-run (checked and built, never sent) or live. Keep off until the hardware prerequisites in
+    # docs/DESIGN.md are checked. Live also needs 'channel' set and listed in command-channels.
+    command-mode: "off"     # quoted: YAML reads a bare off as false
+    # The only doors that may be sent a command. Ford first; Toyota and channel 3 are not operated yet.
+    command-channels: [1]
   garage:
     travel-time: 10s        # how long our door takes to fully open or close
     verify-grace: 2s        # extra wait before checking it got there

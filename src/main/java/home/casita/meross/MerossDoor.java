@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 import home.casita.garage.DoorCommandRejectedException;
 import home.casita.garage.DoorDevice;
@@ -28,8 +29,19 @@ import home.casita.meross.MerossException.Kind;
  * </ul>
  *
  * <h2>Commands</h2>
- * Off unless {@code casita.meross.commands-enabled} is true; while off, every command is rejected
- * before anything is sent. Commands to an MSG200 are refused even then: its write path is unverified.
+ * {@code SET Appliance.GarageDoor.State} with {@code {"state": {"channel": c, "open": 0|1, "uuid": u}}},
+ * as MerossIot sends it over the cloud (meross_lan sends the same without {@code uuid} over local
+ * HTTP). Not yet tried on our MSG200; see docs/MEROSS.md. Before anything is built:
+ * <ol>
+ *   <li>the command mode must be {@link CommandMode#DRY_RUN} or {@link CommandMode#LIVE} ({@code off} by default);</li>
+ *   <li>the channel must be configured and listed in {@code command-channels};</li>
+ *   <li>the door is read again: it must be enabled and report the opposite of the target. Any doubt
+ *       and nothing is sent.</li>
+ * </ol>
+ * In dry-run mode the signed command is built and the command is then rejected: nothing is published.
+ * In live mode it is sent once (never retried). The acknowledgement is not proof of movement:
+ * {@code GarageService} checks the sensor after the travel time. An acknowledgement that says the
+ * opener didn't execute ({@code execute: 0}), or that is about another channel, is an unknown outcome.
  */
 class MerossDoor implements DoorDevice {
 
@@ -51,18 +63,28 @@ class MerossDoor implements DoorDevice {
     private final MerossTransport transport;
     private final String configuredUuid;
     private final Integer channel;
-    private final boolean commandsEnabled;
+    private final CommandMode commandMode;
+    private final Set<Integer> commandChannels;
     private volatile Opener opener;
 
     /**
-     * @param channel the door's channel, or null if none was configured (allowed only for an MSG100,
-     *                which then uses channel 0)
+     * @param channel         the door's channel, or null if none was configured (allowed only for an MSG100,
+     *                        which then uses channel 0 to read; commands always need it set)
+     * @param commandMode     off, dry-run or live
+     * @param commandChannels the only channels a command may go to
      */
-    MerossDoor(MerossTransport transport, String configuredUuid, Integer channel, boolean commandsEnabled) {
+    MerossDoor(MerossTransport transport, String configuredUuid, Integer channel, CommandMode commandMode,
+               Set<Integer> commandChannels) {
         this.transport = transport;
         this.configuredUuid = configuredUuid == null || configuredUuid.isBlank() ? null : configuredUuid.trim();
         this.channel = channel;
-        this.commandsEnabled = commandsEnabled;
+        this.commandMode = commandMode == null ? CommandMode.OFF : commandMode;
+        this.commandChannels = commandChannels == null ? Set.of() : Set.copyOf(commandChannels);
+    }
+
+    /** A door that can only be read: commands are off. */
+    static MerossDoor readOnly(MerossTransport transport, String configuredUuid, Integer channel) {
+        return new MerossDoor(transport, configuredUuid, channel, CommandMode.OFF, Set.of());
     }
 
     @Override
@@ -81,8 +103,9 @@ class MerossDoor implements DoorDevice {
 
     @Override
     public void command(boolean open) throws DoorException {
-        if (!commandsEnabled) {
-            throw new DoorCommandRejectedException("Door commands are turned off (casita.meross.commands-enabled); nothing was sent");
+        String target = open ? "open" : "close";
+        if (commandMode == CommandMode.OFF) {
+            throw new DoorCommandRejectedException("Door commands are turned off (casita.meross.command-mode); nothing was sent");
         }
         Opener o;
         try {
@@ -90,14 +113,64 @@ class MerossDoor implements DoorDevice {
         } catch (DoorException e) {
             throw new DoorCommandRejectedException("Couldn't find the opener, so nothing was sent: " + e.getMessage(), e);
         }
-        if (MSG200.equals(o.type())) {
-            throw new DoorCommandRejectedException("Commands to an MSG200 aren't supported yet (its write path is unverified); nothing was sent");
+        if (channel == null) {
+            throw new DoorCommandRejectedException("No door channel is configured (casita.meross.channel); nothing was sent");
         }
+        if (!commandChannels.contains(channel)) {
+            throw new DoorCommandRejectedException("Commands to door channel " + channel + " aren't allowed (casita.meross.command-channels "
+                    + new TreeSet<>(commandChannels) + "); nothing was sent");
+        }
+
+        // Read the door again, here, just before building the command: it must be enabled and report the
+        // opposite of the target. GarageService has read it too; this guards every other caller as well.
+        Reading now;
+        try {
+            now = read();
+        } catch (DoorException e) {
+            throw new DoorCommandRejectedException("Couldn't read door channel " + channel + " just before the " + target
+                    + ", so nothing was sent: " + e.getMessage(), e);
+        }
+        if (now.open() == open) {
+            throw new DoorCommandRejectedException("Door channel " + channel + " already reports " + (open ? "not closed" : "closed")
+                    + "; a " + target + " could act like a button press, so nothing was sent");
+        }
+
         Map<String, Object> state = new LinkedHashMap<>();
-        state.put("channel", channel == null ? 0 : channel);
+        state.put("channel", channel);
         state.put("open", open ? 1 : 0);
         state.put("uuid", o.uuid());
-        transport.setOnce(o.uuid(), NS_GARAGE_DOOR, Map.of("state", state));
+        Map<String, Object> payload = Map.of("state", state);
+
+        if (commandMode == CommandMode.DRY_RUN) {
+            String built = transport.dryRunSet(o.uuid(), NS_GARAGE_DOOR, payload);
+            throw new DoorCommandRejectedException("Dry run: the " + target + " for door channel " + channel + " was checked and built ("
+                    + built + ") but not sent; nothing moved");
+        }
+        Map<String, Object> ack = transport.setOnce(o.uuid(), NS_GARAGE_DOOR, payload);
+        checkAcknowledgement(ack, open);
+    }
+
+    /**
+     * The opener said SETACK. That says the message arrived, not that the door moved; GarageService
+     * checks the sensor afterwards. Here only an acknowledgement that contradicts the command is caught.
+     * Its {@code state} (an object, or a one-item list) may carry {@code execute}: 1 when the opener acted,
+     * 0 when it didn't. Its {@code open} is the state before moving, so it isn't checked.
+     */
+    void checkAcknowledgement(Map<String, Object> ack, boolean open) throws DoorException {
+        Object stateNode = ack.get("state");
+        List<?> entries = stateNode instanceof List<?> list ? list : stateNode == null ? List.of() : List.of(stateNode);
+        if (entries.isEmpty()) return; // a bare SETACK: nothing to contradict
+        Map<String, Object> s = MerossCloudApi.map(entries.get(0));
+        Object ch = s.get("channel");
+        if (entries.size() > 1 || (ch != null && MerossCloudApi.number(ch) != channel)) {
+            throw new MerossException(Kind.PROTOCOL, "The opener acknowledged a command for another door channel than " + channel
+                    + "; whether door " + channel + " acted is unknown");
+        }
+        Object execute = s.get("execute");
+        if (execute != null && MerossCloudApi.number(execute) != 1) {
+            throw new MerossException(Kind.DEVICE_ERROR, "The opener acknowledged the " + (open ? "open" : "close") + " for door channel "
+                    + channel + " but said it didn't carry it out (execute " + execute + ")");
+        }
     }
 
     /**

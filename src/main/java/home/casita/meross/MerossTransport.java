@@ -23,4 +23,12 @@ interface MerossTransport {
      * @throws DoorException                if the outcome is unknown
      */
     Map<String, Object> setOnce(String deviceUuid, String namespace, Map<String, Object> payload) throws DoorException;
+
+    /**
+     * Builds and signs the {@code SET} that {@link #setOnce} would send, checks it could be sent now,
+     * and publishes nothing. Returns a description safe to log (no uuid, key or payload values).
+     *
+     * @throws DoorCommandRejectedException if it couldn't be sent now (for example, not connected)
+     */
+    String dryRunSet(String deviceUuid, String namespace, Map<String, Object> payload) throws DoorException;
 }

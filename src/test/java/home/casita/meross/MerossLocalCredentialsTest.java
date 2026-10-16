@@ -144,11 +144,11 @@ class MerossLocalCredentialsTest {
 
     @Test
     void credentialsDoNotChangeTheCommandSafetyDefault() {
-        MerossProperties configured = new MerossProperties("https://iotx-us.meross.com", null, null, null, 0, Duration.ofSeconds(8), false, java.util.Map.of());
+        MerossProperties configured = new MerossProperties("https://iotx-us.meross.com", null, null, null, 0, Duration.ofSeconds(8), CommandMode.OFF, java.util.Map.of(), java.util.Set.of());
 
         MerossProperties withCreds = configured.withCredentials(new MerossLocalCredentials("a@example.com", "p", "uuid-1"));
 
-        assertThat(withCreds.commandsEnabled()).isFalse();
+        assertThat(withCreds.commandMode()).isEqualTo(CommandMode.OFF);
         assertThat(withCreds.email()).isEqualTo("a@example.com");
         assertThat(withCreds.deviceUuid()).isEqualTo("uuid-1");
         assertThat(withCreds.toString()).doesNotContain("a@example.com");
