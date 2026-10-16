@@ -114,7 +114,12 @@ so one instance reads one of these; driving both from one instance is a separate
 
 ## Commands
 
-**Confirmed on our MSG200 (2026-10-15):** one `SET` to Ford (channel 1) over the cloud opened it; a `SETACK` came back and the sensor then read not closed. Closing by command hasn't been tried yet.
+**Confirmed on our MSG200, Ford (channel 1) only, over the cloud:**
+
+- **Open (2026-10-15):** one `SET`, `SETACK` received, sensor not closed afterwards, door seen fully open.
+- **Close (2026-10-16):** Ford watched not closed for the travel time (20 s), then one `SET`; `SETACK` received, sensor closed afterwards, recorded `MOVING` then `CLOSED_CONFIRMED`.
+
+Each sent exactly one `SET`, with no retry. Toyota and channel 3 have not been sent a command.
 
 | Fact | Status |
 |---|---|
@@ -123,7 +128,7 @@ so one instance reads one of these; driving both from one instance is a separate
 | The reply is `SETACK` with `state` (an object or a one-item list) carrying `channel`, `open`, `lmTime` and `execute` | Confirmed (source) [9], from real devices' traces in meross_lan |
 | `execute: 1`: the opener acted. `execute: 0`: it didn't (seen when the door was already in that position) | Confirmed (source) [9]. meross_lan says it has rarely seen 0 |
 | The `open` in a SETACK is the state *before* moving; the door changes after its travel time (15 s by default in `Appliance.GarageDoor.MultipleConfig`) | Confirmed (source) [9], emulator and traces |
-| Our MSG200 answers this SET over the cloud | **Confirmed (our device)** for an open of Ford: `SETACK` received, door opened fully (seen), sensor not closed. Not yet tried: close, Toyota. Its GET on this namespace still never answers |
+| Our MSG200 answers this SET over the cloud | **Confirmed (our device)** for Ford, open and close: `SETACK` each time, and the sensor then matched. Not yet tried: Toyota. Its GET on this namespace still never answers |
 
 How Casita sends one (`MerossDoor.command`), in order; anything failing before the send means
 nothing was sent:
