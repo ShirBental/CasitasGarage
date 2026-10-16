@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6efe2">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Casita">
+  <title>Casita</title>
+  <link rel="stylesheet" href="/casita.css">
+</head>
+<body class="welcome">
+  <main>
+    <img class="watson" src="/watson.svg" alt="Watson" width="132" height="132">
+    <h1>Casita</h1>
+    <p class="voice" id="message">Hi! It's me, Casita. Sign in with Face ID.</p>
+    <button id="signin" class="primary" type="button">Sign in with Face ID</button>
+    <p class="note">New phone? Ask for an invite link.</p>
+  </main>
+  <script src="/login/webauthn.js"></script>
+  <script src="/common.js"></script>
+  <script src="/login.js"></script>
+</body>
+</html>

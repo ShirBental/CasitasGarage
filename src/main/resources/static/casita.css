@@ -1,0 +1,127 @@
+/* Casita: warm, calm, playful. Sage, warm cream, terracotta and deep pine. Mobile first. */
+:root {
+  --cream: #f6efe2;
+  --cream-deep: #ece2cf;
+  --paper: #fbf7ef;
+  --sage: #9db08a;
+  --sage-soft: #dfe6d3;
+  --terracotta: #c4683f;
+  --terracotta-deep: #a8532f;
+  --pine: #1f3b2d;
+  --pine-soft: #4c6556;
+  --radius: 26px;
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--pine);
+  background: var(--cream);
+  -webkit-text-size-adjust: 100%;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: max(16px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom));
+  background: radial-gradient(120% 60% at 50% 0%, var(--paper) 0%, var(--cream) 60%);
+}
+
+main { max-width: 440px; margin: 0 auto; }
+
+h1 { font-size: 1.5rem; margin: 0; letter-spacing: 0.01em; }
+p { line-height: 1.45; }
+
+.watson { display: block; border-radius: 50%; }
+
+/* ---------- top bar ---------- */
+.top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.top .watson { width: 44px; height: 44px; }
+.top h1 { flex: 1; }
+.link {
+  background: none; border: none; color: var(--pine-soft); font: inherit; font-size: 0.95rem;
+  padding: 8px; cursor: pointer; text-decoration: none;
+}
+
+.mode {
+  display: none; margin: 0 0 14px; padding: 10px 14px; border-radius: 16px;
+  background: var(--sage-soft); color: var(--pine); font-size: 0.95rem;
+}
+.mode.shown { display: block; }
+.mode a, .note a, .success a { color: var(--pine); font-weight: 600; }
+
+/* ---------- the door ---------- */
+.door {
+  background: var(--paper); border-radius: var(--radius); padding: 22px 22px 24px;
+  box-shadow: 0 1px 0 rgba(31, 59, 45, 0.04), 0 10px 30px rgba(31, 59, 45, 0.08);
+}
+.door .name { margin: 0; font-size: 1rem; color: var(--pine-soft); font-weight: 600; }
+.door .state { margin: 6px 0 2px; font-size: 2.6rem; font-weight: 700; line-height: 1.1; }
+.door .since { margin: 0; color: var(--pine-soft); }
+.door.closed .state { color: var(--pine); }
+.door.not-closed .state { color: var(--terracotta-deep); }
+.door.unknown .state { color: var(--pine-soft); }
+
+.held {
+  display: none; margin: 16px 0 0; padding: 14px; border-radius: 18px;
+  background: #f5ddd0; color: var(--pine);
+}
+.held.shown { display: block; }
+.held p { margin: 0 0 10px; }
+
+/* ---------- the one action ---------- */
+.hold {
+  position: relative; overflow: hidden; display: block; width: 100%; margin-top: 22px;
+  border: none; border-radius: 22px; padding: 22px 16px;
+  font: inherit; font-size: 1.25rem; font-weight: 700; color: var(--paper);
+  background: var(--terracotta); cursor: pointer;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none;
+}
+.hold .fill {
+  position: absolute; inset: 0; width: 0; background: var(--terracotta-deep);
+  transition: width 0s linear;
+}
+.hold.holding .fill { width: 100%; transition: width 0.9s linear; }
+.hold .label { position: relative; }
+.hold:disabled { background: var(--cream-deep); color: var(--pine-soft); cursor: default; }
+
+.primary, .secondary {
+  display: block; width: 100%; border: none; border-radius: 18px; padding: 16px;
+  font: inherit; font-size: 1.1rem; font-weight: 700; cursor: pointer;
+}
+.primary { background: var(--terracotta); color: var(--paper); }
+.secondary { background: var(--sage-soft); color: var(--pine); }
+
+.reply { min-height: 1.45em; margin: 14px 4px 0; color: var(--pine-soft); }
+
+/* ---------- watched doors (read-only) ---------- */
+.watched { margin-top: 14px; display: grid; gap: 10px; }
+.watched .door { padding: 16px 20px; display: flex; align-items: baseline; justify-content: space-between; box-shadow: none; }
+.watched .door .state { font-size: 1.15rem; margin: 0; }
+.watched .door .ro { font-size: 0.85rem; color: var(--pine-soft); }
+
+/* ---------- activity ---------- */
+.activity { margin-top: 26px; }
+.activity h2 { font-size: 1rem; color: var(--pine-soft); margin: 0 0 8px 4px; }
+.activity ul { list-style: none; margin: 0; padding: 0; }
+.activity li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 4px; border-top: 1px solid var(--cream-deep); }
+.activity li:first-child { border-top: none; }
+.activity time { color: var(--pine-soft); white-space: nowrap; font-size: 0.9rem; }
+
+/* ---------- sign-in and Face ID pages ---------- */
+.welcome main { text-align: center; padding-top: 8vh; }
+.welcome .watson { width: 132px; height: 132px; margin: 0 auto 18px; }
+.welcome h1 { font-size: 2rem; }
+.voice { font-size: 1.1rem; margin: 12px 0 26px; }
+.note { color: var(--pine-soft); font-size: 0.95rem; margin-top: 18px; }
+.field { display: block; text-align: left; margin: 0 0 14px; }
+.field input {
+  display: block; width: 100%; margin-top: 6px; padding: 14px; border-radius: 14px;
+  border: 1px solid var(--cream-deep); background: var(--paper); font: inherit; color: var(--pine);
+}
+.success, .error { display: none; padding: 14px; border-radius: 16px; margin: 0 0 16px; }
+.success { background: var(--sage-soft); }
+.error { background: #f5ddd0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hold.holding .fill { transition: none; }
+}

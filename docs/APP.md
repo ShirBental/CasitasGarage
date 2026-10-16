@@ -1,0 +1,130 @@
+# Casita: the app
+
+The family's garage app: one clear door status, one action, a short history. It follows the design
+doc (`docs/DESIGN.md` on the `docs/design` branch): sections 3 (who can use Casita), 8 (API) and
+9 (web app). This file records what is built, how it's secured, and what's still to do.
+
+**Real door control through the app is not enabled.** With `casita.door=meross`, commands reach
+Ford only when `casita.meross.command-mode` is `live`; it is `"off"` by default, and the app then
+disables its action button. Turning it on waits for review.
+
+## What's built
+
+| Piece | Where |
+|---|---|
+| Passkey sign-in (Face ID) | `SecurityConfig`: Spring Security WebAuthn, Casita's own `/login` page using Spring's passkey script |
+| Invites for a new phone | Spring Security one-time tokens; `InviteLinks` writes the link to a file on the server |
+| Face ID setup | `/passkey` (Spring's script, Casita's page) |
+| Passkey storage | `FilePasskeyStore`: `<data-dir>/passkeys.json`, public keys only, owner-only file |
+| API | `GarageController`: `/api/doors`, `/api/status`, `/api/open`, `/api/close`, `/api/resume`, `/api/activity`, `/api/me` |
+| Doors shown | `DoorRoster`: Ford (controlled by `GarageService`), Toyota read-only. Channel 3 isn't shown |
+| Web app | `src/main/resources/static`: `index.html`, `login.html`, `passkey.html`, plain JS and CSS, no build step |
+
+## Signing in
+
+1. **Invite.** On the server (it never leaves the machine):
+   ```bash
+   curl -X POST -d username=hubby http://127.0.0.1:8080/ott/generate
+   cat data/invites/hubby.txt      # the link: single use, expires in 5 minutes (Spring's default)
+   ```
+   Send the link to him privately. Asking for an invite returns nothing to the caller, and a name
+   outside `casita.security.family` gets nothing written.
+2. **He opens it** on his iPhone and taps *Sign in*. That signs him in once and lands on *Set up
+   Face ID*, which creates a passkey. Casita stores only its public key.
+3. **From then on** he signs in with Face ID. iCloud Keychain syncs the passkey to his other Apple
+   devices.
+
+## Threat model
+
+Casita is reachable only on our tailnet, so an attacker must first be a device on it (or hold one).
+
+| Threat | What stops it |
+|---|---|
+| Someone on the internet | No public endpoint: Casita binds to 127.0.0.1; `tailscale serve` publishes it to the tailnet only |
+| A tailnet device that isn't family | Every page and API call needs a signed-in family member (role `FAMILY`); `/api` answers 401, pages go to `/login` |
+| Password guessing, phishing | There are no passwords. Passkeys are bound to Casita's host name (`rp-id`) and allowed origins, so a look-alike site can't use them |
+| A stolen invite link | Single use and short-lived; written to an owner-only file on the server, never logged, never shown to whoever asked |
+| Cross-site request forgery | CSRF tokens on every POST (Spring's single-page-app mode: `XSRF-TOKEN` cookie, `X-XSRF-TOKEN` header), plus `SameSite=Lax` session cookies |
+| Injected script | Content-Security-Policy `script-src 'self'`, no inline script or style; pages build text with `textContent` only |
+| Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |
+| A stolen session cookie | `HttpOnly` and `Secure`; ends after 7 idle days or a restart. Revocation (below) is still to do |
+| An unlocked phone in the wrong hands | Accepted in the design (no extra Face ID per action). Hold-to-act, the activity log, and `GarageService`'s rules limit it |
+| The server's disk | `data/` holds public keys and short-lived invite links only, owner-only; it is outside git |
+
+Out of scope here: a compromised server or tailnet admin account, and the opener's physical safety
+(photo eyes, auto-reverse).
+
+## Sessions and cookies
+
+- The session lives in memory: a restart signs everyone out, and Face ID signs them back in.
+- `server.servlet.session.timeout: 7d` (idle) until the design's remember-me lands.
+- Session cookie: `HttpOnly`, `Secure`, `SameSite=Lax`. Lax rather than Strict, so opening Casita
+  from a notification or a Shortcut keeps you signed in; CSRF tokens protect every POST either way.
+- `dev` profile only: the cookie isn't `Secure`, for plain `http://localhost`. Never behind Tailscale.
+
+## Tailscale
+
+```yaml
+casita:
+  security:
+    rp-id: casita.<tailnet>.ts.net
+    allowed-origins: [https://casita.<tailnet>.ts.net]
+    family: [shir, hubby]
+```
+
+- `tailscale serve` gives Casita HTTPS on that name and forwards to `http://127.0.0.1:8080`.
+- Passkeys need HTTPS and a fixed name. If the tailnet name changes, everyone enrolls again.
+- Redirects are relative, so the proxy's local address never reaches the phone. Before relying on
+  it, check behind the real `tailscale serve` (deployment, build step 8) that sign-in, the CSRF
+  cookie and logout all work.
+
+## The app
+
+- **Ford:** large status (Closed, Not closed, Opening…, Closing…, Checking…, "I can't see it"),
+  since when, and one press-and-hold button (0.9 s): Open when closed, Close when it may close.
+  "Not closed" is never shown as "fully open": the sensor can't tell.
+- **Held:** after a stuck or lost movement, the button is replaced by *I've checked it*, which asks
+  for confirmation and calls `/api/resume`.
+- **Toyota:** read-only (*Watching only*) until its commands are tested.
+- **Mode badge:** *Practice garage* (simulated door), *Door control is off*, *Dry run*. In off and
+  dry-run the button is disabled.
+- **History:** the last four events, in Casita's voice.
+- **Look:** sage, warm cream, terracotta and deep pine; rounded type. Watson's picture is a
+  placeholder (`static/watson.svg`) for the hand-painted illustration.
+
+Run it on the practice door:
+
+```bash
+mvn spring-boot:run -Dspring-boot.run.profiles=dev \
+  -Dspring-boot.run.arguments="--casita.security.family=shir --casita.security.data-dir=target/dev-data"
+```
+
+## Arrival notifications (design only, not built)
+
+Goal: when someone drives home, Casita offers to open the garage. **It never opens on its own.**
+
+1. **Signals, on the phone.** An iOS Shortcuts automation: *Arrive* at home (geofence) is the main
+   trigger. *Bluetooth connected/disconnected* to the car is an extra signal, so walking past the
+   house doesn't count. The automation needs both: arrival while connected to the car.
+2. **The phone tells Casita.** The Shortcut calls `POST /api/arrival` with that phone's
+   status-only Shortcut token (design doc, section 3: random 256-bit, stored hashed). The token can
+   say "I'm arriving". It can't open or close.
+3. **Casita answers with a question, not an action.** If Ford is closed and nothing is held, Casita
+   sends a push notification: "Welcome home! Want me to open Ford?". Tapping it opens Casita's
+   arrival sheet (`/?arrive=1`): *Yes, open it* (press and hold, as usual) or *Not now*.
+4. **Rate limits.** One arrival prompt per person per 15 minutes; none while a movement is
+   unchecked or held.
+
+Needs first: the push service (ntfy or SNS, open in the design), Shortcut tokens, and real door
+control through the app.
+
+## Still to do
+
+- **Remember-me and revocation** (design section 3): a 6-month signed cookie with a per-user secret,
+  and `casita revoke` expiring sessions, rotating secrets and deleting tokens. Until then: remove a
+  person from `family`, delete their entries in `passkeys.json`, and restart.
+- **Parameter Store** for passkeys and secrets (build step 5), replacing `FilePasskeyStore`.
+- **Push notifications** for every move and failure (`LoggingNotifier` only logs today).
+- **Styling Spring's token page** (`/login/ott`): it works but looks like Spring's default.
+- **Watson's illustration**, an app icon and a web manifest for *Add to Home Screen*.
+- **Enabling real door control in the UI**: after review.

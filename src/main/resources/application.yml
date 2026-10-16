@@ -6,10 +6,28 @@ server:
   # Never listen on a public interface: 'tailscale serve' publishes Casita to the tailnet.
   address: 127.0.0.1
   port: 8080
+  servlet:
+    session:
+      # Sessions live in memory: a restart signs everyone out (Face ID signs them back in). Until the
+      # design's remember-me lands, an idle session ends after a week.
+      timeout: 7d
+      cookie:
+        http-only: true
+        secure: true          # the dev profile turns this off for plain http://localhost
+        same-site: lax        # lax, so opening Casita from a notification or Shortcut keeps the session
 
 casita:
   # Which door Casita talks to: 'simulated' (pretend door) or 'meross' (the real one).
   door: simulated
+  security:
+    # Passkeys are bound to this host name. Production: the Tailscale name, e.g.
+    # casita.<tailnet>.ts.net, with allowed-origins https://casita.<tailnet>.ts.net.
+    rp-id: localhost
+    allowed-origins: [http://localhost:8080]
+    # Who may sign in, by short name. Nobody else can, even with an invite link.
+    family: []
+    # Passkeys (public keys only) and invite links; outside git, readable by Casita's user only.
+    data-dir: data
   meross:
     api-base-url: https://iotx-us.meross.com
     # email / password: from the environment for now (CASITA_MEROSS_EMAIL, CASITA_MEROSS_PASSWORD),

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6efe2">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Casita">
+  <title>Casita</title>
+  <link rel="stylesheet" href="/casita.css">
+</head>
+<body>
+  <main>
+    <header class="top">
+      <img class="watson" src="/watson.svg" alt="Watson" width="44" height="44">
+      <h1>Casita</h1>
+      <button id="signout" class="link" type="button">Sign out</button>
+    </header>
+
+    <p class="mode" id="mode"></p>
+    <p class="mode" id="setup"><a href="/passkey">Set up Face ID on this phone</a> so you can sign in with a glance.</p>
+
+    <section class="door unknown" id="door" aria-live="polite">
+      <p class="name" id="door-name">Garage</p>
+      <p class="state" id="door-state">One moment…</p>
+      <p class="since" id="door-since"></p>
+      <div class="held" id="held">
+        <p>My last move didn't finish the way I expected. Please check the door, then let me know it's OK.</p>
+        <button id="resume" class="secondary" type="button">I've checked it</button>
+      </div>
+      <button id="act" class="hold" type="button" disabled>
+        <span class="fill"></span><span class="label" id="act-label">…</span>
+      </button>
+      <p class="reply" id="reply" aria-live="polite"></p>
+    </section>
+
+    <div class="watched" id="watched"></div>
+
+    <section class="activity">
+      <h2>What I've been up to</h2>
+      <ul id="activity"></ul>
+    </section>
+  </main>
+  <script src="/common.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
