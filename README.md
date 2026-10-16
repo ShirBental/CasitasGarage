@@ -19,3 +19,11 @@ mvn spring-boot:run        # run locally on http://127.0.0.1:8080
 ```
 
 CI builds and tests every pull request.
+
+## API
+
+`GET /api/status`, `POST /api/open`, `POST /api/close`, `GET /api/activity` (design doc, section 8),
+over `GarageService` and its safety rules. Every call needs a signed-in user; sign-in (passkeys) isn't
+built yet, so for now they all answer 401. With the real door (`casita.door=meross`), commands still
+reach it only when `casita.meross.command-mode` allows, and only for Ford (channel 1).
+See [docs/MEROSS.md](docs/MEROSS.md).
