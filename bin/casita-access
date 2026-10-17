@@ -5,7 +5,8 @@
 #   bin/casita-access list
 #   bin/casita-access invite <member> "<device label>"     # writes the link to <data-dir>/invites/<id>.txt
 #   bin/casita-access revoke-invite <invite id>
-#   bin/casita-access revoke-device <device id>
+#   bin/casita-access revoke-device <node id>            # the tailnet node's StableID, from 'list'
+#   bin/casita-access release-device <node id>           # a revoked node may then be enrolled for anyone
 #   bin/casita-access revoke-passkey <credential id>
 #   bin/casita-access revoke-member <member>               # all their devices, passkeys and invites
 #
@@ -16,7 +17,7 @@ url="${CASITA_URL:-http://127.0.0.1:8080}"
 data="${CASITA_DATA:-data}"
 secret_file="$data/admin.secret"
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 2; }
 
 [ $# -ge 1 ] || usage
 [ -r "$secret_file" ] || { echo "Can't read $secret_file: start Casita once, and run this as its user." >&2; exit 1; }
@@ -35,6 +36,7 @@ case "$1" in
                   call POST "$url/admin/invites" --data-urlencode "member=$2" --data-urlencode "label=$3" ;;
   revoke-invite)  [ $# -eq 2 ] || usage; call DELETE "$url/admin/invites/$2" ;;
   revoke-device)  [ $# -eq 2 ] || usage; call DELETE "$url/admin/devices/$2" ;;
+  release-device) [ $# -eq 2 ] || usage; call POST "$url/admin/devices/$2/release" ;;
   revoke-passkey) [ $# -eq 2 ] || usage; call DELETE "$url/admin/credentials/$2" ;;
   revoke-member)  [ $# -eq 2 ] || usage; call DELETE "$url/admin/members/$2" ;;
   *)              usage ;;
