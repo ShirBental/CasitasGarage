@@ -7,6 +7,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import home.casita.security.store.SecurityStore.EnrollmentClaim;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,16 +16,16 @@ import jakarta.servlet.http.HttpSession;
 
 /**
  * Setting up a passkey ({@code /webauthn/register/options}, {@code /webauthn/register}) is allowed only in an
- * enrollment session whose invite is still live, from the device the invite was redeemed on. A signed-in
- * family member can't add passkeys any other way. Runs before Spring's WebAuthn registration filters.
+ * enrollment session whose invitation is still live, from the device it was redeemed on. A signed-in family
+ * member can't add passkeys any other way. Runs before Spring's WebAuthn registration filters.
  */
 public class EnrollmentGuardFilter extends OncePerRequestFilter {
 
-    private final Invites invites;
+    private final AccessDecisions decisions;
     private final DeviceIdentityResolver devices;
 
-    public EnrollmentGuardFilter(Invites invites, DeviceIdentityResolver devices) {
-        this.invites = invites;
+    public EnrollmentGuardFilter(AccessDecisions decisions, DeviceIdentityResolver devices) {
+        this.decisions = decisions;
         this.devices = devices;
     }
 
@@ -48,9 +49,8 @@ public class EnrollmentGuardFilter extends OncePerRequestFilter {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getAuthorities().stream().noneMatch(a -> AccessSession.ROLE_ENROLLING.equals(a.getAuthority()))) return false;
         HttpSession session = request.getSession(false);
-        if (session == null || !(session.getAttribute(AccessSession.ENROLLMENT) instanceof AccessSession.Enrollment enrollment)) return false;
-        if (!enrollment.member().equals(auth.getName()) || invites.activeEnrollment(enrollment.inviteId()).isEmpty()) return false;
+        if (session == null || !(session.getAttribute(AccessSession.ENROLLMENT) instanceof EnrollmentClaim claim)) return false;
         Optional<DeviceIdentity> device = devices.resolve(request);
-        return device.isPresent() && device.get().nodeId().equals(enrollment.nodeId());
+        return device.isPresent() && decisions.enrollmentSession(auth.getName(), claim, device.get()) == null;
     }
 }

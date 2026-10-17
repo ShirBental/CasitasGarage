@@ -20,9 +20,8 @@ import home.casita.garage.DoorState;
 import home.casita.garage.GarageProperties;
 import home.casita.garage.GarageService;
 import home.casita.garage.GarageStatus;
-import home.casita.security.FilePasskeyStore;
 import home.casita.security.access.AccessSession;
-import home.casita.security.access.AccessStore;
+import home.casita.security.store.SecurityStore;
 import jakarta.servlet.http.HttpSession;
 
 /**
@@ -41,18 +40,16 @@ class GarageController {
     private final GarageService garage;
     private final ActivityLog activity;
     private final DoorRoster roster;
-    private final FilePasskeyStore passkeys;
     private final GarageProperties garageProperties;
-    private final AccessStore access;
+    private final SecurityStore store;
 
-    GarageController(GarageService garage, ActivityLog activity, DoorRoster roster, FilePasskeyStore passkeys,
-                     GarageProperties garageProperties, AccessStore access) {
+    GarageController(GarageService garage, ActivityLog activity, DoorRoster roster, GarageProperties garageProperties,
+                     SecurityStore store) {
         this.garage = garage;
         this.activity = activity;
         this.roster = roster;
-        this.passkeys = passkeys;
         this.garageProperties = garageProperties;
-        this.access = access;
+        this.store = store;
     }
 
     /** One door as the app shows it. {@code status} for the controlled door; {@code door} and {@code since} for every door. */
@@ -90,8 +87,8 @@ class GarageController {
     @GetMapping("/me")
     Me me(Principal user, HttpSession session) {
         String device = session.getAttribute(AccessSession.BINDING) instanceof AccessSession.Binding binding
-                ? access.find(user.getName(), binding.nodeId()).map(AccessStore.Device::label).orElse(null) : null;
-        return new Me(user.getName(), passkeys.countFor(user.getName()), device);
+                ? store.device(binding.nodeId()).filter(d -> d.activeFor(user.getName())).map(SecurityStore.Device::label).orElse(null) : null;
+        return new Me(user.getName(), store.passkeysOf(user.getName()).size(), device);
     }
 
     @GetMapping("/status")
