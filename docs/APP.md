@@ -88,13 +88,19 @@ casita:
 
 One door, one clear status, one action.
 
-- **Ford** fills the top of the screen: its name, the state in large serif type, and one sentence of
-  what the sensor actually reads. States: *Closed*, *Not closed*, *Opening…*, *Closing…*,
-  *Checking…*, *Can't see*, *Needs a check* (held) and *Can't reach home* (no connection).
-- **Measured versus inferred.** The sensor measures only closed / not closed, so the app never says
-  *Open*: it says *Not closed* and "It can't tell how far up". While Ford moves, a dashed bar shows
-  progress **estimated** from `casita.garage.travel-time` (`/api/doors` `travelTimeSeconds`), labelled
-  as an estimate, not a sensor reading.
+- **Ford** is the focus: its name, the state in large serif type, and one short line. States:
+  *Closed* and *Not closed* ("Since 6:42 PM"), *Opening…* / *Closing…* ("About 6 seconds"),
+  *Checking…*, *Unknown* ("The sensor can't confirm where Ford is."), *Needs a check* (held).
+- **Watson** rests on the divider between Ford's status and Toyota's row, about 200 pt tall on a
+  standard iPhone and scaled down (never hidden) on smaller ones. The slot is
+  `casita.brand.illustration`, a file in `static/brand/`; it stays empty until the approved artwork
+  exists, and the status then sits centred, so nothing looks missing. The art is fitted, never
+  cropped. If the approved pose doesn't rest on a line, its placement is adjusted to the art.
+- **Can't reach home:** "ET phone home" and "Can't reach home. Trying again…", the button *Waiting
+  for connection* (disabled). No stale status, Toyota or history, and nothing is retried on its own.
+- **Measured versus estimated.** The sensor measures only closed / not closed, so the app never says
+  *Open* or how far up a door is. While Ford moves, "About X seconds" and a dashed bar labelled
+  *Estimated* come from `casita.garage.travel-time` (`/api/doors` `travelTimeSeconds`), not the sensor.
 - **The action** is one tap on one button in the thumb zone: *Open Ford* when closed, *Close Ford*
   when it may close. Press-and-hold and any confirmation step are gone. Safeguards:
   - each button calls one explicit endpoint (`/api/open` or `/api/close`), never a toggle, so a
@@ -106,21 +112,20 @@ One door, one clear status, one action.
     (`GarageControllerTest`);
   - a request that times out (10 s) or is lost is reported as "may or may not have arrived", and
     nothing else is offered until the server's sensor check.
-- **Success waits for the sensor.** A command's acknowledgement shows "Sent… waiting for the
-  sensor". "✓ Sensor confirms Ford is closed" (or "reads Ford not closed") appears only once
-  `GarageService`'s check is in the history.
+- **Success waits for the sensor.** "✓ Sensor confirmed closed" (or "not closed") appears only once
+  `GarageService`'s check is in the history. An unconfirmed or timed-out command says so in one line.
 - **Held:** after a stuck or lost movement the button becomes *I've checked the door*, which asks
   for confirmation and calls `/api/resume`.
 - **Toyota:** one quiet line, "Toyota · Closed · view only". Never a button.
 - **History** is one tap away: the last event is a row; tapping it opens a sheet with the rest.
-- **Account:** Watson's avatar (top right) opens a sheet: who's signed in, Face ID setup if needed,
-  sign out, and the family's line. A small dot on the avatar means Face ID isn't set up.
+- **Account:** a person icon (top right) opens a sheet: who's signed in (and on which device, once
+  device access lands), sign out, and the family's line. Watson appears once, on the home screen.
 - **Mode tag:** *Practice door* (simulated), *Door control off*, *Rehearsal* (dry run). In off and
   dry-run the button is disabled.
 - **Look:** the approved palette, defined once at the top of `casita.css`: sage `#6B7F6B`,
   terracotta `#C65A3A` (only the action), warm cream `#F8F4ED`, deep pine `#2E4A3F`, soft sand
   `#D9C9B5`, plus darker shades where text needs AA contrast. Serif for the state and headings, the
-  system font for the rest. No cards, no shadows, no illustrations.
+  system font for the rest. No cards or shadows; Watson's illustration is the only picture.
 - **iPhone:** safe areas on all sides, 44 pt+ targets, a 60 pt action button, sheets from the bottom.
   *Reduce Motion* turns off transitions.
 
@@ -145,6 +150,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev \
       household: wild ones   # "For the wild ones." in the account sheet; empty hides it
       companion: Watson      # the dog's name, for copy that mentions him
       about-line: ""         # one quiet line in the account sheet; empty hides it
+      illustration: ""       # Watson's approved home-screen art, e.g. /brand/watson-home.png; empty: none
   ```
 
 ### Watson and the app icon (waiting for the artwork)
@@ -153,7 +159,8 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev \
 
 | File (in `static/`) | Size | Used for |
 |---|---|---|
-| `watson.svg` or `watson.png` (update the four `<img>` tags if PNG) | square, at least 264 × 264 | sign-in, Face ID and home pages |
+| `brand/watson-home.png` (or `.webp` / `.svg`), set as `casita.brand.illustration` | transparent background, about 600 px tall (200 pt at 3×) | home screen, resting on the divider |
+| `watson.svg` (replace in place) | square, at least 264 × 264 | sign-in and Face ID pages |
 | `icons/apple-touch-icon.png` | 180 × 180, no transparency | iPhone *Add to Home Screen* |
 | `icons/icon-192.png`, `icons/icon-512.png` | 192 and 512 square | `manifest.webmanifest` |
 | `icons/icon-maskable-512.png` | 512, art inside the middle 80% | Android/maskable |

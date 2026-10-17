@@ -24,19 +24,19 @@
 
   function draw() {
     if (offline || !doors) {
-      const [word, detail] = VOICE.unreachable();
+      // No stale status, Toyota or history while home can't be reached, and nothing to press.
+      const [word, detail] = VOICE.offline;
       $("door-state").textContent = word;
       $("door-detail").textContent = detail;
-      $("door").className = "ford quiet";
+      $("door").className = "ford quiet offline";
       $("estimate").classList.remove("shown");
-      $("watched").replaceChildren();
-      $("history-open").hidden = true;   // no old readings while home can't be reached
+      $("below").hidden = true;
       setAct(false, "", VOICE.button.offline);
       return;
     }
     const ford = main();
     const status = ford.status;
-    $("history-open").hidden = false;
+    $("below").hidden = false;
     const [word, tone] = VOICE.state(ford, status.held);
 
     $("mode").textContent = VOICE.modes[doors.control] ?? "";
@@ -71,15 +71,15 @@
     else setAct(false, "", b.wait);
   }
 
-  /** Travel progress is only an estimate from the configured travel time: the sensor can't measure it. */
+  /** Travel progress is only an estimate from the configured travel time, labelled so: the sensor can't measure it. */
   function drawEstimate(ford) {
     const moving = (ford.door === "OPENING" || ford.door === "CLOSING") && ford.since && !ford.status.held;
     $("estimate").classList.toggle("shown", !!moving);
     if (!moving) return;
     const elapsed = (Date.now() - new Date(ford.since).getTime()) / 1000;
-    const pct = Math.max(0, Math.min(100, Math.round((elapsed / doors.travelTimeSeconds) * 100)));
-    $("estimate-fill").style.width = pct + "%";
-    $("estimate-label").textContent = VOICE.estimate(doors.travelTimeSeconds);
+    const travel = doors.travelTimeSeconds;
+    $("estimate-fill").style.width = Math.max(0, Math.min(100, Math.round((elapsed / travel) * 100))) + "%";
+    $("door-detail").textContent = VOICE.secondsLeft(Math.ceil(travel - elapsed));
   }
 
   function setAct(enabled, action, label) {
@@ -110,7 +110,7 @@
     const after = new Date(watchAfter).getTime();
     const check = events.find((e) => CHECKS.includes(e.outcome) && new Date(e.at).getTime() > after);
     if (check) {
-      showResult(VOICE.checked(check, main().name), check.outcome === "STUCK" || check.outcome === "LOST");
+      showResult(VOICE.checked(check), check.outcome === "STUCK" || check.outcome === "LOST");
       watchAfter = null;
     }
   }
@@ -153,7 +153,6 @@
     draw();
     $("result").textContent = "";
     watchAfter = events[0] ? events[0].at : new Date(0).toISOString();
-    const door = main().name;
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), COMMAND_TIMEOUT_MS);
     try {
@@ -166,8 +165,8 @@
       if (response.status === 401) { window.location.href = "/login"; return; }
       if (!response.ok) throw new Error("HTTP " + response.status);
       const result = await response.json();
-      if (result.outcome === "MOVING") showResult(VOICE.sent(door));
-      else if (result.outcome === "UNCONFIRMED") showResult(VOICE.unconfirmed(door), true);
+      if (result.outcome === "MOVING") $("result").textContent = "";   // "Opening…" says it; the check follows
+      else if (result.outcome === "UNCONFIRMED") showResult(VOICE.unconfirmed(), true);
       else { showResult(result.message); watchAfter = null; }   // refused: nothing was sent
     } catch (err) {
       // Timed out or lost: the command may or may not have arrived. Keep watching for a check.
@@ -210,15 +209,20 @@
   function drawBrand() {
     $("household").textContent = VOICE.household();
     $("about").textContent = VOICE.about();
+    // The companion's approved illustration, once casita.brand.illustration names it. No stand-in before that.
+    const brand = VOICE.brand();
+    if (brand.illustration) {
+      $("companion-art").src = brand.illustration;
+      $("companion-art").alt = brand.companion;
+      $("companion").hidden = false;
+      $("stage").classList.add("with-art");
+    }
   }
 
   drawBrand();
   api("GET", "/api/brand").then((b) => { VOICE.setBrand(b); drawBrand(); }).catch(() => {});
   api("GET", "/api/me").then((me) => {
-    $("signed-in").textContent = "Signed in as " + VOICE.name(me.name);
-    const needsSetup = me.passkeys === 0;
-    $("setup").hidden = !needsSetup;
-    $("setup-dot").classList.toggle("shown", needsSetup);
+    $("signed-in").textContent = VOICE.signedIn(me);
   }).catch(() => {});
   refresh();
 })();

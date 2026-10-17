@@ -1,12 +1,12 @@
 // Casita's words, in one place. app.js decides what to show; this file only says it. The family's own
-// words (what Casita calls them, the dog's name) come from the server: casita.brand, /api/brand.
+// words and pictures come from the server: casita.brand, /api/brand.
 //
-// Measured versus inferred: the sensor measures only "closed" or "not closed". Anything else (how far
-// a door is, where it is while moving) is an estimate, and the words say so.
+// Measured versus estimated: the sensor measures only "closed" or "not closed". How far a door is up,
+// or where it is while moving, is never claimed; travel progress is labelled as an estimate.
 "use strict";
 
 const VOICE = (function () {
-  let brand = { household: "", companion: "Watson", aboutLine: "" };
+  let brand = { household: "", companion: "Watson", aboutLine: "", illustration: "" };
 
   function time(iso) {
     const d = new Date(iso);
@@ -19,11 +19,13 @@ const VOICE = (function () {
 
   return {
     setBrand(b) { brand = { ...brand, ...b }; },
+    brand() { return brand; },
     time,
     name,
 
     household() { return brand.household ? `For the ${brand.household}.` : ""; },
     about() { return brand.aboutLine; },
+    signedIn(me) { return "Signed in as " + name(me.name) + (me.device ? " on " + me.device : ""); },
     noHistory() { return "No history yet"; },
 
     modes: {
@@ -33,7 +35,7 @@ const VOICE = (function () {
       live: "",
     },
 
-    /** [big word, tone] for the controlled door. The sensor can't measure how far a door is up. */
+    /** [big word, tone] for the controlled door. */
     state(view, held) {
       if (held) return ["Needs a check", "alert"];
       switch (view.door) {
@@ -42,35 +44,37 @@ const VOICE = (function () {
         case "OPENING": return ["Opening…", "moving"];
         case "CLOSING": return ["Closing…", "moving"];
         case "CHECKING": return ["Checking…", "quiet"];
-        default: return ["Can't see", "quiet"];
+        default: return ["Unknown", "quiet"];
       }
     },
 
-    /** The sentence under the big word: what the sensor actually reads, and since when. */
+    /** One short line under the big word. Moving doors get an estimate instead (see secondsLeft). */
     detail(view, held) {
-      const since = view.since ? " since " + time(view.since) : "";
-      if (held) return "The last move didn't finish as expected. Look at the door before it moves again.";
+      if (held) return "The last move didn't finish. Look at the door first.";
       switch (view.door) {
-        case "CLOSED": return `Sensor reads closed${since}.`;
-        case "NOT_CLOSED": return `Sensor reads not closed${since}. It can't tell how far up.`;
-        case "OPENING": return "Command acknowledged. Waiting for the sensor check before calling it done.";
-        case "CLOSING": return "Command acknowledged. Sensor still reads not closed.";
-        case "CHECKING": return "Not sure whether it's moving. Nothing else is sent until the sensor is checked.";
-        default: return "The sensor isn't answering. Nothing will be sent until it does.";
+        case "CLOSED":
+        case "NOT_CLOSED": return view.since ? "Since " + time(view.since) : "";
+        case "CHECKING": return "Waiting for the sensor";
+        case "UNKNOWN": return "The sensor can't confirm where Ford is.";
+        default: return "";
       }
+    },
+
+    /** Under "Opening…": an estimate from the configured travel time, never a sensor reading. */
+    secondsLeft(s) {
+      if (s <= 0) return "Checking with the sensor";
+      return s === 1 ? "About 1 second" : `About ${s} seconds`;
     },
 
     watched(door) {
       switch (door) {
         case "CLOSED": return "Closed";
         case "NOT_CLOSED": return "Not closed";
-        default: return "Can't see";
+        default: return "Unknown";
       }
     },
 
-    estimate(seconds) { return `Estimate from the usual ${seconds}-second travel time, not a sensor reading`; },
-
-    unreachable() { return ["Can't reach home", "Showing nothing rather than an old reading. Trying again…"]; },
+    offline: ["ET phone home", "Can't reach home. Trying again…"],
 
     button: {
       open: (door) => `Open ${door}`, close: (door) => `Close ${door}`, sending: "Sending…",
@@ -79,16 +83,15 @@ const VOICE = (function () {
       openOff: "Opening is switched off", closeOff: "Closing is switched off",
     },
 
-    /** What a command's answer means. Facts only: success waits for the sensor. */
-    sent(door) { return `Sent. ${door} acknowledged; waiting for the sensor.`; },
-    unconfirmed(door) { return `${door} didn't confirm it got that. Checking the sensor before anything else is sent.`; },
-    noAnswer() { return "No answer from home. The command may or may not have arrived, so nothing else is sent until the door is checked."; },
-    checked(e, door) {
+    /** After a command: only what needs saying. Success waits for the sensor check. */
+    unconfirmed() { return "No confirmation from the door. Checking the sensor."; },
+    noAnswer() { return "No answer. Checking the sensor before anything else is sent."; },
+    checked(e) {
       switch (e.outcome) {
-        case "CLOSED_CONFIRMED": return "✓ Checked: the sensor confirms it's closed.";
-        case "OPEN_INFERRED": return "✓ Checked: it left the closed position.";
-        case "STUCK": return `${door} didn't ${e.action === "OPEN" ? "open" : "close"}. Please look at it.`;
-        default: return `Lost sight of ${door}. Please look at it.`;
+        case "CLOSED_CONFIRMED": return "✓ Sensor confirmed closed";
+        case "OPEN_INFERRED": return "✓ Sensor confirmed not closed";
+        case "STUCK": return e.action === "OPEN" ? "It didn't open. Please look at the door." : "It didn't close. Please look at the door.";
+        default: return "Lost sight of the door. Please look at it.";
       }
     },
     confirmChecked() { return "Have you looked at the garage door, and is it safe to move again?"; },

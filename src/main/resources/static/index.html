@@ -16,29 +16,38 @@
   <main>
     <header class="top">
       <span class="wordmark">Casita</span>
-      <button id="account-open" class="avatar" type="button" aria-label="Account">
-        <img src="/watson.svg" alt="" width="34" height="34"><span class="dot" id="setup-dot"></span>
+      <button id="account-open" class="account" type="button" aria-label="Account">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20c.9-3.6 3.8-5.6 7.2-5.6s6.3 2 7.2 5.6"/></svg>
       </button>
     </header>
     <p class="tag" id="mode"></p>
 
-    <section class="ford" id="door" aria-live="polite">
-      <p class="name" id="door-name">Ford</p>
-      <p class="state" id="door-state">One moment…</p>
-      <p class="detail" id="door-detail"></p>
-      <div class="estimate" id="estimate">
-        <div class="track"><div class="fill" id="estimate-fill"></div></div>
-        <p id="estimate-label"></p>
-      </div>
-      <p class="result" id="result"></p>
-    </section>
+    <div class="stage" id="stage">
+      <section class="ford" id="door" aria-live="polite">
+        <p class="name" id="door-name">Ford</p>
+        <p class="state" id="door-state">One moment…</p>
+        <p class="detail" id="door-detail"></p>
+        <!-- One fixed-height place for feedback: the estimate while moving, then the sensor check. -->
+        <div class="feedback">
+          <div class="estimate" id="estimate">
+            <div class="track"><div class="fill" id="estimate-fill"></div></div>
+            <p>Estimated</p>
+          </div>
+          <p class="result" id="result"></p>
+        </div>
+      </section>
 
-    <div class="spacer"></div>
+      <!-- The companion's approved illustration (casita.brand.illustration). Hidden, with no stand-in, until it exists. -->
+      <figure class="companion" id="companion" hidden><img id="companion-art" alt=""></figure>
+    </div>
 
-    <div class="watched" id="watched"></div>
-    <button class="row last" id="history-open" type="button">
-      <span id="last-event">No history yet</span><span class="when" id="last-when"></span>
-    </button>
+    <div id="below">
+      <div class="watched" id="watched"></div>
+      <button class="row last" id="history-open" type="button">
+        <span id="last-event"></span><span class="when" id="last-when"></span>
+      </button>
+    </div>
 
     <div class="action">
       <button id="act" class="act" type="button" disabled>One moment…</button>
@@ -54,7 +63,6 @@
     <div class="sheet-head"><h2 id="account-title">Casita</h2><button class="close" type="button" data-close>Done</button></div>
     <p class="household" id="household"></p>
     <p class="signed-in" id="signed-in"></p>
-    <a class="sheet-link" id="setup" href="/passkey">Set up Face ID on this phone</a>
     <button id="signout" class="sheet-link" type="button">Sign out</button>
     <p class="about" id="about"></p>
   </dialog>
