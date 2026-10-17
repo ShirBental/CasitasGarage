@@ -16,7 +16,7 @@ disables its action button. Turning it on waits for review.
 | Who and which device | `security.access`: a passkey for who, the tailnet node for which device; one invite per device; revocation. See `docs/ACCESS.md` |
 | Invites and administration | `bin/casita-access` on the server (`/admin`, 127.0.0.1 plus a secret only); invite links go to owner-only files |
 | Face ID setup | `/passkey` (Spring's script, Casita's page) |
-| Passkey storage | `FilePasskeyStore`: `<data-dir>/passkeys.json`, public keys only, owner-only file |
+| Security store | Members, passkeys (public keys only), device authorizations and invitations: `<data-dir>/security.json` (owner-only) for local development, DynamoDB on AWS (`docs/PERSISTENCE.md`) |
 | API | `GarageController`: `/api/doors`, `/api/status`, `/api/open`, `/api/close`, `/api/resume`, `/api/activity`, `/api/me` |
 | Doors shown | `DoorRoster`: Ford (controlled by `GarageService`), Toyota shown with its control disabled until the server commands it. Channel 3 isn't shown |
 | Web app | `src/main/resources/static`: `index.html`, `login.html`, `passkey.html`, plain JS and CSS, no build step |

@@ -7,7 +7,10 @@ member, on every request. Code: `home.casita.security.access`, wired in `Securit
 
 - **One invite = one device.** An invite is for one member and carries the intended device label
   ("Shir's iPhone"). It is single use, lasts **5 minutes**, can be revoked, and only a SHA-256 of its
-  token is kept, in memory. It is never logged, and the admin's answer never contains it.
+  token is stored (in the security store: `docs/PERSISTENCE.md`). The token is never logged, and the
+  admin's answer never contains it.
+- **One node, one member.** A tailnet node is authorized for at most one member. An authorized node
+  can't be enrolled again, and a revoked one only for the same member, until the admin releases it.
 - **An invite gives an enrollment-only session.** That session can do one thing: set up a passkey, or
   use the member's existing synced passkey, **on the device that redeemed the invite**. Doing so
   authorizes that device (its tailnet node) for that member. An enrollment session can't reach the
@@ -87,7 +90,8 @@ signing in from either one works once the device is authorized.
 
 ```bash
 bin/casita-access list                         # members, their devices and passkeys, open invites
-bin/casita-access revoke-device d-5e6f7a8b     # that device, for that member
+bin/casita-access revoke-device nAbC123CNTRL   # that device (its node id, from 'list')
+bin/casita-access release-device nAbC123CNTRL  # after revoking: lets another member's invite enroll it
 bin/casita-access revoke-passkey <credential>  # that passkey, on every device it synced to
 bin/casita-access revoke-member hubby          # all his devices, passkeys and invites
 bin/casita-access revoke-invite i-1a2b3c4d     # unused, or an enrollment in progress
@@ -98,11 +102,12 @@ command returns. A revoked device is kept, marked revoked, so a restart can't br
 again, it needs a new invite. Revoking a passkey removes it everywhere iCloud synced it, so the member
 needs a new invite on a device and sets up a new passkey there.
 
-## Restarts
+## Restarts and outages
 
-Sessions and invites live in memory, so a restart signs everyone out and voids open invites.
-Passkeys (`passkeys.json`) and device authorizations (`devices.json`) are read back, with revoked
-devices still revoked. `docs/PERSISTENCE.md` moves these to DynamoDB.
+Sessions live in memory, so a restart signs everyone out (Face ID signs them back in). Members, passkeys,
+device authorizations and invitations are in the security store (`data/security.json`, or DynamoDB on
+AWS): a pending invite still works after a restart, an enrollment interrupted by one needs a new invite,
+and revocations stay revoked. If the store can't be reached, every request is refused until it can.
 
 ## Limits, honestly
 
