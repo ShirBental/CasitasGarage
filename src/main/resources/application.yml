@@ -43,8 +43,14 @@ casita:
     allowed-origins: [http://localhost:8080]
     # Who may sign in, by short name. Nobody else can, even with an invite link.
     family: []
-    # Passkeys (public keys only) and invite links; outside git, readable by Casita's user only.
+    # Passkeys (public keys only), device authorizations, invite links and the admin secret; outside git,
+    # readable by Casita's user only.
     data-dir: data
+    # Which device a request comes from: its tailnet node, via tailscale serve and `tailscale whois`.
+    # Unverifiable: no access. (The dev profile uses 'development' for plain http://localhost.)
+    device-identity: tailscale
+    # The tailscale command. On a Mac with the App Store app: /Applications/Tailscale.app/Contents/MacOS/Tailscale
+    tailscale-cli: tailscale
   meross:
     api-base-url: https://iotx-us.meross.com
     # email / password: from the environment for now (CASITA_MEROSS_EMAIL, CASITA_MEROSS_PASSWORD),

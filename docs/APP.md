@@ -13,7 +13,8 @@ disables its action button. Turning it on waits for review.
 | Piece | Where |
 |---|---|
 | Passkey sign-in (Face ID) | `SecurityConfig`: Spring Security WebAuthn, Casita's own `/login` page using Spring's passkey script |
-| Invites for a new phone | Spring Security one-time tokens; `InviteLinks` writes the link to a file on the server |
+| Who and which device | `security.access`: a passkey for who, the tailnet node for which device; one invite per device; revocation. See `docs/ACCESS.md` |
+| Invites and administration | `bin/casita-access` on the server (`/admin`, 127.0.0.1 plus a secret only); invite links go to owner-only files |
 | Face ID setup | `/passkey` (Spring's script, Casita's page) |
 | Passkey storage | `FilePasskeyStore`: `<data-dir>/passkeys.json`, public keys only, owner-only file |
 | API | `GarageController`: `/api/doors`, `/api/status`, `/api/open`, `/api/close`, `/api/resume`, `/api/activity`, `/api/me` |
@@ -22,17 +23,19 @@ disables its action button. Turning it on waits for review.
 
 ## Signing in
 
-1. **Invite.** On the server (it never leaves the machine):
+Full rules and the Tailscale trust chain are in `docs/ACCESS.md`. In short:
+
+1. **Invite one device.** On the server:
    ```bash
-   curl -X POST -d username=hubby http://127.0.0.1:8080/ott/generate
-   cat data/invites/hubby.txt      # the link: single use, expires in 5 minutes (Spring's default)
+   bin/casita-access invite hubby "Hubby's iPhone"
+   cat data/invites/i-….txt     # the link: single use, 5 minutes, never logged
    ```
-   Send the link to him privately. Asking for an invite returns nothing to the caller, and a name
-   outside `casita.security.family` gets nothing written.
-2. **He opens it** on his iPhone and taps *Sign in*. That signs him in once and lands on *Set up
-   Face ID*, which creates a passkey. Casita stores only its public key.
-3. **From then on** he signs in with Face ID. iCloud Keychain syncs the passkey to his other Apple
-   devices.
+   Send the link to him privately.
+2. **He opens it on that iPhone** (Tailscale on) and taps *Sign in*. That gives a session that can only
+   set up Face ID on that phone. He taps *Set up Face ID*, or *Sign in with it here* if his iCloud
+   Keychain already has his Casita passkey. Either way, that phone is now authorized for him.
+3. **From then on** he signs in with Face ID on that phone. Another device, even with the synced
+   passkey, needs its own invite.
 
 ## Threat model
 
@@ -41,15 +44,16 @@ Casita is reachable only on our tailnet, so an attacker must first be a device o
 | Threat | What stops it |
 |---|---|
 | Someone on the internet | No public endpoint: Casita binds to 127.0.0.1; `tailscale serve` publishes it to the tailnet only |
-| A tailnet device that isn't family | Every page and API call needs a signed-in family member (role `FAMILY`); `/api` answers 401, pages go to `/login` |
+| A tailnet device that isn't family | Every page and API call needs a passkey sign-in by a family member **on a device authorized for them**, checked again on every request; `/api` answers 401, pages go to `/login` |
+| A family member's passkey on an unauthorized device | The device (tailnet node, from `tailscale serve` and tailscaled) must have been enrolled through its own invite |
 | Password guessing, phishing | There are no passwords. Passkeys are bound to Casita's host name (`rp-id`) and allowed origins, so a look-alike site can't use them |
-| A stolen invite link | Single use and short-lived; written to an owner-only file on the server, never logged, never shown to whoever asked |
+| A stolen invite link | Single use, 5 minutes, revocable; it only gives an enrollment session (no garage) for the device that redeems it; written to an owner-only file on the server, never logged |
 | Cross-site request forgery | CSRF tokens on every POST (Spring's single-page-app mode: `XSRF-TOKEN` cookie, `X-XSRF-TOKEN` header), plus `SameSite=Lax` session cookies |
 | Injected script | Content-Security-Policy `script-src 'self'`, no inline script or style; pages build text with `textContent` only |
 | Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |
-| A stolen session cookie | `HttpOnly` and `Secure`; ends after 7 idle days or a restart. Revocation (below) is still to do |
+| A stolen session cookie | `HttpOnly` and `Secure`; tied to the device it signed in on (a request from any other node ends it); ends on revocation, after 7 idle days, or at a restart |
 | An unlocked phone in the wrong hands | Accepted in the design (no extra Face ID per action). Explicit one-tap actions (never a toggle: *Open Ford* can only open), the activity log, and `GarageService`'s rules limit it |
-| The server's disk | `data/` holds public keys and short-lived invite links only, owner-only; it is outside git |
+| The server's disk | `data/` holds public keys, device authorizations, short-lived invite links and the admin secret, owner-only; it is outside git |
 
 Out of scope here: a compromised server or tailnet admin account, and the opener's physical safety
 (photo eyes, auto-reverse).
@@ -198,10 +202,9 @@ control through the app.
 
 ## Still to do
 
-- **Remember-me and revocation** (design section 3): a 6-month signed cookie with a per-user secret,
-  and `casita revoke` expiring sessions, rotating secrets and deleting tokens. Until then: remove a
-  person from `family`, delete their entries in `passkeys.json`, and restart.
-- **Parameter Store** for passkeys and secrets (build step 5), replacing `FilePasskeyStore`.
+- **Remember-me** (design section 3): a 6-month signed cookie. Revocation is built (`docs/ACCESS.md`).
+- **AWS persistence**: DynamoDB for members, passkeys, device authorizations and activity, plus
+  Parameter Store for secrets (`docs/PERSISTENCE.md`), replacing the files.
 - **Push notifications** for every move and failure (`LoggingNotifier` only logs today).
 - **Styling Spring's token page** (`/login/ott`): it works but looks like Spring's default.
 - **Watson's illustration and the app icon**: the slots are ready (above); the art isn't.

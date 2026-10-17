@@ -1,0 +1,41 @@
+#!/bin/sh
+# Casita access administration, on the server only. Talks to Casita on 127.0.0.1 with the admin secret
+# from <data-dir>/admin.secret (created by Casita on first start, readable by its user only).
+#
+#   bin/casita-access list
+#   bin/casita-access invite <member> "<device label>"     # writes the link to <data-dir>/invites/<id>.txt
+#   bin/casita-access revoke-invite <invite id>
+#   bin/casita-access revoke-device <device id>
+#   bin/casita-access revoke-passkey <credential id>
+#   bin/casita-access revoke-member <member>               # all their devices, passkeys and invites
+#
+# CASITA_URL (default http://127.0.0.1:8080) and CASITA_DATA (default ./data) override the defaults.
+set -eu
+
+url="${CASITA_URL:-http://127.0.0.1:8080}"
+data="${CASITA_DATA:-data}"
+secret_file="$data/admin.secret"
+
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+[ $# -ge 1 ] || usage
+[ -r "$secret_file" ] || { echo "Can't read $secret_file: start Casita once, and run this as its user." >&2; exit 1; }
+
+# The secret goes to curl on stdin as a header file, never on the command line (where ps would show it).
+call() {
+  method="$1"; shift
+  printf 'X-Casita-Admin: %s\n' "$(cat "$secret_file")" |
+    curl --silent --show-error --fail-with-body --noproxy '*' -H @- -X "$method" "$@"
+  echo
+}
+
+case "$1" in
+  list)           call GET "$url/admin/access" ;;
+  invite)         [ $# -eq 3 ] || usage
+                  call POST "$url/admin/invites" --data-urlencode "member=$2" --data-urlencode "label=$3" ;;
+  revoke-invite)  [ $# -eq 2 ] || usage; call DELETE "$url/admin/invites/$2" ;;
+  revoke-device)  [ $# -eq 2 ] || usage; call DELETE "$url/admin/devices/$2" ;;
+  revoke-passkey) [ $# -eq 2 ] || usage; call DELETE "$url/admin/credentials/$2" ;;
+  revoke-member)  [ $# -eq 2 ] || usage; call DELETE "$url/admin/members/$2" ;;
+  *)              usage ;;
+esac
