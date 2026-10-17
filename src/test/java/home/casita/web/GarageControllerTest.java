@@ -168,10 +168,11 @@ class GarageControllerTest {
     @Test
     void twoTapsAtOnceSendOneCommand() throws Exception {
         // The app has no hold or confirmation: a double tap, or two phones at once, must still move the door once.
+        mvc.perform(get("/api/doors").with(family)).andExpect(status().isOk()); // ties the session to the phone first
         java.util.concurrent.ExecutorService phones = java.util.concurrent.Executors.newFixedThreadPool(4);
         java.util.List<java.util.concurrent.Future<String>> taps = new java.util.ArrayList<>();
         for (int i = 0; i < 4; i++) {
-            taps.add(phones.submit(() -> com.jayway.jsonpath.JsonPath.read(mvc.perform(post("/api/open").with(FAMILY).with(csrf()))
+            taps.add(phones.submit(() -> com.jayway.jsonpath.JsonPath.read(mvc.perform(post("/api/open").with(family).with(csrf()))
                     .andReturn().getResponse().getContentAsString(), "$.outcome")));
         }
         java.util.List<String> outcomes = new java.util.ArrayList<>();
