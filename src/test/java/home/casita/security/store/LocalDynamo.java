@@ -30,7 +30,7 @@ public final class LocalDynamo {
     public static class Config {
         @Bean(destroyMethod = "shutdown")
         AmazonDynamoDBLocal dynamoDbLocal() {
-            return DynamoDBEmbedded.create();
+            return DynamoDBEmbedded.create(true); // true: DynamoDB Local telemetry off, so the tests stay offline
         }
 
         /** The faulty wrapper lets a test make DynamoDB fail; it passes everything through until told otherwise. */

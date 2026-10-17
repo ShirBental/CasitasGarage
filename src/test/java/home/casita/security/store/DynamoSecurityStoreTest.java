@@ -31,7 +31,7 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
 
     @Override
     protected SecurityStore newStore() {
-        local = DynamoDBEmbedded.create();
+        local = DynamoDBEmbedded.create(true); // true: DynamoDB Local telemetry off, so the tests stay offline
         dynamo = new FaultyDynamo(LocalDynamo.start(local, tables));
         return new DynamoSecurityStore(dynamo.client(), tables, clock);
     }
