@@ -29,10 +29,32 @@ import home.casita.security.access.TestTailnet;
  * The API over the simulated door (the default): nothing here reaches Meross. Requests come as they would
  * from a family member's authorized phone through tailscale serve, signed in with a passkey.
  */
-@SpringBootTest(properties = {"casita.security.data-dir=target/test-data/controller", "casita.security.family=shir"})
+@SpringBootTest(properties = "casita.security.family=shir")
 @Import(TestTailnet.Config.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class GarageControllerTest {
+
+    /** A fresh data directory for every run (and, below, every context): enrolled phones from before would refuse re-enrollment. */
+    private static final java.nio.file.Path DATA;
+
+    static {
+        try {
+            DATA = java.nio.file.Files.createTempDirectory("casita-controller");
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @org.springframework.test.context.DynamicPropertySource
+    static void dataDir(org.springframework.test.context.DynamicPropertyRegistry registry) {
+        registry.add("casita.security.data-dir", DATA::toString);
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void forgetEnrollments() throws java.io.IOException {
+        java.nio.file.Files.deleteIfExists(DATA.resolve("security.json"));
+    }
+
 
     @Autowired
     private WebApplicationContext context;

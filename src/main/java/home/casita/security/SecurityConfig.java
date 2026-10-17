@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.config.ObjectPostProcessor;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -29,12 +30,13 @@ import org.springframework.security.web.webauthn.api.AuthenticatorSelectionCrite
 import org.springframework.security.web.webauthn.api.PublicKeyCredentialRpEntity;
 import org.springframework.security.web.webauthn.api.ResidentKeyRequirement;
 import org.springframework.security.web.webauthn.api.UserVerificationRequirement;
+import org.springframework.security.web.webauthn.authentication.WebAuthnAuthenticationFilter;
 import org.springframework.security.web.webauthn.management.Webauthn4JRelyingPartyOperations;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import home.casita.security.access.AccessCheckFilter;
 import home.casita.security.access.AccessSession;
-import home.casita.security.access.AccessStore;
+import home.casita.security.access.AccessDecisions;
 import home.casita.security.access.CliTailscaleWhois;
 import home.casita.security.access.CredentialEvents;
 import home.casita.security.access.DevelopmentDeviceIdentity;
@@ -42,11 +44,13 @@ import home.casita.security.access.DeviceIdentityResolver;
 import home.casita.security.access.EnrollmentAuthenticationProvider;
 import home.casita.security.access.EnrollmentGuardFilter;
 import home.casita.security.access.EnrollmentSuccessHandler;
-import home.casita.security.access.Invites;
+import home.casita.security.access.Invitations;
 import home.casita.security.access.LocalAdmin;
+import home.casita.security.access.PasskeySignInSuccessHandler;
 import home.casita.security.access.RedemptionGuardFilter;
 import home.casita.security.access.TailscaleDeviceIdentity;
 import home.casita.security.access.TailscaleWhois;
+import home.casita.security.store.SecurityStore;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -89,18 +93,13 @@ class SecurityConfig {
     /* ---------- the parts ---------- */
 
     @Bean
-    FilePasskeyStore passkeys(CasitaSecurityProperties properties) {
-        return new FilePasskeyStore(properties.dataDir());
+    StorePasskeys passkeys(SecurityStore store) {
+        return new StorePasskeys(store);
     }
 
     @Bean
-    AccessStore accessStore(CasitaSecurityProperties properties, Clock clock) {
-        return new AccessStore(properties.dataDir(), clock);
-    }
-
-    @Bean
-    Invites invites(Clock clock) {
-        return new Invites(clock);
+    Invitations invitations(SecurityStore store, Clock clock) {
+        return new Invitations(store, clock);
     }
 
     /** The local tailscaled, asked through {@code tailscale whois}. */
@@ -117,10 +116,20 @@ class SecurityConfig {
     }
 
     @Bean
-    CredentialEvents credentialEvents(Invites invites, AccessStore access, DeviceIdentityResolver devices, FilePasskeyStore passkeys) {
-        CredentialEvents events = new CredentialEvents(invites, access, devices);
+    AccessDecisions accessDecisions(SecurityStore store, CasitaSecurityProperties properties, Clock clock) {
+        return new AccessDecisions(store, properties.family(), clock);
+    }
+
+    @Bean
+    CredentialEvents credentialEvents(SecurityStore store, DeviceIdentityResolver devices, AccessDecisions decisions, StorePasskeys passkeys) {
+        CredentialEvents events = new CredentialEvents(store, devices, decisions);
         passkeys.setEvents(events);
         return events;
+    }
+
+    @Bean
+    PasskeySignInSuccessHandler passkeySignIn(SecurityStore store, DeviceIdentityResolver devices, AccessDecisions decisions) {
+        return new PasskeySignInSuccessHandler(store, devices, decisions);
     }
 
     @Bean
@@ -142,7 +151,7 @@ class SecurityConfig {
 
     /** Spring's WebAuthn, with user verification (Face ID or passcode) required to create and to use a passkey. */
     @Bean
-    Webauthn4JRelyingPartyOperations relyingParty(FilePasskeyStore passkeys, CasitaSecurityProperties properties) {
+    Webauthn4JRelyingPartyOperations relyingParty(StorePasskeys passkeys, CasitaSecurityProperties properties) {
         Webauthn4JRelyingPartyOperations operations = new Webauthn4JRelyingPartyOperations(passkeys, passkeys,
                 PublicKeyCredentialRpEntity.builder().id(properties.rpId()).name("Casita").build(), properties.allowedOrigins());
         operations.setCustomizeCreationOptions(options -> options.authenticatorSelection(AuthenticatorSelectionCriteria.builder()
@@ -161,8 +170,9 @@ class SecurityConfig {
     }
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, CasitaSecurityProperties properties, Invites invites, AccessStore access,
-                                            DeviceIdentityResolver devices, FilePasskeyStore passkeys, LocalAdmin localAdmin) throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http, CasitaSecurityProperties properties, Invitations invitations, SecurityStore store,
+                                            DeviceIdentityResolver devices, AccessDecisions decisions, PasskeySignInSuccessHandler passkeySignIn,
+                                            LocalAdmin localAdmin) throws Exception {
         PathPatternRequestMatcher.Builder path = PathPatternRequestMatcher.withDefaults();
         return http
                 .authorizeHttpRequests(auth -> auth
@@ -183,16 +193,24 @@ class SecurityConfig {
                         .rpName("Casita")
                         .rpId(properties.rpId())
                         .allowedOrigins(properties.allowedOrigins())
-                        .disableDefaultRegistrationPage(true))
+                        .disableDefaultRegistrationPage(true)
+                        // After a verified passkey sign-in: bind the session to passkey and device, or refuse it.
+                        .withObjectPostProcessor(new ObjectPostProcessor<WebAuthnAuthenticationFilter>() {
+                            @Override
+                            public <O extends WebAuthnAuthenticationFilter> O postProcess(O filter) {
+                                filter.setAuthenticationSuccessHandler(passkeySignIn);
+                                return filter;
+                            }
+                        }))
                 .oneTimeTokenLogin(ott -> ott
                         .loginPage("/login")
                         // A custom login page would otherwise move token sign-in onto POST /login.
                         .loginProcessingUrl("/login/ott")
-                        .tokenService(invites)
+                        .tokenService(invitations)
                         // Invites come from the server-side admin only: Spring's public /ott/generate does nothing.
                         .generateRequestResolver(request -> null)
                         .tokenGenerationSuccessHandler((request, response, token) -> response.sendError(HttpServletResponse.SC_NOT_FOUND))
-                        .authenticationProvider(new EnrollmentAuthenticationProvider(invites, properties.family()))
+                        .authenticationProvider(new EnrollmentAuthenticationProvider(invitations, properties.family()))
                         .authenticationSuccessHandler(new EnrollmentSuccessHandler()))
                 // Spring's passkey script for the sign-in and passkey pages, served from here (no CDN).
                 .addFilterBefore(DefaultResourcesFilter.webauthn(), CsrfFilter.class)
@@ -201,11 +219,11 @@ class SecurityConfig {
                 // before the page's first POST (Spring Security's documented single-page-app setup).
                 .addFilterAfter(new CsrfCookieFilter(), BasicAuthenticationFilter.class)
                 // An invite is redeemed only from a verifiable device, before it is used up.
-                .addFilterAfter(new RedemptionGuardFilter(devices), CsrfFilter.class)
+                .addFilterAfter(new RedemptionGuardFilter(devices, store), CsrfFilter.class)
                 // Passkeys can be set up only in a live enrollment, on its device.
-                .addFilterAfter(new EnrollmentGuardFilter(invites, devices), RedemptionGuardFilter.class)
+                .addFilterAfter(new EnrollmentGuardFilter(decisions, devices), RedemptionGuardFilter.class)
                 // Every signed-in request: member, passkey, device authorization and device, again.
-                .addFilterBefore(new AccessCheckFilter(devices, access, invites, passkeys, properties.family()), AuthorizationFilter.class)
+                .addFilterBefore(new AccessCheckFilter(devices, decisions), AuthorizationFilter.class)
                 .exceptionHandling(e -> e
                         .defaultAuthenticationEntryPointFor(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED), path.matcher("/api/**"))
                         .defaultAuthenticationEntryPointFor(new HttpStatusEntryPoint(HttpStatus.FORBIDDEN), path.matcher("/admin/**"))

@@ -5,59 +5,55 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.web.webauthn.api.CredentialRecord;
-import org.springframework.security.web.webauthn.api.PublicKeyCredentialUserEntity;
-import org.springframework.security.web.webauthn.management.PublicKeyCredentialUserEntityRepository;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import home.casita.security.store.SecurityStore;
+import home.casita.security.store.SecurityStore.EnrollmentClaim;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 
 /**
- * Hears about passkeys as the passkey store saves them, inside the request doing it:
+ * Hears about passkeys as Spring's WebAuthn saves them, inside the request doing it:
  * <ul>
- *   <li>a <b>new</b> passkey must come from a live enrollment, for the invite's member, on the invite's device;
- *       then that device is authorized and the invite is finished. Otherwise the save is refused, so the
- *       registration fails and nothing is stored;</li>
- *   <li>a <b>used</b> passkey (a sign-in updating its record) is noted in the session, so the sign-in can be tied to it.</li>
+ *   <li>a <b>new</b> passkey (its attestation just verified) is stored only by the enrollment transaction:
+ *       a live enrollment, for its member, on its device, re-verified now. Otherwise, or if the transaction is
+ *       refused, the save fails, the registration fails, and nothing is stored;</li>
+ *   <li>a <b>used</b> passkey (its assertion just verified) is noted in the session, so the sign-in success
+ *       handler can tie the session to it.</li>
  * </ul>
  */
 public class CredentialEvents {
 
     private static final Logger log = LoggerFactory.getLogger(CredentialEvents.class);
 
-    private final Invites invites;
-    private final AccessStore access;
+    private final SecurityStore store;
     private final DeviceIdentityResolver devices;
+    private final AccessDecisions decisions;
 
-    public CredentialEvents(Invites invites, AccessStore access, DeviceIdentityResolver devices) {
-        this.invites = invites;
-        this.access = access;
+    public CredentialEvents(SecurityStore store, DeviceIdentityResolver devices, AccessDecisions decisions) {
+        this.store = store;
         this.devices = devices;
+        this.decisions = decisions;
     }
 
-    public void beforeNewCredential(CredentialRecord record, PublicKeyCredentialUserEntityRepository users) {
+    public void newCredential(CredentialRecord record) {
         HttpServletRequest request = currentRequest().orElseThrow(() -> refuse("no request"));
         HttpSession session = request.getSession(false);
-        if (session == null || !(session.getAttribute(AccessSession.ENROLLMENT) instanceof AccessSession.Enrollment enrollment)) {
-            throw refuse("no enrollment");
-        }
-        PublicKeyCredentialUserEntity owner = users.findById(record.getUserEntityUserId());
-        if (owner == null || !owner.getName().equals(enrollment.member())) throw refuse("passkey for someone else");
-        if (invites.activeEnrollment(enrollment.inviteId()).isEmpty()) throw refuse("invite revoked or expired");
+        if (session == null || !(session.getAttribute(AccessSession.ENROLLMENT) instanceof EnrollmentClaim claim)) throw refuse("no enrollment");
+        String owner = store.memberByUserHandle(record.getUserEntityUserId()).map(SecurityStore.Member::id).orElse(null);
+        if (!claim.memberId().equals(owner)) throw refuse("passkey for someone else");
         Optional<DeviceIdentity> device = devices.resolve(request);
-        if (device.isEmpty() || !device.get().nodeId().equals(enrollment.nodeId())) throw refuse("not the invite's device");
-
-        access.authorize(enrollment.member(), enrollment.label(), device.get(), record.getCredentialId().toBase64UrlString(), enrollment.inviteId());
-        invites.finish(enrollment.inviteId());
+        if (device.isEmpty()) throw refuse("device not verified");
+        String refusal = decisions.enrollmentSession(claim.memberId(), claim, device.get());
+        if (refusal != null) throw refuse(refusal);
+        if (!store.enroll(claim, record, null)) throw refuse("the enrollment transaction was refused");
         session.removeAttribute(AccessSession.ENROLLMENT);
-        log.info("Invite {} finished: new passkey for {} on node {} ({})", enrollment.inviteId(), enrollment.member(),
-                device.get().nodeName(), enrollment.label());
+        log.info("Invite {} finished: new passkey for {} on node {} ({})", claim.inviteId(), claim.memberId(), claim.nodeName(), claim.label());
     }
 
     public void credentialUsed(CredentialRecord record) {
-        currentRequest().map(r -> r.getSession(false)).ifPresent(s ->
-                s.setAttribute(AccessSession.SIGNED_IN_CREDENTIAL, record.getCredentialId().toBase64UrlString()));
+        currentRequest().ifPresent(r -> r.getSession().setAttribute(AccessSession.SIGNED_IN_CREDENTIAL, record.getCredentialId().toBase64UrlString()));
     }
 
     private static Optional<HttpServletRequest> currentRequest() {

@@ -51,6 +51,13 @@ casita:
     device-identity: tailscale
     # The tailscale command. On a Mac with the App Store app: /Applications/Tailscale.app/Contents/MacOS/Tailscale
     tailscale-cli: tailscale
+  # Members, passkeys, device authorizations and invitations, always together (docs/PERSISTENCE.md):
+  # 'file' (<data-dir>/security.json, local development) or 'dynamodb' (AWS; tables must already exist,
+  # credentials from the EC2 instance profile only). Unreachable store: access refused.
+  storage:
+    type: file
+    table-prefix: casita-
+    region: ""
   meross:
     api-base-url: https://iotx-us.meross.com
     # email / password: from the environment for now (CASITA_MEROSS_EMAIL, CASITA_MEROSS_PASSWORD),
