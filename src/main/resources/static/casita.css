@@ -1,19 +1,26 @@
-/* Casita: warm, calm, playful. Sage, warm cream, terracotta and deep pine. Mobile first. */
+/* Casita: a little magic, very little interface. Warm cream, sage, terracotta, deep pine. Mobile first. */
 :root {
-  --cream: #f6efe2;
-  --cream-deep: #ece2cf;
-  --paper: #fbf7ef;
-  --sage: #9db08a;
-  --sage-soft: #dfe6d3;
-  --terracotta: #c4683f;
-  --terracotta-deep: #a8532f;
-  --pine: #1f3b2d;
-  --pine-soft: #4c6556;
-  --radius: 26px;
+  /* The approved palette (docs/APP.md, "Look") */
+  --sage: #6b7f6b;          /* brand accent */
+  --terracotta: #c65a3a;    /* primary action */
+  --cream: #f8f4ed;         /* background */
+  --pine: #2e4a3f;          /* text and headings */
+  --sand: #d9c9b5;          /* secondary surfaces */
+  /* Derived, for contrast on cream (WCAG AA for body text) */
+  --paper: #fdfbf7;
+  --sand-soft: #ece3d6;
+  --sage-soft: #e4e9e0;
+  --muted: #56685a;         /* 5.4:1 on cream */
+  --terracotta-deep: #a8452a; /* text "Not closed": 5.4:1 on cream */
+  --blush: #f4e1d8;
+  --radius: 24px;
+  --shadow: 0 1px 2px rgba(46, 74, 63, 0.05), 0 6px 18px rgba(46, 74, 63, 0.05);
+  --serif: ui-serif, "New York", Georgia, serif;
   font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--pine);
   background: var(--cream);
   -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 * { box-sizing: border-box; }
@@ -22,106 +29,117 @@ body {
   margin: 0;
   min-height: 100vh;
   min-height: 100dvh;
-  padding: max(16px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom));
-  background: radial-gradient(120% 60% at 50% 0%, var(--paper) 0%, var(--cream) 60%);
+  background: var(--cream);
+  padding: max(12px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right))
+           max(28px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
 }
 
 main { max-width: 440px; margin: 0 auto; }
 
-h1 { font-size: 1.5rem; margin: 0; letter-spacing: 0.01em; }
+h1 { margin: 0; font-weight: 600; letter-spacing: -0.005em; }
 p { line-height: 1.45; }
+a { color: var(--pine); }
 
 .watson { display: block; border-radius: 50%; }
 
-/* ---------- top bar ---------- */
-.top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-.top .watson { width: 44px; height: 44px; }
-.top h1 { flex: 1; }
+/* ---------- top: Watson, the name, signing out ---------- */
+.top { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+.top .watson { width: 40px; height: 40px; }
+.wordmark { flex: 1; font-family: var(--serif); font-size: 1.15rem; color: var(--sage); }
 .link {
-  background: none; border: none; color: var(--pine-soft); font: inherit; font-size: 0.95rem;
-  padding: 8px; cursor: pointer; text-decoration: none;
+  background: none; border: none; color: var(--muted); font: inherit; font-size: 0.95rem;
+  min-height: 44px; padding: 0 6px; cursor: pointer; text-decoration: none;
 }
 
+.greeting { font-family: var(--serif); font-size: 1.6rem; line-height: 1.2; margin: 18px 0 0; }
+.tucked { margin: 4px 0 0; min-height: 1.45em; color: var(--sage); }
+
 .mode {
-  display: none; margin: 0 0 14px; padding: 10px 14px; border-radius: 16px;
+  display: none; margin: 14px 0 0; padding: 10px 14px; border-radius: 14px;
   background: var(--sage-soft); color: var(--pine); font-size: 0.95rem;
 }
 .mode.shown { display: block; }
 .mode a, .note a, .success a { color: var(--pine); font-weight: 600; }
 
-/* ---------- the door ---------- */
-.door {
-  background: var(--paper); border-radius: var(--radius); padding: 22px 22px 24px;
-  box-shadow: 0 1px 0 rgba(31, 59, 45, 0.04), 0 10px 30px rgba(31, 59, 45, 0.08);
-}
-.door .name { margin: 0; font-size: 1rem; color: var(--pine-soft); font-weight: 600; }
-.door .state { margin: 6px 0 2px; font-size: 2.6rem; font-weight: 700; line-height: 1.1; }
-.door .since { margin: 0; color: var(--pine-soft); }
+/* ---------- doors ---------- */
+.door { background: var(--paper); border-radius: var(--radius); box-shadow: var(--shadow); }
+.door .name { margin: 0; font-size: 1rem; color: var(--muted); font-weight: 600; }
+.door .state { margin: 4px 0 2px; font-weight: 700; line-height: 1.1; }
 .door.closed .state { color: var(--pine); }
-.door.not-closed .state { color: var(--terracotta-deep); }
-.door.unknown .state { color: var(--pine-soft); }
+.door.not-closed .state, .door.moving .state { color: var(--terracotta-deep); }
+.door.unknown .state { color: var(--muted); }
+
+/* Ford: the biggest thing on the screen */
+.door.main { margin-top: 18px; padding: 24px 22px 22px; }
+.door.main .state { font-size: 2.75rem; }
+.door.main .since { margin: 0; min-height: 1.45em; color: var(--muted); }
 
 .held {
-  display: none; margin: 16px 0 0; padding: 14px; border-radius: 18px;
-  background: #f5ddd0; color: var(--pine);
+  display: none; margin: 16px 0 0; padding: 14px; border-radius: 16px;
+  background: var(--blush); color: var(--pine);
 }
 .held.shown { display: block; }
 .held p { margin: 0 0 10px; }
 
-/* ---------- the one action ---------- */
+/* Toyota and any other watched door: small, read-only */
+.watched { margin-top: 12px; display: grid; gap: 10px; }
+.door.small { padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; box-shadow: none; background: var(--sand-soft); }
+.door.small .state { font-size: 1.15rem; margin: 2px 0 0; }
+.door.small .ro { font-size: 0.85rem; color: var(--muted); }
+
+/* ---------- the one action: press and hold ---------- */
 .hold {
-  position: relative; overflow: hidden; display: block; width: 100%; margin-top: 22px;
-  border: none; border-radius: 22px; padding: 22px 16px;
-  font: inherit; font-size: 1.25rem; font-weight: 700; color: var(--paper);
+  position: relative; overflow: hidden; display: block; width: 100%; min-height: 72px; margin-top: 22px;
+  border: none; border-radius: 20px; padding: 20px 16px;
+  font: inherit; font-size: 1.25rem; font-weight: 700; color: #fff;
   background: var(--terracotta); cursor: pointer;
   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none;
 }
-.hold .fill {
-  position: absolute; inset: 0; width: 0; background: var(--terracotta-deep);
-  transition: width 0s linear;
-}
+.hold .fill { position: absolute; inset: 0; width: 0; background: var(--terracotta-deep); }
 .hold.holding .fill { width: 100%; transition: width 0.9s linear; }
 .hold .label { position: relative; }
-.hold:disabled { background: var(--cream-deep); color: var(--pine-soft); cursor: default; }
+.hold:disabled { background: var(--sand-soft); color: var(--muted); cursor: default; }
+.hold:focus-visible, .primary:focus-visible, .secondary:focus-visible, .link:focus-visible {
+  outline: 3px solid var(--sage); outline-offset: 3px;
+}
 
 .primary, .secondary {
-  display: block; width: 100%; border: none; border-radius: 18px; padding: 16px;
+  display: block; width: 100%; min-height: 52px; border: none; border-radius: 16px; padding: 14px;
   font: inherit; font-size: 1.1rem; font-weight: 700; cursor: pointer;
 }
-.primary { background: var(--terracotta); color: var(--paper); }
+.primary { background: var(--terracotta); color: #fff; }
 .secondary { background: var(--sage-soft); color: var(--pine); }
 
-.reply { min-height: 1.45em; margin: 14px 4px 0; color: var(--pine-soft); }
-
-/* ---------- watched doors (read-only) ---------- */
-.watched { margin-top: 14px; display: grid; gap: 10px; }
-.watched .door { padding: 16px 20px; display: flex; align-items: baseline; justify-content: space-between; box-shadow: none; }
-.watched .door .state { font-size: 1.15rem; margin: 0; }
-.watched .door .ro { font-size: 0.85rem; color: var(--pine-soft); }
+.reply { margin: 12px 2px 0; color: var(--pine); }
+.reply:empty { margin: 0; }
 
 /* ---------- activity ---------- */
-.activity { margin-top: 26px; }
-.activity h2 { font-size: 1rem; color: var(--pine-soft); margin: 0 0 8px 4px; }
+.activity { margin-top: 28px; }
+.activity h2 { font-family: var(--serif); font-weight: 600; font-size: 1.05rem; color: var(--sage); margin: 0 0 4px 2px; }
 .activity ul { list-style: none; margin: 0; padding: 0; }
-.activity li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 4px; border-top: 1px solid var(--cream-deep); }
+.activity li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 2px; border-top: 1px solid var(--sand-soft); }
 .activity li:first-child { border-top: none; }
-.activity time { color: var(--pine-soft); white-space: nowrap; font-size: 0.9rem; }
+.activity time { color: var(--muted); white-space: nowrap; font-size: 0.9rem; }
+
+.about { margin: 32px 0 0; text-align: center; font-family: var(--serif); font-style: italic; font-size: 0.9rem; color: var(--muted); }
+.about:empty { display: none; }
 
 /* ---------- sign-in and Face ID pages ---------- */
 .welcome main { text-align: center; padding-top: 8vh; }
 .welcome .watson { width: 132px; height: 132px; margin: 0 auto 18px; }
-.welcome h1 { font-size: 2rem; }
+.welcome h1 { font-family: var(--serif); font-size: 2rem; }
 .voice { font-size: 1.1rem; margin: 12px 0 26px; }
-.note { color: var(--pine-soft); font-size: 0.95rem; margin-top: 18px; }
+.note { color: var(--muted); font-size: 0.95rem; margin-top: 18px; }
 .field { display: block; text-align: left; margin: 0 0 14px; }
 .field input {
-  display: block; width: 100%; margin-top: 6px; padding: 14px; border-radius: 14px;
-  border: 1px solid var(--cream-deep); background: var(--paper); font: inherit; color: var(--pine);
+  display: block; width: 100%; margin-top: 6px; padding: 14px; border-radius: 14px; min-height: 48px;
+  border: 1px solid var(--sand); background: var(--paper); font: inherit; color: var(--pine);
 }
 .success, .error { display: none; padding: 14px; border-radius: 16px; margin: 0 0 16px; }
 .success { background: var(--sage-soft); }
-.error { background: #f5ddd0; }
+.error { background: var(--blush); }
 
 @media (prefers-reduced-motion: reduce) {
-  .hold.holding .fill { transition: none; }
+  /* No sweep: the label ("Keep holding…") and a solid fill show the hold instead. */
+  .hold.holding .fill { width: 100%; transition: none; opacity: 0.35; }
 }

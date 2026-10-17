@@ -92,11 +92,48 @@ casita:
 - **Held:** after a stuck or lost movement, the button is replaced by *I've checked it*, which asks
   for confirmation and calls `/api/resume`.
 - **Toyota:** read-only (*Watching only*) until its commands are tested.
-- **Mode badge:** *Practice garage* (simulated door), *Door control is off*, *Dry run*. In off and
-  dry-run the button is disabled.
-- **History:** the last four events, in Casita's voice.
-- **Look:** sage, warm cream, terracotta and deep pine; rounded type. Watson's picture is a
-  placeholder (`static/watson.svg`) for the hand-painted illustration.
+- **Mode note:** *Practice garage* (simulated door), control switched off, or *Rehearsal* (dry run).
+  In off and dry-run the button is disabled.
+- **History:** the last four events, in Casita's voice ("I closed Ford", "Ford isn't closed anymore").
+- **Greeting:** "Welcome home, <household>." and, only when every door shown is closed, "All tucked in."
+- **Look:** the approved palette, defined once at the top of `casita.css`: sage `#6B7F6B` (accent),
+  terracotta `#C65A3A` (the action), warm cream `#F8F4ED` (background), deep pine `#2E4A3F` (text),
+  soft sand `#D9C9B5` (secondary surfaces), plus darker shades only where text needs AA contrast.
+  A serif for the greeting, rounded type for everything else. No gradients; one soft shadow on Ford.
+- **iPhone:** safe-area padding on all sides, 44 pt+ touch targets, the hold button 72 pt tall.
+  With *Reduce Motion* the hold shows "Keep holding…" and a still fill, not a sweep.
+
+### Words and the family's identity
+
+- **`static/voice.js`** holds every line Casita says on the home screen; `app.js` holds only behaviour.
+  The door's rules stay in `GarageService`. Copy never says "open" for a door the sensor only knows is
+  not closed (`BrandTest` checks it).
+- **`casita.brand`** in `application.yml` holds the family's own words, served to signed-in family only
+  at `/api/brand`. The sign-in page stays generic.
+
+  ```yaml
+  casita:
+    brand:
+      household: wild ones   # "Welcome home, wild ones."; empty for "Welcome home."
+      companion: Watson      # "Nothing yet. Watson's keeping an eye on things."
+      about-line: ""         # one quiet line at the foot of the home screen; empty hides it
+  ```
+
+### Watson and the app icon (waiting for the artwork)
+
+`static/watson.svg` is a placeholder; don't redraw it, replace it. When the hand-painted art arrives:
+
+| File (in `static/`) | Size | Used for |
+|---|---|---|
+| `watson.svg` or `watson.png` (update the four `<img>` tags if PNG) | square, at least 264 × 264 | sign-in, Face ID and home pages |
+| `icons/apple-touch-icon.png` | 180 × 180, no transparency | iPhone *Add to Home Screen* |
+| `icons/icon-192.png`, `icons/icon-512.png` | 192 and 512 square | `manifest.webmanifest` |
+| `icons/icon-maskable-512.png` | 512, art inside the middle 80% | Android/maskable |
+
+Then add `<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">` to the pages, list the PNGs
+in `manifest.webmanifest`, and add `/icons/**` to the public paths in `SecurityConfig` (the manifest
+and icons are fetched without the session cookie). The manifest is already public and names only
+"Casita".
 
 Run it on the practice door:
 
@@ -132,5 +169,5 @@ control through the app.
 - **Parameter Store** for passkeys and secrets (build step 5), replacing `FilePasskeyStore`.
 - **Push notifications** for every move and failure (`LoggingNotifier` only logs today).
 - **Styling Spring's token page** (`/login/ott`): it works but looks like Spring's default.
-- **Watson's illustration**, an app icon and a web manifest for *Add to Home Screen*.
+- **Watson's illustration and the app icon**: the slots are ready (above); the art isn't.
 - **Enabling real door control in the UI**: after review.

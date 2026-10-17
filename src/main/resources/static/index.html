@@ -3,24 +3,30 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f6efe2">
+  <meta name="theme-color" content="#f8f4ed">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Casita">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="/manifest.webmanifest">
   <title>Casita</title>
   <link rel="stylesheet" href="/casita.css">
 </head>
 <body>
   <main>
     <header class="top">
-      <img class="watson" src="/watson.svg" alt="Watson" width="44" height="44">
-      <h1>Casita</h1>
+      <img class="watson" src="/watson.svg" alt="" width="40" height="40">
+      <span class="wordmark">Casita</span>
       <button id="signout" class="link" type="button">Sign out</button>
     </header>
+
+    <h1 class="greeting" id="greeting">Welcome home.</h1>
+    <p class="tucked" id="tucked" aria-live="polite"></p>
 
     <p class="mode" id="mode"></p>
     <p class="mode" id="setup"><a href="/passkey">Set up Face ID on this phone</a> so you can sign in with a glance.</p>
 
-    <section class="door unknown" id="door" aria-live="polite">
+    <section class="door main unknown" id="door" aria-live="polite">
       <p class="name" id="door-name">Garage</p>
       <p class="state" id="door-state">One moment…</p>
       <p class="since" id="door-since"></p>
@@ -29,7 +35,7 @@
         <button id="resume" class="secondary" type="button">I've checked it</button>
       </div>
       <button id="act" class="hold" type="button" disabled>
-        <span class="fill"></span><span class="label" id="act-label">…</span>
+        <span class="fill"></span><span class="label" id="act-label">One moment…</span>
       </button>
       <p class="reply" id="reply" aria-live="polite"></p>
     </section>
@@ -37,11 +43,14 @@
     <div class="watched" id="watched"></div>
 
     <section class="activity">
-      <h2>What I've been up to</h2>
+      <h2>Lately</h2>
       <ul id="activity"></ul>
     </section>
+
+    <p class="about" id="about"></p>
   </main>
   <script src="/common.js"></script>
+  <script src="/voice.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

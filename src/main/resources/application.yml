@@ -25,6 +25,13 @@ server:
         same-site: lax        # lax, so opening Casita from a notification or Shortcut keeps the session
 
 casita:
+  # The family's own words in the app (greetings, the dog's name). Nothing about the door depends on them.
+  brand:
+    household: wild ones      # "Welcome home, wild ones." Empty: "Welcome home."
+    companion: Watson
+    # One quiet line at the foot of the home screen, e.g. "Your little corner of the wild world.".
+    # Empty by default, so "wild" appears once.
+    about-line: ""
   # Which door Casita talks to: 'simulated' (pretend door) or 'meross' (the real one).
   door: simulated
   security:
