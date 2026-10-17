@@ -119,6 +119,10 @@
                     <systemPropertyVariables>
                         <sqlite4java.library.path>${project.build.directory}/native-libs</sqlite4java.library.path>
                     </systemPropertyVariables>
+                    <!-- DynamoDB Local's usage telemetry off (also off in code): the tests make no network calls. -->
+                    <environmentVariables>
+                        <DDB_LOCAL_TELEMETRY>0</DDB_LOCAL_TELEMETRY>
+                    </environmentVariables>
                 </configuration>
             </plugin>
         </plugins>
