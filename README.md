@@ -24,7 +24,9 @@ CI builds and tests every pull request.
 
 Family members sign in with Face ID (passkeys) and see Ford's status, one tap-to-act button and a
 short history; Toyota is shown read-only. It runs on a practice door by default. See
-[docs/APP.md](docs/APP.md) for enrolling a phone, the threat model and what's still to do.
+[docs/APP.md](docs/APP.md) for the app, the threat model and what's still to do;
+[docs/ACCESS.md](docs/ACCESS.md) for inviting and revoking devices (one invite per device, `bin/casita-access`);
+[docs/PERSISTENCE.md](docs/PERSISTENCE.md) for the planned DynamoDB storage on AWS.
 
 ```sh
 mvn spring-boot:run -Dspring-boot.run.profiles=dev \
