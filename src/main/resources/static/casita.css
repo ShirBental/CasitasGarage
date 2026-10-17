@@ -1,0 +1,186 @@
+/* Casita: one door, one clear status, one action. Warm cream, deep pine, sage, terracotta. iPhone first. */
+:root {
+  /* The approved palette (docs/APP.md, "Look") */
+  --sage: #6b7f6b;          /* accent */
+  --terracotta: #c65a3a;    /* the one action */
+  --cream: #f8f4ed;         /* background */
+  --pine: #2e4a3f;          /* text */
+  --sand: #d9c9b5;          /* secondary surfaces */
+  /* Derived, for contrast on cream (AA for body text) */
+  --paper: #fdfbf7;
+  --sand-soft: #ece3d6;
+  --hairline: #e6dccd;
+  --sage-soft: #e4e9e0;
+  --muted: #56685a;           /* 5.4:1 on cream */
+  --terracotta-deep: #a8452a; /* 5.4:1 on cream */
+  --serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  font-family: -apple-system, system-ui, "SF Pro Text", "Segoe UI", sans-serif;
+  color: var(--pine);
+  background: var(--cream);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--cream);
+  padding: max(10px, env(safe-area-inset-top)) max(22px, env(safe-area-inset-right))
+           max(20px, env(safe-area-inset-bottom)) max(22px, env(safe-area-inset-left));
+}
+
+main { max-width: 440px; margin: 0 auto; }
+p { line-height: 1.45; }
+a { color: var(--pine); }
+h1, h2 { font-weight: 600; margin: 0; }
+
+.watson { display: block; border-radius: 50%; }
+
+/* ---------- home: a column whose action sits in the thumb zone ---------- */
+.home main { display: flex; flex-direction: column; min-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom))); }
+
+.top { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
+.wordmark { font-family: var(--serif); font-size: 1.3rem; letter-spacing: 0.01em; }
+.account {
+  width: 44px; height: 44px; margin-right: -8px; border: none; border-radius: 50%; background: none;
+  color: var(--pine); display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+
+.tag {
+  display: none; align-self: flex-start; margin: 4px 0 0; padding: 4px 11px; border-radius: 999px;
+  background: var(--sage-soft); color: var(--pine); font-size: 0.8rem; font-weight: 500;
+}
+.tag.shown { display: inline-block; }
+
+/* The stage between the top bar and Toyota: Ford's status, then Watson resting on the divider below.
+   Without the approved illustration the status sits centred in the stage, so nothing looks missing. */
+.stage { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.ford { margin: auto 0; padding-bottom: 4vh; }
+.stage.with-art .ford { margin: 7vh 0 0; padding-bottom: 0; }
+.companion { display: flex; flex: 1; align-items: flex-end; justify-content: center; margin: 12px 0 0; min-height: 0; }
+.companion[hidden] { display: none; }
+/* About 200pt on a standard iPhone, smaller (never hidden) on short screens. The artwork's own proportions
+   are kept: it is fitted, never cropped, and sits on the divider line below it. */
+.companion img {
+  display: block; width: auto; max-width: min(200px, 70%); object-fit: contain; object-position: bottom;
+  height: clamp(96px, calc(100dvh - 560px), 200px);
+}
+#below[hidden] { display: none; }
+.ford .name { margin: 0; font-size: 1rem; color: var(--muted); font-weight: 500; }
+.ford .state {
+  margin: 6px 0 0; font-family: var(--serif); font-weight: 600; font-size: 3.6rem;
+  line-height: 1.02; letter-spacing: -0.015em;
+}
+.ford .detail { margin: 10px 0 0; min-height: 1.45em; font-size: 1rem; color: var(--muted); max-width: 30ch; }
+.ford.closed .state { color: var(--pine); }
+.ford.not-closed .state, .ford.moving .state, .ford.alert .state { color: var(--terracotta-deep); }
+.ford.quiet .state { color: var(--muted); }
+
+/* A fixed height, so Ford's status doesn't jump when a movement starts or ends */
+.feedback { min-height: 4.2rem; margin-top: 14px; }
+.estimate { display: none; }
+.estimate.shown { display: block; }
+.estimate.shown + .result:empty { display: none; }
+.estimate .track { height: 3px; border-radius: 2px; background: var(--sand-soft); overflow: hidden; }
+/* Dashed while estimating: it reads as a guess, not a measurement */
+.estimate .fill {
+  height: 100%; width: 0; transition: width 1s linear;
+  background: repeating-linear-gradient(90deg, var(--sage) 0 6px, transparent 6px 9px);
+}
+.estimate p { margin: 6px 0 0; font-size: 0.8rem; color: var(--muted); letter-spacing: 0.02em; }
+
+.result { margin: 0; font-size: 0.95rem; color: var(--pine); }
+.result.alert { color: var(--terracotta-deep); }
+
+.spacer { flex: 1; min-height: 28px; }
+
+/* Secondary information: quiet rows with hairlines */
+.row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+  min-height: 52px; padding: 0 2px; border: none; border-top: 1px solid var(--hairline);
+  background: none; font: inherit; font-size: 1rem; color: var(--pine); text-align: left;
+}
+.row .when { color: var(--muted); font-size: 0.95rem; white-space: nowrap; }
+button.row { cursor: pointer; }
+button.row[hidden] { display: none; }
+button.row .when::after { content: "›"; margin-left: 8px; font-size: 1.2rem; color: var(--sand); }
+.last { margin-bottom: 18px; }
+
+/* The one action */
+.act {
+  display: block; width: 100%; min-height: 60px; border: none; border-radius: 18px;
+  font: inherit; font-size: 1.1rem; font-weight: 600; letter-spacing: 0.005em;
+  background: var(--terracotta); color: #fff; cursor: pointer;
+  transition: transform 0.1s var(--ease);
+}
+.act:active:not(:disabled) { transform: scale(0.985); }
+.act.secondary { background: var(--sand-soft); color: var(--pine); }
+.act:disabled { background: var(--sand-soft); color: var(--muted); cursor: default; }
+
+:focus-visible { outline: 3px solid var(--sage); outline-offset: 3px; }
+
+/* ---------- sheets: history and account ---------- */
+.sheet {
+  width: 100%; max-width: 480px; max-height: 80dvh; margin: auto auto 0; padding: 8px 22px max(22px, env(safe-area-inset-bottom));
+  border: none; border-radius: 22px 22px 0 0; background: var(--paper); color: var(--pine); overflow-y: auto;
+}
+.sheet[open] { animation: rise 0.28s var(--ease); }
+.sheet::backdrop { background: rgba(46, 74, 63, 0.28); }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; min-height: 56px; }
+.sheet-head h2 { font-family: var(--serif); font-size: 1.3rem; }
+.close { min-height: 44px; padding: 0 4px; border: none; background: none; font: inherit; font-weight: 600; color: var(--sage); cursor: pointer; }
+.sheet ul { list-style: none; margin: 0; padding: 0; }
+.sheet li { display: flex; justify-content: space-between; gap: 12px; padding: 13px 0; border-top: 1px solid var(--hairline); }
+.sheet li time { color: var(--muted); white-space: nowrap; font-size: 0.95rem; }
+.household { margin: 0; font-family: var(--serif); font-style: italic; color: var(--sage); }
+.household:empty { display: none; }
+.signed-in { margin: 6px 0 14px; color: var(--muted); }
+.sheet-link {
+  display: flex; align-items: center; width: 100%; min-height: 52px; padding: 0; border: none;
+  border-top: 1px solid var(--hairline); background: none; font: inherit; color: var(--pine);
+  text-decoration: none; cursor: pointer;
+}
+.sheet-link[hidden] { display: none; }
+.about { margin: 22px 0 0; font-family: var(--serif); font-style: italic; font-size: 0.9rem; color: var(--muted); }
+.about:empty { display: none; }
+
+@keyframes rise { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---------- sign-in and Face ID pages ---------- */
+.welcome main { text-align: center; padding-top: 10vh; }
+.welcome .watson { width: 96px; height: 96px; margin: 0 auto 22px; }
+.welcome h1 { font-family: var(--serif); font-size: 2.1rem; }
+.voice { font-size: 1.05rem; color: var(--muted); margin: 12px auto 30px; max-width: 30ch; }
+.note { color: var(--muted); font-size: 0.95rem; margin-top: 18px; }
+.note a, .success a { color: var(--pine); font-weight: 600; }
+.primary, .secondary {
+  display: block; width: 100%; min-height: 56px; border: none; border-radius: 18px; padding: 14px;
+  font: inherit; font-size: 1.05rem; font-weight: 600; cursor: pointer;
+}
+.primary { background: var(--terracotta); color: #fff; }
+.secondary { background: var(--sand-soft); color: var(--pine); }
+.field { display: block; text-align: left; margin: 0 0 14px; color: var(--muted); }
+.field input {
+  display: block; width: 100%; margin-top: 6px; padding: 14px; border-radius: 14px; min-height: 50px;
+  border: 1px solid var(--sand); background: var(--paper); font: inherit; color: var(--pine);
+}
+.success, .error { display: none; padding: 14px; border-radius: 16px; margin: 0 0 16px; }
+.success { background: var(--sage-soft); }
+.error { background: #f4e1d8; }
+.link { background: none; border: none; color: var(--muted); font: inherit; min-height: 44px; cursor: pointer; text-decoration: none; }
+
+/* Smaller iPhones (SE): the status and the action keep their room; Watson scales down first. */
+@media (max-height: 700px) {
+  .ford .state { font-size: 3rem; }
+  .stage.with-art .ford { margin-top: 3vh; }
+  .last { margin-bottom: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .act, .estimate .fill { transition: none; }
+  .sheet[open] { animation: none; }
+}

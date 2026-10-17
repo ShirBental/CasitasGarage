@@ -6,10 +6,45 @@ server:
   # Never listen on a public interface: 'tailscale serve' publishes Casita to the tailnet.
   address: 127.0.0.1
   port: 8080
+  # Behind tailscale serve, requests arrive as http://127.0.0.1:8080. Trust its X-Forwarded-Proto and
+  # X-Forwarded-Host, from this machine only, so Casita knows it is https://<name>.ts.net: redirects
+  # and cookies then use the real address (an http://127.0.0.1 redirect breaks sign-in on the phone).
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      internal-proxies: 127\.0\.0\.1|0:0:0:0:0:0:0:1
+    use-relative-redirects: true
+  servlet:
+    session:
+      # Sessions live in memory: a restart signs everyone out (Face ID signs them back in). Until the
+      # design's remember-me lands, an idle session ends after a week.
+      timeout: 7d
+      cookie:
+        http-only: true
+        secure: true          # the dev profile turns this off for plain http://localhost
+        same-site: lax        # lax, so opening Casita from a notification or Shortcut keeps the session
 
 casita:
+  # The family's own words in the app (greetings, the dog's name). Nothing about the door depends on them.
+  brand:
+    household: wild ones      # "For the wild ones." in the account sheet. Empty hides it.
+    companion: Watson
+    # One quiet line in the account sheet, e.g. "Your little corner of the wild world.". Empty hides it.
+    about-line: ""
+    # Watson's approved illustration for the home screen: a file in static/brand/, e.g. /brand/watson-home.png.
+    # Empty until the approved artwork exists; the home screen then shows no illustration and no placeholder.
+    illustration: ""
   # Which door Casita talks to: 'simulated' (pretend door) or 'meross' (the real one).
   door: simulated
+  security:
+    # Passkeys are bound to this host name. Production: the Tailscale name, e.g.
+    # casita.<tailnet>.ts.net, with allowed-origins https://casita.<tailnet>.ts.net.
+    rp-id: localhost
+    allowed-origins: [http://localhost:8080]
+    # Who may sign in, by short name. Nobody else can, even with an invite link.
+    family: []
+    # Passkeys (public keys only) and invite links; outside git, readable by Casita's user only.
+    data-dir: data
   meross:
     api-base-url: https://iotx-us.meross.com
     # email / password: from the environment for now (CASITA_MEROSS_EMAIL, CASITA_MEROSS_PASSWORD),

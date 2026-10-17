@@ -1,0 +1,12 @@
+{
+  "name": "Casita",
+  "short_name": "Casita",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8f4ed",
+  "theme_color": "#f8f4ed",
+  "icons": [
+    { "src": "/watson.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

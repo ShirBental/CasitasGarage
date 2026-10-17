@@ -14,3 +14,6 @@ target/
 application-local.yml
 .env
 config/meross.local.json
+
+# Passkeys and invite links (casita.security.data-dir)
+/data/
