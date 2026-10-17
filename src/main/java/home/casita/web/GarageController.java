@@ -17,6 +17,7 @@ import home.casita.garage.DoorDevice;
 import home.casita.garage.DoorException;
 import home.casita.garage.DoorRoster;
 import home.casita.garage.DoorState;
+import home.casita.garage.GarageProperties;
 import home.casita.garage.GarageService;
 import home.casita.garage.GarageStatus;
 import home.casita.security.FilePasskeyStore;
@@ -38,19 +39,26 @@ class GarageController {
     private final ActivityLog activity;
     private final DoorRoster roster;
     private final FilePasskeyStore passkeys;
+    private final GarageProperties garageProperties;
 
-    GarageController(GarageService garage, ActivityLog activity, DoorRoster roster, FilePasskeyStore passkeys) {
+    GarageController(GarageService garage, ActivityLog activity, DoorRoster roster, FilePasskeyStore passkeys,
+                     GarageProperties garageProperties) {
         this.garage = garage;
         this.activity = activity;
         this.roster = roster;
         this.passkeys = passkeys;
+        this.garageProperties = garageProperties;
     }
 
     /** One door as the app shows it. {@code status} for the controlled door; {@code door} and {@code since} for every door. */
     record DoorView(String name, boolean controllable, DoorState door, Instant since, GarageStatus status) {}
 
-    /** @param control how commands reach the controlled door: simulated, off, dry-run or live */
-    record Doors(String control, List<DoorView> doors) {}
+    /**
+     * @param control           how commands reach the controlled door: simulated, off, dry-run or live
+     * @param travelTimeSeconds how long the controlled door is configured to take to move: an estimate from
+     *                          configuration, not a measurement (the sensor only knows closed / not closed)
+     */
+    record Doors(String control, long travelTimeSeconds, List<DoorView> doors) {}
 
     record Me(String name, int passkeys) {}
 
@@ -70,7 +78,7 @@ class GarageController {
             }
             doors.add(view);
         }
-        return new Doors(roster.control(), doors);
+        return new Doors(roster.control(), garageProperties.travelTime().toSeconds(), doors);
     }
 
     @GetMapping("/me")

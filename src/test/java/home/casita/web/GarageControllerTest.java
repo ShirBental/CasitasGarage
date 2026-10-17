@@ -73,6 +73,7 @@ class GarageControllerTest {
         mvc.perform(get("/api/doors").with(FAMILY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.control").value("simulated"))
+                .andExpect(jsonPath("$.travelTimeSeconds").value(10))
                 .andExpect(jsonPath("$.doors[0].name").value("Ford"))
                 .andExpect(jsonPath("$.doors[0].controllable").value(true))
                 .andExpect(jsonPath("$.doors[0].door").value("CLOSED"))
@@ -144,5 +145,22 @@ class GarageControllerTest {
         mvc.perform(post("/api/close").with(FAMILY).with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.outcome").value("BUSY"));
+    }
+
+    @Test
+    void twoTapsAtOnceSendOneCommand() throws Exception {
+        // The app has no hold or confirmation: a double tap, or two phones at once, must still move the door once.
+        java.util.concurrent.ExecutorService phones = java.util.concurrent.Executors.newFixedThreadPool(4);
+        java.util.List<java.util.concurrent.Future<String>> taps = new java.util.ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            taps.add(phones.submit(() -> com.jayway.jsonpath.JsonPath.read(mvc.perform(post("/api/open").with(FAMILY).with(csrf()))
+                    .andReturn().getResponse().getContentAsString(), "$.outcome")));
+        }
+        java.util.List<String> outcomes = new java.util.ArrayList<>();
+        for (var tap : taps) outcomes.add(tap.get());
+        phones.shutdown();
+
+        assertThat(outcomes).containsOnlyOnce("MOVING").containsOnly("MOVING", "BUSY");
+        assertThat(activity.recent(10)).filteredOn(e -> e.outcome() == home.casita.garage.Outcome.MOVING).hasSize(1);
     }
 }

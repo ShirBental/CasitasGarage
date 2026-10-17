@@ -22,7 +22,7 @@ CI builds and tests every pull request.
 
 ## The app
 
-Family members sign in with Face ID (passkeys) and see Ford's status, one press-and-hold action and a
+Family members sign in with Face ID (passkeys) and see Ford's status, one tap-to-act button and a
 short history; Toyota is shown read-only. It runs on a practice door by default. See
 [docs/APP.md](docs/APP.md) for enrolling a phone, the threat model and what's still to do.
 

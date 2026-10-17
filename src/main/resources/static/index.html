@@ -12,43 +12,53 @@
   <title>Casita</title>
   <link rel="stylesheet" href="/casita.css">
 </head>
-<body>
+<body class="home">
   <main>
     <header class="top">
-      <img class="watson" src="/watson.svg" alt="" width="40" height="40">
       <span class="wordmark">Casita</span>
-      <button id="signout" class="link" type="button">Sign out</button>
-    </header>
-
-    <h1 class="greeting" id="greeting">Welcome home.</h1>
-    <p class="tucked" id="tucked" aria-live="polite"></p>
-
-    <p class="mode" id="mode"></p>
-    <p class="mode" id="setup"><a href="/passkey">Set up Face ID on this phone</a> so you can sign in with a glance.</p>
-
-    <section class="door main unknown" id="door" aria-live="polite">
-      <p class="name" id="door-name">Garage</p>
-      <p class="state" id="door-state">One moment…</p>
-      <p class="since" id="door-since"></p>
-      <div class="held" id="held">
-        <p>My last move didn't finish the way I expected. Please check the door, then let me know it's OK.</p>
-        <button id="resume" class="secondary" type="button">I've checked it</button>
-      </div>
-      <button id="act" class="hold" type="button" disabled>
-        <span class="fill"></span><span class="label" id="act-label">One moment…</span>
+      <button id="account-open" class="avatar" type="button" aria-label="Account">
+        <img src="/watson.svg" alt="" width="34" height="34"><span class="dot" id="setup-dot"></span>
       </button>
-      <p class="reply" id="reply" aria-live="polite"></p>
+    </header>
+    <p class="tag" id="mode"></p>
+
+    <section class="ford" id="door" aria-live="polite">
+      <p class="name" id="door-name">Ford</p>
+      <p class="state" id="door-state">One moment…</p>
+      <p class="detail" id="door-detail"></p>
+      <div class="estimate" id="estimate">
+        <div class="track"><div class="fill" id="estimate-fill"></div></div>
+        <p id="estimate-label"></p>
+      </div>
+      <p class="result" id="result"></p>
     </section>
+
+    <div class="spacer"></div>
 
     <div class="watched" id="watched"></div>
+    <button class="row last" id="history-open" type="button">
+      <span id="last-event">No history yet</span><span class="when" id="last-when"></span>
+    </button>
 
-    <section class="activity">
-      <h2>Lately</h2>
-      <ul id="activity"></ul>
-    </section>
-
-    <p class="about" id="about"></p>
+    <div class="action">
+      <button id="act" class="act" type="button" disabled>One moment…</button>
+    </div>
   </main>
+
+  <dialog id="history" class="sheet" aria-labelledby="history-title">
+    <div class="sheet-head"><h2 id="history-title">History</h2><button class="close" type="button" data-close>Done</button></div>
+    <ul id="activity"></ul>
+  </dialog>
+
+  <dialog id="account" class="sheet" aria-labelledby="account-title">
+    <div class="sheet-head"><h2 id="account-title">Casita</h2><button class="close" type="button" data-close>Done</button></div>
+    <p class="household" id="household"></p>
+    <p class="signed-in" id="signed-in"></p>
+    <a class="sheet-link" id="setup" href="/passkey">Set up Face ID on this phone</a>
+    <button id="signout" class="sheet-link" type="button">Sign out</button>
+    <p class="about" id="about"></p>
+  </dialog>
+
   <script src="/common.js"></script>
   <script src="/voice.js"></script>
   <script src="/app.js"></script>

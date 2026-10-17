@@ -27,10 +27,9 @@ server:
 casita:
   # The family's own words in the app (greetings, the dog's name). Nothing about the door depends on them.
   brand:
-    household: wild ones      # "Welcome home, wild ones." Empty: "Welcome home."
+    household: wild ones      # "For the wild ones." in the account sheet. Empty hides it.
     companion: Watson
-    # One quiet line at the foot of the home screen, e.g. "Your little corner of the wild world.".
-    # Empty by default, so "wild" appears once.
+    # One quiet line in the account sheet, e.g. "Your little corner of the wild world.". Empty hides it.
     about-line: ""
   # Which door Casita talks to: 'simulated' (pretend door) or 'meross' (the real one).
   door: simulated

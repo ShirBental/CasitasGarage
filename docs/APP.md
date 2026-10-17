@@ -48,7 +48,7 @@ Casita is reachable only on our tailnet, so an attacker must first be a device o
 | Injected script | Content-Security-Policy `script-src 'self'`, no inline script or style; pages build text with `textContent` only |
 | Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |
 | A stolen session cookie | `HttpOnly` and `Secure`; ends after 7 idle days or a restart. Revocation (below) is still to do |
-| An unlocked phone in the wrong hands | Accepted in the design (no extra Face ID per action). Hold-to-act, the activity log, and `GarageService`'s rules limit it |
+| An unlocked phone in the wrong hands | Accepted in the design (no extra Face ID per action). Explicit one-tap actions (never a toggle: *Open Ford* can only open), the activity log, and `GarageService`'s rules limit it |
 | The server's disk | `data/` holds public keys and short-lived invite links only, owner-only; it is outside git |
 
 Out of scope here: a compromised server or tailnet admin account, and the opener's physical safety
@@ -86,22 +86,50 @@ casita:
 
 ## The app
 
-- **Ford:** large status (Closed, Not closed, Opening…, Closing…, Checking…, "I can't see it"),
-  since when, and one press-and-hold button (0.9 s): Open when closed, Close when it may close.
-  "Not closed" is never shown as "fully open": the sensor can't tell.
-- **Held:** after a stuck or lost movement, the button is replaced by *I've checked it*, which asks
+One door, one clear status, one action.
+
+- **Ford** fills the top of the screen: its name, the state in large serif type, and one sentence of
+  what the sensor actually reads. States: *Closed*, *Not closed*, *Opening…*, *Closing…*,
+  *Checking…*, *Can't see*, *Needs a check* (held) and *Can't reach home* (no connection).
+- **Measured versus inferred.** The sensor measures only closed / not closed, so the app never says
+  *Open*: it says *Not closed* and "It can't tell how far up". While Ford moves, a dashed bar shows
+  progress **estimated** from `casita.garage.travel-time` (`/api/doors` `travelTimeSeconds`), labelled
+  as an estimate, not a sensor reading.
+- **The action** is one tap on one button in the thumb zone: *Open Ford* when closed, *Close Ford*
+  when it may close. Press-and-hold and any confirmation step are gone. Safeguards:
+  - each button calls one explicit endpoint (`/api/open` or `/api/close`), never a toggle, so a
+    repeated or late tap can't turn into the opposite command;
+  - the button is disabled before the request leaves, until the server answers, and while the
+    server reports the door moving or being checked;
+  - the server refuses any command while one is unchecked (`BUSY`), and never sends toward the state
+    the sensor already reads (`ALREADY`). Simultaneous taps from several phones move the door once
+    (`GarageControllerTest`);
+  - a request that times out (10 s) or is lost is reported as "may or may not have arrived", and
+    nothing else is offered until the server's sensor check.
+- **Success waits for the sensor.** A command's acknowledgement shows "Sent… waiting for the
+  sensor". "✓ Sensor confirms Ford is closed" (or "reads Ford not closed") appears only once
+  `GarageService`'s check is in the history.
+- **Held:** after a stuck or lost movement the button becomes *I've checked the door*, which asks
   for confirmation and calls `/api/resume`.
-- **Toyota:** read-only (*Watching only*) until its commands are tested.
-- **Mode note:** *Practice garage* (simulated door), control switched off, or *Rehearsal* (dry run).
-  In off and dry-run the button is disabled.
-- **History:** the last four events, in Casita's voice ("I closed Ford", "Ford isn't closed anymore").
-- **Greeting:** "Welcome home, <household>." and, only when every door shown is closed, "All tucked in."
-- **Look:** the approved palette, defined once at the top of `casita.css`: sage `#6B7F6B` (accent),
-  terracotta `#C65A3A` (the action), warm cream `#F8F4ED` (background), deep pine `#2E4A3F` (text),
-  soft sand `#D9C9B5` (secondary surfaces), plus darker shades only where text needs AA contrast.
-  A serif for the greeting, rounded type for everything else. No gradients; one soft shadow on Ford.
-- **iPhone:** safe-area padding on all sides, 44 pt+ touch targets, the hold button 72 pt tall.
-  With *Reduce Motion* the hold shows "Keep holding…" and a still fill, not a sweep.
+- **Toyota:** one quiet line, "Toyota · Closed · view only". Never a button.
+- **History** is one tap away: the last event is a row; tapping it opens a sheet with the rest.
+- **Account:** Watson's avatar (top right) opens a sheet: who's signed in, Face ID setup if needed,
+  sign out, and the family's line. A small dot on the avatar means Face ID isn't set up.
+- **Mode tag:** *Practice door* (simulated), *Door control off*, *Rehearsal* (dry run). In off and
+  dry-run the button is disabled.
+- **Look:** the approved palette, defined once at the top of `casita.css`: sage `#6B7F6B`,
+  terracotta `#C65A3A` (only the action), warm cream `#F8F4ED`, deep pine `#2E4A3F`, soft sand
+  `#D9C9B5`, plus darker shades where text needs AA contrast. Serif for the state and headings, the
+  system font for the rest. No cards, no shadows, no illustrations.
+- **iPhone:** safe areas on all sides, 44 pt+ targets, a 60 pt action button, sheets from the bottom.
+  *Reduce Motion* turns off transitions.
+
+Run it on the practice door:
+
+```bash
+mvn spring-boot:run -Dspring-boot.run.profiles=dev \
+  -Dspring-boot.run.arguments="--casita.security.family=shir --casita.security.data-dir=target/dev-data"
+```
 
 ### Words and the family's identity
 
@@ -114,9 +142,9 @@ casita:
   ```yaml
   casita:
     brand:
-      household: wild ones   # "Welcome home, wild ones."; empty for "Welcome home."
-      companion: Watson      # "Nothing yet. Watson's keeping an eye on things."
-      about-line: ""         # one quiet line at the foot of the home screen; empty hides it
+      household: wild ones   # "For the wild ones." in the account sheet; empty hides it
+      companion: Watson      # the dog's name, for copy that mentions him
+      about-line: ""         # one quiet line in the account sheet; empty hides it
   ```
 
 ### Watson and the app icon (waiting for the artwork)
@@ -154,7 +182,7 @@ Goal: when someone drives home, Casita offers to open the garage. **It never ope
    say "I'm arriving". It can't open or close.
 3. **Casita answers with a question, not an action.** If Ford is closed and nothing is held, Casita
    sends a push notification: "Welcome home! Want me to open Ford?". Tapping it opens Casita's
-   arrival sheet (`/?arrive=1`): *Yes, open it* (press and hold, as usual) or *Not now*.
+   arrival sheet (`/?arrive=1`): *Open Ford* (one tap, as usual) or *Not now*.
 4. **Rate limits.** One arrival prompt per person per 15 minutes; none while a movement is
    unchecked or held.
 
