@@ -99,7 +99,7 @@ class SecurityConfig {
                         .requestMatchers("/healthz", "/error").permitAll()
                         // The sign-in page and what it needs; nothing about the door.
                         .requestMatchers("/login", "/login.html", "/login.js", "/login/webauthn.js", "/common.js", "/casita.css",
-                                "/watson.svg")
+                                "/watson.svg", "/manifest.webmanifest")
                         .permitAll()
                         .anyRequest().hasRole(ROLE))
                 .webAuthn(webAuthn -> webAuthn
