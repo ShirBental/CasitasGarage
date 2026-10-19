@@ -2,6 +2,8 @@ package home.casita.security.store;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -21,6 +23,8 @@ public final class FaultyDynamo {
     private final Map<String, AtomicInteger> failBefore = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> loseResponse = new ConcurrentHashMap<>();
     private final AtomicBoolean down = new AtomicBoolean();
+    /** What DynamoDB itself answered with an error (not the injected failures), by operation: "op: ExceptionType". */
+    private final List<String> realErrors = new CopyOnWriteArrayList<>();
 
     public FaultyDynamo(DynamoDbClient real) {
         this.real = real;
@@ -36,6 +40,7 @@ public final class FaultyDynamo {
                     try {
                         result = method.invoke(real, args);
                     } catch (InvocationTargetException e) {
+                        realErrors.add(op + ": " + e.getCause().getClass().getSimpleName());
                         throw e.getCause();
                     }
                     if (take(loseResponse, op)) throw SdkClientException.create("Response to " + op + " lost (test)");
@@ -66,6 +71,10 @@ public final class FaultyDynamo {
         loseResponse.put(operation, new AtomicInteger(times));
     }
 
+    public List<String> realErrors() {
+        return List.copyOf(realErrors);
+    }
+
     public void down(boolean isDown) {
         down.set(isDown);
     }
@@ -74,5 +83,6 @@ public final class FaultyDynamo {
         failBefore.clear();
         loseResponse.clear();
         down.set(false);
+        realErrors.clear();
     }
 }

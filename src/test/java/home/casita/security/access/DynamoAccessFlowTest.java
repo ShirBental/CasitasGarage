@@ -4,8 +4,10 @@ import static home.casita.security.access.TestTailnet.SHIR_PHONE;
 import static home.casita.security.access.TestTailnet.from;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -85,5 +87,44 @@ class DynamoAccessFlowTest extends AccessFlowContract {
 
         assertThat(refusal).isEqualTo("security store unavailable");
         assertThat(session.isInvalid()).isTrue();
+    }
+
+    @Test
+    void aRealPasskeySignInDuringAnOutageGetsNoSession() throws Exception {
+        SoftAuthenticator iphone = new SoftAuthenticator();
+        assertThat(realRegistration(iphone, redeem(invite("shir", "Shir's iPhone")[1], SHIR_PHONE), SHIR_PHONE)).isEqualTo(200);
+        MockHttpSession session = new MockHttpSession();
+        String options = optionsJson("/webauthn/authenticate/options", session, SHIR_PHONE);
+
+        dynamo.down(true);
+        int status;
+        try {
+            status = mvc.perform(post("/login/webauthn").session(session).with(from(SHIR_PHONE)).with(csrf())
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(iphone.assertion(options)))
+                    .andReturn().getResponse().getStatus();
+        } catch (Exception e) {
+            status = 500; // escaped as an error: no session either way
+        }
+        dynamo.down(false);
+
+        assertThat(status).isNotEqualTo(200);
+        expectGarage(session, SHIR_PHONE, 401);
+    }
+
+    @Test
+    void aMemberRevocationWhoseCleanupFailsStillRefusesThemAndCanBeRerun() throws Exception {
+        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+
+        dynamo.failBefore("query", 1); // the member record is updated, then the cleanup's first index query fails
+        mvc.perform(delete("/admin/members/shir").header(LocalAdmin.HEADER, adminSecret()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.revoked").value(true))
+                .andExpect(jsonPath("$.cleanup").value("incomplete: run revoke-member again"));
+
+        expectGarage(session, SHIR_PHONE, 401); // the member record alone refuses them
+        assertThat(store.device(SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.status()).isEqualTo(SecurityStore.Status.ACTIVE));
+
+        mvc.perform(delete("/admin/members/shir").header(LocalAdmin.HEADER, adminSecret()))
+                .andExpect(jsonPath("$.devices").value(1)).andExpect(jsonPath("$.credentials").value(1));
+        assertThat(store.device(SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.status()).isEqualTo(SecurityStore.Status.REVOKED));
     }
 }

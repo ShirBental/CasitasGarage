@@ -490,6 +490,23 @@ abstract class SecurityStoreContract {
     }
 
     @Test
+    void aConsumedInvitationStaysConsumedAcrossARestart() {
+        Invitation i = invite("shir");
+        Invitation consumed = store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1").orElseThrow();
+
+        SecurityStore after = restarted();
+
+        assertThat(after.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-2", "eid-2")).isEmpty();
+        assertThat(after.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1")).get()
+                .satisfies(c -> assertThat(c.consumedAt()).isEqualTo(consumed.consumedAt()));
+        EnrollmentClaim claim = new EnrollmentClaim(consumed.tokenHash(), consumed.inviteId(), "eid-1", "shir", consumed.label(),
+                consumed.nodeId(), consumed.nodeName());
+        assertThat(after.enroll(claim, passkey("shir", "YWZ0ZXI"), null)).isTrue(); // the claim (if it survived) still completes once
+        assertThat(after.enroll(new EnrollmentClaim(claim.tokenHash(), claim.inviteId(), "eid-2", "shir", claim.label(), claim.nodeId(),
+                claim.nodeName()), passkey("shir", "YWdhaW4"), null)).isFalse();
+    }
+
+        @Test
     void aNewInvitationNeedsAFreshHash() {
         Invitation i = invite("shir");
         assertThatThrownBy(() -> store.createInvitation(i)).isInstanceOf(IllegalStateException.class);

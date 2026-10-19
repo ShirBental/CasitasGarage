@@ -26,12 +26,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.web.webauthn.api.Bytes;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -149,6 +151,10 @@ abstract class AccessFlowContract {
         mvc.perform(get("/api/me").session(enrolling).with(from(SHIR_PHONE))).andExpect(status().isForbidden());
         mvc.perform(post("/api/open").session(enrolling).with(from(SHIR_PHONE)).with(csrf())).andExpect(status().isForbidden());
         mvc.perform(post("/api/close").session(enrolling).with(from(SHIR_PHONE)).with(csrf())).andExpect(status().isForbidden());
+        mvc.perform(post("/api/resume").session(enrolling).with(from(SHIR_PHONE)).with(csrf())).andExpect(status().isForbidden());
+        mvc.perform(get("/api/status").session(enrolling).with(from(SHIR_PHONE))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/activity").session(enrolling).with(from(SHIR_PHONE))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/brand").session(enrolling).with(from(SHIR_PHONE))).andExpect(status().isForbidden());
         mvc.perform(get("/").session(enrolling).with(from(SHIR_PHONE))).andExpect(status().isForbidden());
         assertThat(activity.recent(10)).isEmpty();
 
@@ -433,6 +439,178 @@ abstract class AccessFlowContract {
         mvc.perform(get("/passkey").session(enrolling).with(from(SHIR_PHONE))).andExpect(redirectedUrl("/login"));
         assertThat(enrolling.isInvalid()).isTrue();
         assertThat(store.device(SHIR_PHONE.nodeId())).isEmpty();
+    }
+
+    /* ---------- real WebAuthn: real keys and signatures through Spring's verification ---------- */
+
+    protected String optionsJson(String path, MockHttpSession session, TestTailnet.Phone phone) throws Exception {
+        return mvc.perform(post(path).session(session).with(from(phone)).with(csrf())).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+    }
+
+    /**
+     * The phone's browser registering a passkey in its enrollment session: options, then the attestation. Returns
+     * the HTTP status. Spring's registration filter lets a failed verification escape as an exception (in Tomcat,
+     * a 500): that counts as rejected too.
+     */
+    protected int realRegistration(SoftAuthenticator passkey, MockHttpSession enrolling, TestTailnet.Phone phone) throws Exception {
+        String body = passkey.register(optionsJson("/webauthn/register/options", enrolling, phone), "iCloud Keychain");
+        try {
+            MvcResult r = mvc.perform(post("/webauthn/register").session(enrolling).with(from(phone)).with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON).content(body)).andReturn();
+            return r.getResponse().getStatus() == 200 && !r.getResponse().getContentAsString().contains("\"success\":true") ? 400
+                    : r.getResponse().getStatus();
+        } catch (Exception e) {
+            return 500;
+        }
+    }
+
+    /** The phone's browser signing in with a passkey: options, then the assertion. Returns the HTTP status. */
+    protected int realSignIn(SoftAuthenticator passkey, MockHttpSession session, TestTailnet.Phone phone) throws Exception {
+        String body = passkey.assertion(optionsJson("/webauthn/authenticate/options", session, phone));
+        return mvc.perform(post("/login/webauthn").session(session).with(from(phone)).with(csrf())
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andReturn().getResponse().getStatus();
+    }
+
+    @Test
+    void aRealPasskeyEnrollsTheInvitesPhoneAndThenSignsIn() throws Exception {
+        SoftAuthenticator iphone = new SoftAuthenticator();
+        MockHttpSession enrolling = redeem(invite("shir", "Shir's iPhone")[1], SHIR_PHONE);
+
+        assertThat(realRegistration(iphone, enrolling, SHIR_PHONE)).isEqualTo(200);
+        assertThat(store.device(SHIR_PHONE.nodeId())).get().satisfies(d -> {
+            assertThat(d.activeFor("shir")).isTrue();
+            assertThat(d.credentialId()).isEqualTo(iphone.credentialId());
+        });
+
+        MockHttpSession session = new MockHttpSession();
+        assertThat(realSignIn(iphone, session, SHIR_PHONE)).isEqualTo(200);
+        expectGarage(session, SHIR_PHONE, 200);
+        mvc.perform(post("/api/open").session(session).with(from(SHIR_PHONE)).with(csrf())).andExpect(jsonPath("$.outcome").value("MOVING"));
+    }
+
+    @Test
+    void aRegistrationWithoutUserVerificationIsRejectedAndAuthorizesNothing() throws Exception {
+        SoftAuthenticator noFaceId = new SoftAuthenticator();
+        noFaceId.skipUserVerification = true;
+        String[] invite = invite("shir", "Shir's iPhone");
+        MockHttpSession enrolling = redeem(invite[1], SHIR_PHONE);
+
+        assertThat(realRegistration(noFaceId, enrolling, SHIR_PHONE)).isNotEqualTo(200);
+
+        assertThat(store.passkey(Bytes.fromBase64(noFaceId.credentialId()))).isEmpty();
+        assertThat(store.device(SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(invitation(invite[0]).enrolledAt()).isNull();
+    }
+
+    @Test
+    void aRegistrationForAnotherOriginIsRejected() throws Exception {
+        SoftAuthenticator phished = new SoftAuthenticator();
+        phished.origin = "https://casita.example-phish.net";
+        MockHttpSession enrolling = redeem(invite("shir", "Shir's iPhone")[1], SHIR_PHONE);
+
+        assertThat(realRegistration(phished, enrolling, SHIR_PHONE)).isNotEqualTo(200);
+        assertThat(store.device(SHIR_PHONE.nodeId())).isEmpty();
+    }
+
+    @Test
+    void aRealSyncedPasskeyAloneGetsANewDeviceNothing() throws Exception {
+        SoftAuthenticator synced = new SoftAuthenticator(); // the same key on her iPhone and, through iCloud, her iPad
+        assertThat(realRegistration(synced, redeem(invite("shir", "Shir's iPhone")[1], SHIR_PHONE), SHIR_PHONE)).isEqualTo(200);
+
+        MockHttpSession ipad = new MockHttpSession();
+        assertThat(realSignIn(synced, ipad, SHIR_IPAD)).isEqualTo(401);
+        expectGarage(ipad, SHIR_IPAD, 401);
+        assertThat(store.device(SHIR_IPAD.nodeId())).isEmpty();
+    }
+
+    @Test
+    void aSyncedPasskeyAuthorizesTheInvitedDeviceOnlyAfterItsAssertionVerifies() throws Exception {
+        SoftAuthenticator synced = new SoftAuthenticator();
+        assertThat(realRegistration(synced, redeem(invite("shir", "Shir's iPhone")[1], SHIR_PHONE), SHIR_PHONE)).isEqualTo(200);
+        String[] invite = invite("shir", "Shir's iPad");
+        MockHttpSession enrolling = redeem(invite[1], SHIR_IPAD);
+
+        // A forged assertion inside the iPad's live enrollment: refused before anything is authorized.
+        synced.badSignature = true;
+        assertThat(realSignIn(synced, enrolling, SHIR_IPAD)).isEqualTo(401);
+        assertThat(store.device(SHIR_IPAD.nodeId())).isEmpty();
+        assertThat(invitation(invite[0]).enrolledAt()).isNull();
+
+        // Without user verification: refused the same way.
+        synced.badSignature = false;
+        synced.skipUserVerification = true;
+        assertThat(realSignIn(synced, enrolling, SHIR_IPAD)).isEqualTo(401);
+        assertThat(store.device(SHIR_IPAD.nodeId())).isEmpty();
+
+        // The real thing, with Face ID: now, and only now, the iPad is authorized.
+        synced.skipUserVerification = false;
+        assertThat(realSignIn(synced, enrolling, SHIR_IPAD)).isEqualTo(200);
+        assertThat(store.device(SHIR_IPAD.nodeId())).get().satisfies(d -> assertThat(d.inviteId()).isEqualTo(invite[0]));
+        expectGarage(enrolling, SHIR_IPAD, 200);
+    }
+
+    @Test
+    void aSignInWithoutUserVerificationIsRejectedEvenOnAnAuthorizedPhone() throws Exception {
+        SoftAuthenticator iphone = new SoftAuthenticator();
+        assertThat(realRegistration(iphone, redeem(invite("shir", "Shir's iPhone")[1], SHIR_PHONE), SHIR_PHONE)).isEqualTo(200);
+
+        iphone.skipUserVerification = true;
+        MockHttpSession session = new MockHttpSession();
+        assertThat(realSignIn(iphone, session, SHIR_PHONE)).isEqualTo(401);
+        expectGarage(session, SHIR_PHONE, 401);
+    }
+
+    @Test
+    void aReplayedAssertionIsRejected() throws Exception {
+        SoftAuthenticator iphone = new SoftAuthenticator();
+        assertThat(realRegistration(iphone, redeem(invite("shir", "Shir's iPhone")[1], SHIR_PHONE), SHIR_PHONE)).isEqualTo(200);
+        MockHttpSession first = new MockHttpSession();
+        String body = iphone.assertion(optionsJson("/webauthn/authenticate/options", first, SHIR_PHONE));
+        mvc.perform(post("/login/webauthn").session(first).with(from(SHIR_PHONE)).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+
+        // The same captured assertion, in a new session with its own (different) challenge.
+        MockHttpSession replay = new MockHttpSession();
+        optionsJson("/webauthn/authenticate/options", replay, SHIR_PHONE);
+        mvc.perform(post("/login/webauthn").session(replay).with(from(SHIR_PHONE)).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+        expectGarage(replay, SHIR_PHONE, 401);
+    }
+
+    @Test
+    void aRevokedRealPasskeyCantSignInAgain() throws Exception {
+        SoftAuthenticator iphone = new SoftAuthenticator();
+        assertThat(realRegistration(iphone, redeem(invite("shir", "Shir's iPhone")[1], SHIR_PHONE), SHIR_PHONE)).isEqualTo(200);
+        MockHttpSession session = new MockHttpSession();
+        assertThat(realSignIn(iphone, session, SHIR_PHONE)).isEqualTo(200);
+
+        mvc.perform(delete("/admin/credentials/" + iphone.credentialId()).header(LocalAdmin.HEADER, adminSecret()));
+
+        expectGarage(session, SHIR_PHONE, 401);
+        assertThat(realSignIn(iphone, new MockHttpSession(), SHIR_PHONE)).isEqualTo(401);
+    }
+
+    /* ---------- path variants: nothing slips past the guards ---------- */
+
+    @Test
+    void pathVariantsCantRedeemAnInviteFromAnUnverifiedDevice() throws Exception {
+        String[] invite = invite("shir", "Shir's iPhone");
+        for (String path : new String[] {"/login/ott/", "/login/ott;x=y", "/login//ott", "/LOGIN/OTT", "/login/./ott"}) {
+            mvc.perform(post(path).param("token", invite[1]).with(csrf()));
+        }
+        assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.PENDING);
+    }
+
+    @Test
+    void pathVariantsCantGiveASignedInMemberPasskeyOptions() throws Exception {
+        MockHttpSession family = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        for (String path : new String[] {"/webauthn/register/options/", "/webauthn/register/", "/webauthn/register;x=y"}) {
+            MvcResult r = mvc.perform(post(path).session(family).with(from(SHIR_PHONE)).with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON).content("{}")).andReturn();
+            assertThat(r.getResponse().getContentAsString()).as(path).doesNotContain("challenge").doesNotContain("\"success\":true");
+        }
+        assertThat(store.passkeysOf("shir")).hasSize(1);
     }
 
     /* ---------- administration: on the server only ---------- */

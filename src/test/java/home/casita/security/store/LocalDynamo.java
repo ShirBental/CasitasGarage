@@ -20,7 +20,12 @@ public final class LocalDynamo {
     /** Settings for a Spring test in DynamoDB mode (the region only lets the unused real client build; nothing calls AWS). */
     public static final String[] PROPERTIES = {"casita.storage.type=dynamodb", "casita.storage.region=us-east-1"};
 
-    public static DynamoDbClient start(AmazonDynamoDBLocal local, DynamoTables tables) {
+    /** The only way tests start DynamoDB Local: in memory, with its usage telemetry off (no network calls). */
+    public static AmazonDynamoDBLocal embedded() {
+        return DynamoDBEmbedded.create(true); // true: disableTelemetry
+    }
+
+        public static DynamoDbClient start(AmazonDynamoDBLocal local, DynamoTables tables) {
         DynamoDbClient client = local.dynamoDbClient();
         tables.definitions().forEach(client::createTable);
         return client;
@@ -30,7 +35,7 @@ public final class LocalDynamo {
     public static class Config {
         @Bean(destroyMethod = "shutdown")
         AmazonDynamoDBLocal dynamoDbLocal() {
-            return DynamoDBEmbedded.create(true); // true: DynamoDB Local telemetry off, so the tests stay offline
+            return embedded();
         }
 
         /** The faulty wrapper lets a test make DynamoDB fail; it passes everything through until told otherwise. */

@@ -11,7 +11,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.web.webauthn.api.Bytes;
 
-import com.amazonaws.services.dynamodbv2.local.embedded.DynamoDBEmbedded;
+import com.amazonaws.services.dynamodbv2.local.monitoring.Telemetry;
+import com.amazonaws.services.dynamodbv2.local.monitoring.TelemetryUtil;
 import com.amazonaws.services.dynamodbv2.local.shared.access.AmazonDynamoDBLocal;
 
 import home.casita.security.access.TestTailnet;
@@ -31,7 +32,7 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
 
     @Override
     protected SecurityStore newStore() {
-        local = DynamoDBEmbedded.create(true); // true: DynamoDB Local telemetry off, so the tests stay offline
+        local = LocalDynamo.embedded();
         dynamo = new FaultyDynamo(LocalDynamo.start(local, tables));
         return new DynamoSecurityStore(dynamo.client(), tables, clock);
     }
@@ -132,19 +133,63 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
     }
 
     @Test
-    void resendingTheSameTransactionAfterSuccessNeverDuplicatesAnything() {
+    void aResendInsideTheIdempotencyWindowIsAcknowledgedWithoutRunningAgain() {
         EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
         assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isTrue();
 
-        // As a retry inside DynamoDB's idempotency window would, and as one after it would (conditions refuse it).
-        assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isTrue();
-        clock.advance(java.time.Duration.ofMinutes(11));
-        assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isTrue(); // still what is stored
+        assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isTrue(); // same token: DynamoDB answers success
 
+        assertThat(dynamo.realErrors()).isEmpty();
         assertThat(store.devicesOf("shir")).hasSize(1);
         assertThat(store.passkeysOf("shir")).hasSize(1);
-        assertThat(store.invitationById(claim.inviteId())).get().satisfies(i -> assertThat(i.expiresAt()).isEqualTo(
-                i.createdAt().plus(java.time.Duration.ofMinutes(5))));
+    }
+
+    @Test
+    void aResendAfterTheIdempotencyWindowRunsAgainIsRefusedByItsConditionsAndDuplicatesNothing() {
+        // DynamoDB no longer recognizes the token after ten minutes, so the resend really executes. A fresh token
+        // makes DynamoDB Local do the same now (its own window hasn't passed in real time).
+        DynamoSecurityStore dynamoStore = (DynamoSecurityStore) store;
+        Invitation invitation = invite("shir");
+        EnrollmentClaim claim = consume(invitation, TestTailnet.SHIR_PHONE);
+        var record = passkey("shir", "c2hpcnMta2V5");
+        assertThat(dynamoStore.enroll(claim, record, null)).isTrue();
+
+        assertThat(dynamoStore.enroll(claim, record, "c2hpcnMta2V5", "resent-after-the-window-1")).isTrue(); // read back: it is complete
+        clock.advance(java.time.Duration.ofMinutes(11)); // and past the invitation's expiry too
+        assertThat(dynamoStore.enroll(claim, record, "c2hpcnMta2V5", "resent-after-the-window-2")).isTrue();
+
+        assertThat(dynamo.realErrors()).containsExactly("transactWriteItems: TransactionCanceledException",
+                "transactWriteItems: TransactionCanceledException"); // it ran, and its conditions refused it, twice
+        assertThat(store.devicesOf("shir")).hasSize(1);
+        assertThat(store.passkeysOf("shir")).hasSize(1);
+        assertThat(store.invitationById(claim.inviteId())).get().satisfies(i -> {
+            assertThat(i.expiresAt()).isEqualTo(invitation.expiresAt());
+            assertThat(i.enrolledAt()).isNotNull();
+        });
+    }
+
+    @Test
+    void aResendAfterTheWindowForAnEnrollmentThatNeverHappenedStillCantSucceedLate() {
+        DynamoSecurityStore dynamoStore = (DynamoSecurityStore) store;
+        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        var record = passkey("shir", "c2hpcnMta2V5");
+        clock.advance(java.time.Duration.ofMinutes(11));
+
+        assertThat(dynamoStore.enroll(claim, record, "c2hpcnMta2V5", "late-resend")).isFalse();
+        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(store.passkey(record.getCredentialId())).isEmpty();
+    }
+
+    /* ---------- DynamoDB Local's telemetry ---------- */
+
+    @Test
+    void dynamoDbLocalTelemetryIsOffInThisJvm() {
+        // DynamoDB Local creates its Pinpoint telemetry client only when telemetry is enabled; it is a JVM-wide
+        // singleton, so its absence here means no test in this JVM so far has turned it on.
+        LocalDynamo.embedded().shutdown();
+        assertThat(Telemetry.getTelemetry()).isEmpty();
+        // And the second guard (surefire's DDB_LOCAL_TELEMETRY=0) would hold even if code forgot the flag.
+        assertThat(TelemetryUtil.isTelemetryEnabled(false)).isFalse();
     }
 
     @Test

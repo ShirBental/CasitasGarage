@@ -332,6 +332,11 @@ public class DynamoSecurityStore implements SecurityStore {
     public boolean enroll(EnrollmentClaim claim, CredentialRecord newPasskey, Bytes existingCredentialId) {
         if ((newPasskey == null) == (existingCredentialId == null)) throw new IllegalArgumentException("a new passkey or an existing one");
         String credentialId = newPasskey != null ? newPasskey.getCredentialId().toBase64UrlString() : existingCredentialId.toBase64UrlString();
+        return enroll(claim, newPasskey, credentialId, requestToken(claim, credentialId));
+    }
+
+    /** The transaction with a given idempotency token (tests use another one to act as a resend after DynamoDB's window). */
+    boolean enroll(EnrollmentClaim claim, CredentialRecord newPasskey, String credentialId, String clientRequestToken) {
         Instant now = clock.instant();
 
         Map<String, AttributeValue> invitationValues = new HashMap<>();
@@ -377,7 +382,7 @@ public class DynamoSecurityStore implements SecurityStore {
                         ":m", s(claim.memberId()))).build()).build();
 
         try {
-            db.transactWriteItems(b -> b.clientRequestToken(requestToken(claim, credentialId)).transactItems(invitation, member, passkey, node));
+            db.transactWriteItems(b -> b.clientRequestToken(clientRequestToken).transactItems(invitation, member, passkey, node));
             return true;
         } catch (TransactionCanceledException e) {
             // Refused, or a retry of a transaction that had already succeeded: what is stored says which.
