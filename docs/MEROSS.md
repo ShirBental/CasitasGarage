@@ -185,7 +185,9 @@ mvn test -Dtest=MerossLiveCommandTest#confirmedCloseOfFord -Dmeross.live=true -D
 
 ## Toyota (channel 2)
 
-**Status: commands off.** Toyota has never been sent a command. Casita reads it, shows it, and refuses
+**Status: commands off; hardware test paused at step 0 (2026-10-19).** Toyota has never been sent a
+command. Step 0 found that Toyota's reading can lag well behind the door (see "Step 0, first attempt"),
+and steps 1–3 wait until that lag is measured and understood. Casita reads it, shows it, and refuses
 every command to it (`DISABLED`) until channel 2 is in `casita.meross.command-channels`. It follows
 exactly Ford's rules: its own `GarageService`, read first, only toward the opposite of a settled reading,
 one movement at a time, unknown outcomes are not failures, no retries, held after stuck or lost until
@@ -204,7 +206,7 @@ Only after the hardware test below has passed with someone watching, and with th
 
 To switch Toyota off again, remove 2 from `command-channels` and restart. Nothing else changes for Ford.
 
-### Hardware test plan (needs the user's approval; not yet run)
+### Hardware test plan (approved 2026-10-19; paused at step 0)
 
 Modelled on the Ford close test (2026-10-16). One door per run: every command in it is for channel 2,
 and channel 1 isn't in its command channels, so Ford can't be sent anything. The deployed app stays as
@@ -236,8 +238,53 @@ it is (Toyota off) throughout; the test runs from a laptop with `MerossLiveComma
    `SET` naming channel 2. Expect: `SETACK`; recorded `MOVING` then `CLOSED_CONFIRMED`; Toyota seen closed.
 4. Record the results here, as for Ford (date, `T`, the outcomes), then decide on enabling (above).
 
+**Gate added after the first attempt:** step 1 starts only once step 0 has measured how long channel 2's
+reading takes to follow the door, both ways, and that lag is short enough for `GarageService`'s rules
+(below).
+
 Each confirmation names its action, Toyota, channel 2 and the date, so it can't be reused for Ford,
 another day or the other direction; Toyota's tests also refuse to run without `MEROSS_TRAVEL_SECONDS`.
+
+### Step 0, first attempt (2026-10-19, read only)
+
+The user was at the garage with Toyota's remote and a stopwatch; Ford and Toyota closed, doorway clear.
+Casita sent only `GET`s throughout. No command went to either door.
+
+| Time | What happened |
+|---|---|
+| 11:20:02 | Read: Ford CLOSED, Toyota (channel 2) CLOSED, channel 3 refused as disabled. Channel 2 is enabled. |
+| before 11:20:33 | The user opened Toyota with its remote and reported it fully open (stopwatch time not recorded). |
+| 11:20:33, 11:20:58 | Read: Toyota still **CLOSED**. The Meross app showed Toyota **OPEN** at the time. |
+| 11:21:46 | Raw `System.All`: `digest.garageDoor` channel 2 `open: 1` (channel 1 `open: 0`; `lmTime` 0 on every channel). |
+| 11:21:55 | Read: Toyota NOT CLOSED. Casita parses channel 2 correctly. |
+| 11:22:39 | A 2-second read-only watcher saw Toyota change to CLOSED after the user closed it with the remote (press time not recorded). It stayed CLOSED until 11:27. Ford read CLOSED throughout. |
+
+What it shows:
+
+- Channel 2 is enabled and reads both CLOSED and NOT CLOSED correctly, and only on its own channel.
+- **After the open, `System.All` kept reporting channel 2 closed for at least 25 s after the door was fully
+  open**, while the Meross app already showed it open. The exact lag isn't known (no press time was
+  recorded). Neither is the lag on the close, nor Toyota's travel time `T`.
+- `lmTime` is 0 for every channel, so the opener gives no change time to compare against.
+
+Why it matters: `GarageService` assumes a reading is current. A reading that lags the door longer than the
+travel time can mislead it:
+
+- *Fails safe:* a Casita open whose "not closed" arrives after travel time + grace is judged `STUCK`, and
+  Toyota is held until someone resumes it.
+- *Not safe:* a door moved by its remote or wall button. If Toyota is closing but still reads "not closed"
+  (stale) after Casita has already watched "not closed" for the travel time, Casita could send a close to a
+  door that is already moving, and the opener could treat it as a button press and stop or reverse it.
+  Rule 5 (let "not closed" settle) only protects against movement Casita can see.
+
+Open questions before step 1:
+
+1. How long channel 2's reading lags the door, opening and closing, over a few tries. Next attempt: start
+   the 2-second watcher first, and write down the phone clock time of each press and each stopwatch reading.
+2. Whether Ford's channel lags the same way. Ford's open and close tests read the sensor 24 s after the
+   command, which says its lag was under about 24 s then. It hasn't been measured.
+3. Whether the opener's PUSH notifications (already traced on `/app/<userId>/subscribe`, not used) report
+   the change sooner than `System.All`. The Meross app showed the open before `System.All` did.
 
 **Not covered by this test:** both doors moving at once. Each `GarageService` allows it, and every
 acknowledgement is checked against its own channel, but how our MSG200 handles two doors moving
