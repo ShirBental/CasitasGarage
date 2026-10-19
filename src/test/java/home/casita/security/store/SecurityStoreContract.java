@@ -280,6 +280,20 @@ abstract class SecurityStoreContract {
     }
 
     @Test
+    void anInvitationCantUndoARevocationOfTheDeviceItEnrolled() {
+        // One invitation enrolled the node; the admin revoked it within the invitation's five minutes; a second
+        // request still holding the same claim (say, a parallel sign-in with an existing passkey) tries again.
+        enrolled("shir", "ZXhpc3Rpbmc", TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_IPAD);
+        assertThat(store.enroll(claim, passkey("shir", "bmV3"), null)).isTrue();
+        assertThat(store.revokeDevice(TestTailnet.SHIR_IPAD.nodeId())).isTrue();
+
+        assertThat(store.enroll(claim, null, Bytes.fromBase64("ZXhpc3Rpbmc"))).isFalse();
+
+        assertThat(store.device(TestTailnet.SHIR_IPAD.nodeId())).get().satisfies(d -> assertThat(d.status()).isEqualTo(Status.REVOKED));
+    }
+
+        @Test
     void aClaimThatDoesntMatchTheInvitationWritesNothing() {
         EnrollmentClaim real = consume(invite("shir"), TestTailnet.SHIR_PHONE);
         List<EnrollmentClaim> forged = List.of(
