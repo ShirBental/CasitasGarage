@@ -118,7 +118,9 @@ public class FileSecurityStore implements SecurityStore {
         int d = 0, p = 0, i = 0;
         for (Device device : devicesOf(memberId)) if (device.status() == Status.ACTIVE && revokeDevice(device.nodeId())) d++;
         for (Passkey passkey : passkeysOf(memberId)) if (revokePasskey(passkey.record().getCredentialId())) p++;
-        for (Invitation invitation : invitationsOf(memberId)) if (revokeInvitation(invitation.inviteId())) i++;
+        for (Invitation invitation : invitationsOf(memberId)) {
+            if (revokeInvitation(invitation.tokenHash(), invitation.inviteId()) == RevokeOutcome.REVOKED) i++;
+        }
         return new Cleanup(d, p, i);
     }
 
@@ -201,8 +203,9 @@ public class FileSecurityStore implements SecurityStore {
         Instant now = clock.instant();
         if (i == null || i.expired(now)) return Optional.empty();
         boolean fresh = i.status() == InvitationStatus.PENDING;
+        // A retry of this same attempt, and only while it hasn't enrolled a device.
         boolean sameAttempt = i.status() == InvitationStatus.CONSUMED && consumeRequestId.equals(consumeRequests.get(tokenHash))
-                && enrollmentId.equals(i.enrollmentId()) && nodeId.equals(i.nodeId());
+                && enrollmentId.equals(i.enrollmentId()) && nodeId.equals(i.nodeId()) && i.enrolledAt() == null;
         if (!fresh && !sameAttempt) return Optional.empty();
         if (sameAttempt) return Optional.of(i);
         Invitation consumed = new Invitation(i.tokenHash(), i.inviteId(), i.memberId(), i.label(), InvitationStatus.CONSUMED, i.createdAt(),
@@ -212,6 +215,11 @@ public class FileSecurityStore implements SecurityStore {
             consumeRequests.put(tokenHash, consumeRequestId);
         });
         return Optional.of(consumed);
+    }
+
+    @Override
+    public synchronized Optional<Invitation> invitation(String tokenHash) {
+        return Optional.ofNullable(invitations.get(tokenHash));
     }
 
     @Override
@@ -226,16 +234,20 @@ public class FileSecurityStore implements SecurityStore {
     }
 
     @Override
-    public synchronized boolean revokeInvitation(String inviteId) {
-        Optional<Invitation> found = invitationById(inviteId);
-        if (found.isEmpty()) return false;
-        Invitation i = found.get();
-        boolean revocable = i.status() == InvitationStatus.PENDING || (i.status() == InvitationStatus.CONSUMED && i.enrolledAt() == null);
-        if (!revocable) return false;
+    public synchronized RevokeOutcome revokeInvitation(String tokenHash, String inviteId) {
+        Invitation i = invitations.get(tokenHash);
+        if (i == null || !i.inviteId().equals(inviteId)) return RevokeOutcome.NOT_FOUND;
+        if (i.status() == InvitationStatus.REVOKED) return RevokeOutcome.ALREADY_REVOKED;
+        if (i.enrolledAt() != null) return RevokeOutcome.ALREADY_ENROLLED;
         change(() -> invitations.put(i.tokenHash(), new Invitation(i.tokenHash(), i.inviteId(), i.memberId(), i.label(),
                 InvitationStatus.REVOKED, i.createdAt(), i.expiresAt(), i.consumedAt(), i.enrollmentId(), i.nodeId(), i.nodeName(), null, null,
                 clock.instant())));
-        return true;
+        return RevokeOutcome.REVOKED;
+    }
+
+    @Override
+    public synchronized RevokeOutcome revokeInvitation(String inviteId) {
+        return invitationById(inviteId).map(i -> revokeInvitation(i.tokenHash(), inviteId)).orElse(RevokeOutcome.NOT_FOUND);
     }
 
     /* ---------- views ---------- */

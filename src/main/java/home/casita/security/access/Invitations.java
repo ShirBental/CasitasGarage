@@ -69,7 +69,18 @@ public class Invitations implements OneTimeTokenService {
                 .map(i -> new EnrollmentClaim(i.tokenHash(), i.inviteId(), i.enrollmentId(), i.memberId(), i.label(), i.nodeId(), i.nodeName()));
     }
 
-    public boolean revoke(String inviteId) {
+    /** Revokes by token (from the invite's link file): one conditional write on the base table, no index. */
+    public SecurityStore.RevokeOutcome revoke(String token, String inviteId) {
+        return store.revokeInvitation(hash(token), inviteId);
+    }
+
+    /** Revokes by token hash (an enrollment claim carries it). */
+    public SecurityStore.RevokeOutcome revokeByHash(String tokenHash, String inviteId) {
+        return store.revokeInvitation(tokenHash, inviteId);
+    }
+
+    /** Revokes by id alone, when the token isn't at hand: an index finds it, and may not list it yet (NOT_FOUND). */
+    public SecurityStore.RevokeOutcome revokeById(String inviteId) {
         return store.revokeInvitation(inviteId);
     }
 

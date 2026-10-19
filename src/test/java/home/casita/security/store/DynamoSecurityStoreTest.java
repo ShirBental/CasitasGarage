@@ -180,7 +180,64 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
         assertThat(store.passkey(record.getCredentialId())).isEmpty();
     }
 
-    /* ---------- DynamoDB Local's telemetry ---------- */
+    /* ---------- M1: revocation doesn't depend on an index, and never reports a false success ---------- */
+
+    @Test
+    void revokingByTokenHashWorksWhileTheIndexHasntCaughtUp() {
+        Invitation i = invite("shir");
+        dynamo.indexesLag(true);
+
+        assertThat(store.revokeInvitation(i.tokenHash(), i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED);
+
+        dynamo.indexesLag(false);
+        assertThat(store.invitation(i.tokenHash())).get().extracting(Invitation::status).isEqualTo(SecurityStore.InvitationStatus.REVOKED);
+    }
+
+    @Test
+    void revokingByIdWhileTheIndexLagsIsNotFoundAndChangesNothing() {
+        Invitation i = invite("shir");
+        dynamo.indexesLag(true);
+
+        assertThat(store.revokeInvitation(i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.NOT_FOUND);
+
+        dynamo.indexesLag(false);
+        assertThat(store.invitation(i.tokenHash())).get().extracting(Invitation::status).isEqualTo(SecurityStore.InvitationStatus.PENDING);
+        assertThat(store.revokeInvitation(i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED); // once it is indexed
+    }
+
+    @Test
+    void aRevocationDuringAnOutageIsAnErrorNotAnAnswer() {
+        Invitation i = invite("shir");
+        dynamo.down(true);
+
+        assertThatThrownBy(() -> store.revokeInvitation(i.tokenHash(), i.inviteId())).isInstanceOf(StoreUnavailableException.class);
+
+        dynamo.down(false);
+        assertThat(store.invitation(i.tokenHash())).get().extracting(Invitation::status).isEqualTo(SecurityStore.InvitationStatus.PENDING);
+    }
+
+    @Test
+    void aRevocationWhoseResponseWasLostIsAnErrorAndARerunTellsTheTruth() {
+        Invitation i = invite("shir");
+        dynamo.loseResponse("updateItem", 1);
+
+        // It happened, but the caller can't know: an error, never a success.
+        assertThatThrownBy(() -> store.revokeInvitation(i.tokenHash(), i.inviteId())).isInstanceOf(StoreUnavailableException.class);
+
+        assertThat(store.revokeInvitation(i.tokenHash(), i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.ALREADY_REVOKED);
+        assertThat(store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "r", "e")).isEmpty();
+    }
+
+    @Test
+    void theRefusedRevocationsReasonIsReadFromTheBaseTableEvenWhileIndexesLag() {
+        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        Invitation used = store.invitationsOf("shir").getFirst();
+        dynamo.indexesLag(true);
+
+        assertThat(store.revokeInvitation(used.tokenHash(), used.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.ALREADY_ENROLLED);
+    }
+
+        /* ---------- DynamoDB Local's telemetry ---------- */
 
     @Test
     void dynamoDbLocalTelemetryIsOffInThisJvm() {

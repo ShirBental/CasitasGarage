@@ -152,9 +152,9 @@ public final class TestTailnet {
         SecurityStore store = context.getBean(SecurityStore.class);
         WebAuthnAuthentication auth = new WebAuthnAuthentication(user(store, member), List.of(new SimpleGrantedAuthority("ROLE_FAMILY")));
         session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, new SecurityContextImpl(auth));
-        session.setAttribute(AccessSession.SIGNED_IN_CREDENTIAL, credentialId);
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/login/webauthn");
         request.setSession(session);
+        request.setAttribute(AccessSession.SIGNED_IN_CREDENTIAL, credentialId); // as CredentialEvents does, during verification
         from(phone).postProcessRequest(request);
         String refusal = context.getBean(PasskeySignInSuccessHandler.class).complete(request, auth);
         if (refusal != null) session.invalidate();

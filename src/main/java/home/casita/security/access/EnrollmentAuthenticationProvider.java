@@ -41,7 +41,7 @@ public class EnrollmentAuthenticationProvider implements AuthenticationProvider 
             throw new AuthenticationServiceException("Security store unavailable", e);
         }
         if (!family.contains(claim.memberId())) {
-            invitations.revoke(claim.inviteId());
+            invitations.revokeByHash(claim.tokenHash(), claim.inviteId());
             throw new BadCredentialsException("Invitation for someone outside the family");
         }
         OneTimeTokenAuthenticationToken enrolling = OneTimeTokenAuthenticationToken.authenticated(claim.memberId(),

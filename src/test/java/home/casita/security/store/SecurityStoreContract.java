@@ -199,7 +199,7 @@ abstract class SecurityStoreContract {
         store.consume(expiring.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1").orElseThrow();
         Invitation revoked = invite("shir");
         store.consume(revoked.tokenHash(), TestTailnet.SHIR_IPAD.nodeId(), "ipad", "rid-2", "eid-2").orElseThrow();
-        assertThat(store.revokeInvitation(revoked.inviteId())).isTrue();
+        assertThat(store.revokeInvitation(revoked.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED);
 
         assertThat(store.consume(revoked.tokenHash(), TestTailnet.SHIR_IPAD.nodeId(), "ipad", "rid-2", "eid-2")).isEmpty();
         clock.advance(Duration.ofMinutes(5));
@@ -210,22 +210,103 @@ abstract class SecurityStoreContract {
     @Test
     void revocationWorksBeforeOrDuringEnrollmentButNotAfter() {
         Invitation pending = invite("shir");
-        assertThat(store.revokeInvitation(pending.inviteId())).isTrue();
+        assertThat(store.revokeInvitation(pending.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED);
         assertThat(store.consume(pending.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "r", "e")).isEmpty();
 
         Invitation consumed = invite("shir");
         EnrollmentClaim claim = consume(consumed, TestTailnet.SHIR_PHONE);
-        assertThat(store.revokeInvitation(consumed.inviteId())).isTrue();
+        assertThat(store.revokeInvitation(consumed.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED);
         assertThat(store.enroll(claim, passkey("shir", "Y3JlZC0x"), null)).isFalse();
         assertThat(store.passkey(Bytes.fromBase64("Y3JlZC0x"))).isEmpty();
 
         enrolled("shir", "Y3JlZC0y", TestTailnet.SHIR_IPAD);
         Invitation used = store.invitationsOf("shir").stream().filter(i -> i.enrolledAt() != null).findFirst().orElseThrow();
-        assertThat(store.revokeInvitation(used.inviteId())).isFalse();
-        assertThat(store.revokeInvitation("i-nothere")).isFalse();
+        assertThat(store.revokeInvitation(used.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.ALREADY_ENROLLED);
+        assertThat(store.revokeInvitation("i-nothere")).isEqualTo(SecurityStore.RevokeOutcome.NOT_FOUND);
+    }
+
+    /* ---------- revoking by token hash (M1): each outcome, and never a false success ---------- */
+
+    @Test
+    void revokingByTokenHashReportsWhatHappened() {
+        Invitation pending = invite("shir");
+        assertThat(store.revokeInvitation(pending.tokenHash(), pending.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED);
+        assertThat(store.revokeInvitation(pending.tokenHash(), pending.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.ALREADY_REVOKED);
+        assertThat(store.consume(pending.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "r", "e")).isEmpty();
+
+        Invitation consumed = invite("shir");
+        EnrollmentClaim claim = consume(consumed, TestTailnet.SHIR_PHONE);
+        assertThat(store.revokeInvitation(consumed.tokenHash(), consumed.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED);
+        assertThat(store.enroll(claim, passkey("shir", "cmV2b2tlZA"), null)).isFalse();
+
+        enrolled("shir", "ZW5yb2xsZWQ", TestTailnet.SHIR_IPAD);
+        Invitation used = store.invitationsOf("shir").stream().filter(i -> i.enrolledAt() != null).findFirst().orElseThrow();
+        assertThat(store.revokeInvitation(used.tokenHash(), used.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.ALREADY_ENROLLED);
+        assertThat(store.device(TestTailnet.SHIR_IPAD.nodeId())).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
+
+        assertThat(store.revokeInvitation("no-such-hash", "i-00000000")).isEqualTo(SecurityStore.RevokeOutcome.NOT_FOUND);
     }
 
     @Test
+    void theRightHashWithTheWrongIdRevokesNothing() {
+        Invitation i = invite("shir");
+
+        assertThat(store.revokeInvitation(i.tokenHash(), "i-deadbeef")).isEqualTo(SecurityStore.RevokeOutcome.NOT_FOUND);
+        assertThat(store.invitation(i.tokenHash())).get().extracting(Invitation::status).isEqualTo(InvitationStatus.PENDING);
+    }
+
+    @Test
+    void anExpiredInvitationCanStillBeRevokedForTheRecord() {
+        Invitation i = invite("shir");
+        clock.advance(Duration.ofMinutes(6));
+
+        assertThat(store.revokeInvitation(i.tokenHash(), i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED);
+    }
+
+    @Test
+    void revokingWhileEnrollingEndsInOneConsistentState() throws Exception {
+        for (int round = 0; round < 10; round++) {
+            Invitation i = invite("shir");
+            TestTailnet.Phone phone = round % 2 == 0 ? TestTailnet.SHIR_PHONE : TestTailnet.SHIR_IPAD;
+            store.revokeDevice(phone.nodeId()); // free the node from the previous round (same member: re-enrollable)
+            EnrollmentClaim claim = consume(i, phone);
+            CredentialRecord record = passkey("shir", "cm91bmQ" + round);
+            java.util.concurrent.atomic.AtomicReference<SecurityStore.RevokeOutcome> outcome = new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicBoolean enrolledNow = new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
+
+            concurrently(2, () -> {
+                if (next.getAndIncrement() == 0) enrolledNow.set(store.enroll(claim, record, null));
+                else outcome.set(store.revokeInvitation(i.tokenHash(), i.inviteId()));
+                return null;
+            });
+
+            boolean active = store.device(phone.nodeId()).filter(d -> d.activeFor("shir") && i.inviteId().equals(d.inviteId())).isPresent();
+            if (enrolledNow.get()) {
+                assertThat(outcome.get()).as("round " + round).isEqualTo(SecurityStore.RevokeOutcome.ALREADY_ENROLLED);
+                assertThat(active).isTrue();
+            } else {
+                assertThat(outcome.get()).as("round " + round).isEqualTo(SecurityStore.RevokeOutcome.REVOKED);
+                assertThat(active).isFalse();
+                assertThat(store.passkey(record.getCredentialId())).isEmpty();
+            }
+        }
+    }
+
+    /* ---------- L1: a retry can't hand back an invitation that already enrolled a device ---------- */
+
+    @Test
+    void aRetryOfTheConsumingAttemptAfterEnrollmentIsRefused() {
+        Invitation i = invite("shir");
+        Invitation consumed = store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1").orElseThrow();
+        EnrollmentClaim claim = new EnrollmentClaim(consumed.tokenHash(), consumed.inviteId(), "eid-1", "shir", consumed.label(),
+                consumed.nodeId(), consumed.nodeName());
+        assertThat(store.enroll(claim, passkey("shir", "ZG9uZQ"), null)).isTrue();
+
+        assertThat(store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1")).isEmpty();
+    }
+
+        @Test
     void anInvitationTokenIsNeverStored() {
         Invitation i = invite("shir");
         assertThat(store.invitationById(i.inviteId())).get().extracting(Invitation::tokenHash).isEqualTo(i.tokenHash());

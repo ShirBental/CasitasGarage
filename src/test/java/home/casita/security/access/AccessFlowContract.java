@@ -449,20 +449,18 @@ abstract class AccessFlowContract {
     }
 
     /**
-     * The phone's browser registering a passkey in its enrollment session: options, then the attestation. Returns
-     * the HTTP status. Spring's registration filter lets a failed verification escape as an exception (in Tomcat,
-     * a 500): that counts as rejected too.
+     * The phone's browser registering a passkey in its enrollment session: options, then the attestation.
+     * Returns the HTTP status; a refusal must be a clean {@code 400 {"success":false}} (RegistrationErrorFilter),
+     * so an exception escaping fails the test.
      */
     protected int realRegistration(SoftAuthenticator passkey, MockHttpSession enrolling, TestTailnet.Phone phone) throws Exception {
         String body = passkey.register(optionsJson("/webauthn/register/options", enrolling, phone), "iCloud Keychain");
-        try {
-            MvcResult r = mvc.perform(post("/webauthn/register").session(enrolling).with(from(phone)).with(csrf())
-                    .contentType(MediaType.APPLICATION_JSON).content(body)).andReturn();
-            return r.getResponse().getStatus() == 200 && !r.getResponse().getContentAsString().contains("\"success\":true") ? 400
-                    : r.getResponse().getStatus();
-        } catch (Exception e) {
-            return 500;
-        }
+        MvcResult r = mvc.perform(post("/webauthn/register").session(enrolling).with(from(phone)).with(csrf())
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andReturn();
+        String json = r.getResponse().getContentAsString();
+        if (r.getResponse().getStatus() == 200) assertThat(json).contains("\"success\":true");
+        else assertThat(json).isEqualTo("{\"success\":false}");
+        return r.getResponse().getStatus();
     }
 
     /** The phone's browser signing in with a passkey: options, then the assertion. Returns the HTTP status. */
@@ -496,7 +494,7 @@ abstract class AccessFlowContract {
         String[] invite = invite("shir", "Shir's iPhone");
         MockHttpSession enrolling = redeem(invite[1], SHIR_PHONE);
 
-        assertThat(realRegistration(noFaceId, enrolling, SHIR_PHONE)).isNotEqualTo(200);
+        assertThat(realRegistration(noFaceId, enrolling, SHIR_PHONE)).isEqualTo(400);
 
         assertThat(store.passkey(Bytes.fromBase64(noFaceId.credentialId()))).isEmpty();
         assertThat(store.device(SHIR_PHONE.nodeId())).isEmpty();
@@ -509,7 +507,7 @@ abstract class AccessFlowContract {
         phished.origin = "https://casita.example-phish.net";
         MockHttpSession enrolling = redeem(invite("shir", "Shir's iPhone")[1], SHIR_PHONE);
 
-        assertThat(realRegistration(phished, enrolling, SHIR_PHONE)).isNotEqualTo(200);
+        assertThat(realRegistration(phished, enrolling, SHIR_PHONE)).isEqualTo(400);
         assertThat(store.device(SHIR_PHONE.nodeId())).isEmpty();
     }
 
@@ -611,6 +609,139 @@ abstract class AccessFlowContract {
             assertThat(r.getResponse().getContentAsString()).as(path).doesNotContain("challenge").doesNotContain("\"success\":true");
         }
         assertThat(store.passkeysOf("shir")).hasSize(1);
+    }
+
+    /* ---------- M1: revoking an invitation says what happened, and never claims a success it didn't have ---------- */
+
+    private org.springframework.test.web.servlet.ResultActions revokeInvite(String id) throws Exception {
+        return mvc.perform(delete("/admin/invites/" + id).header(LocalAdmin.HEADER, adminSecret()));
+    }
+
+    @Test
+    void anInviteRevokedTheMomentItIsCreatedIsRevokedAndSaysSo() throws Exception {
+        String[] invite = invite("shir", "Shir's iPhone");
+
+        revokeInvite(invite[0]).andExpect(status().isOk())
+                .andExpect(jsonPath("$.revoked").value(true)).andExpect(jsonPath("$.state").value("revoked"));
+
+        assertThat(DATA.resolve("invites").resolve(invite[0] + ".txt")).doesNotExist();
+        assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.REVOKED);
+        mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE))).andExpect(redirectedUrl("/login?error"));
+    }
+
+    @Test
+    void revokingTwiceSaysItWasAlreadyRevoked() throws Exception {
+        String[] invite = invite("shir", "Shir's iPhone");
+        revokeInvite(invite[0]).andExpect(status().isOk());
+
+        // Its link file is gone now, so this goes by id; the store says what it knows.
+        revokeInvite(invite[0]).andExpect(status().isOk())
+                .andExpect(jsonPath("$.revoked").value(true)).andExpect(jsonPath("$.state").value("already-revoked"));
+    }
+
+    @Test
+    void anUnknownOrMalformedInviteIsAnErrorNotASuccess() throws Exception {
+        revokeInvite("i-0badc0de").andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.revoked").value(false)).andExpect(jsonPath("$.state").value("not-found"));
+        revokeInvite("../../admin.secret").andExpect(status().is4xxClientError());
+        revokeInvite("i-XYZ").andExpect(status().isBadRequest());
+        assertThat(DATA.resolve("admin.secret")).exists();
+    }
+
+    @Test
+    void anInviteThatAlreadyEnrolledItsDeviceIsAConflictAndTheDeviceStays() throws Exception {
+        String[] invite = invite("shir", "Shir's iPhone");
+        registerPasskey(redeem(invite[1], SHIR_PHONE), SHIR_PHONE, "c2hpcnMta2V5", "shir");
+
+        revokeInvite(invite[0]).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.revoked").value(false)).andExpect(jsonPath("$.state").value("already-enrolled"));
+
+        assertThat(store.device(SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
+    }
+
+    @Test
+    void anInviteWhoseLinkFileIsGoneIsRevokedById() throws Exception {
+        String[] invite = invite("shir", "Shir's iPhone");
+        Files.delete(DATA.resolve("invites").resolve(invite[0] + ".txt"));
+
+        revokeInvite(invite[0]).andExpect(status().isOk()).andExpect(jsonPath("$.revoked").value(true));
+        assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.REVOKED);
+    }
+
+    @Test
+    void aLinkFileForSomeOtherInviteRevokesNothing() throws Exception {
+        String[] first = invite("shir", "Shir's iPhone");
+        String[] second = invite("shir", "Shir's iPad");
+        // The first invite's file now holds the second invite's link (a mix-up, or tampering): ids don't match.
+        Files.writeString(DATA.resolve("invites").resolve(first[0] + ".txt"), "http://localhost:8080/login/ott?token=" + second[1] + "\n");
+
+        revokeInvite(first[0]).andExpect(status().isNotFound()).andExpect(jsonPath("$.revoked").value(false));
+
+        assertThat(invitation(first[0]).status()).isEqualTo(SecurityStore.InvitationStatus.PENDING);
+        assertThat(invitation(second[0]).status()).isEqualTo(SecurityStore.InvitationStatus.PENDING);
+        assertThat(DATA.resolve("invites").resolve(first[0] + ".txt")).exists(); // kept: nothing was revoked
+    }
+
+    /* ---------- L2: refused registrations and passkey deletion answer cleanly ---------- */
+
+    @Test
+    void springsPasskeyDeletionIsNotAllowed() throws Exception {
+        MockHttpSession family = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+
+        mvc.perform(delete("/webauthn/register/c2hpcnMta2V5").session(family).with(from(SHIR_PHONE)).with(csrf()))
+                .andExpect(status().isMethodNotAllowed());
+
+        assertThat(store.passkey(Bytes.fromBase64("c2hpcnMta2V5"))).get().satisfies(p -> assertThat(p.activeFor("shir")).isTrue());
+        mvc.perform(delete("/webauthn/register/c2hpcnMta2V5").with(csrf())).andExpect(status().is3xxRedirection()); // signed out: sign in first
+    }
+
+    /* ---------- L3: the passkey a sign-in used comes from that request only ---------- */
+
+    @Test
+    void aPasskeyRememberedInTheSessionIsNotUsedToCompleteASignIn() {
+        TestTailnet.enrollNewPasskey(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(AccessSession.SIGNED_IN_CREDENTIAL, "c2hpcnMta2V5"); // left by some other request
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/login/webauthn");
+        request.setSession(session);
+        from(SHIR_PHONE).postProcessRequest(request);
+        var auth = new org.springframework.security.web.webauthn.authentication.WebAuthnAuthentication(TestTailnet.user(store, "shir"),
+                java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_FAMILY")));
+
+        assertThat(context.getBean(PasskeySignInSuccessHandler.class).complete(request, auth)).isEqualTo("sign-in without a known passkey");
+        assertThat(session.getAttribute(AccessSession.BINDING)).isNull();
+    }
+
+    /* ---------- L4 and L5: refused before the invite is used, with a reason the page shows ---------- */
+
+    @Test
+    void aDeviceTiedToAnotherMemberIsRefusedUntilReleasedAndTheInviteStaysGood() throws Exception {
+        TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        store.revokeDevice(SHIR_PHONE.nodeId());
+        String[] invite = invite("hubby", "Hubby's iPhone");
+
+        mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE)))
+                .andExpect(redirectedUrl("/login?device-not-available"));
+        assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.PENDING);
+
+        store.releaseDevice(SHIR_PHONE.nodeId());
+        redeem(invite[1], SHIR_PHONE);
+    }
+
+    @Test
+    void aRevokedMembersLeftoverInviteIsRefusedWithoutBeingUsed() throws Exception {
+        String[] invite = invite("shir", "Shir's iPhone");
+        store.revokeMember("shir"); // the member record only, as if cleanup hadn't run
+
+        mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE))).andExpect(redirectedUrl("/login?error"));
+
+        assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.PENDING);
+    }
+
+    @Test
+    void theSignInPageExplainsEachDeviceRefusal() throws Exception {
+        String script = mvc.perform(get("/login.js")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(script).contains("\"device-unverified\"", "\"device-already-set-up\"", "\"device-not-available\"");
     }
 
     /* ---------- administration: on the server only ---------- */

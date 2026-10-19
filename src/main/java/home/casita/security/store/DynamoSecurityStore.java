@@ -137,7 +137,9 @@ public class DynamoSecurityStore implements SecurityStore {
         for (String credentialId : indexKeys(tables.passkeys(), "credentialId", memberId)) {
             if (revokePasskey(Bytes.fromBase64(credentialId))) passkeys++;
         }
-        for (Invitation invitation : invitationsOf(memberId)) if (revokeInvitation(invitation.inviteId())) invitations++;
+        for (Invitation invitation : invitationsOf(memberId)) {
+            if (revokeInvitation(invitation.tokenHash(), invitation.inviteId()) == RevokeOutcome.REVOKED) invitations++;
+        }
         return new Cleanup(devices, passkeys, invitations);
     }
 
@@ -256,13 +258,19 @@ public class DynamoSecurityStore implements SecurityStore {
                     .updateExpression("SET #st = :consumed, consumedAt = if_not_exists(consumedAt, :now), consumeRequestId = :rid, "
                             + "enrollmentId = :eid, nodeId = :node, nodeName = :nodeName")
                     .conditionExpression("attribute_exists(tokenHash) AND expiresAt > :now AND (#st = :pending OR "
-                            + "(#st = :consumed AND consumeRequestId = :rid AND enrollmentId = :eid AND nodeId = :node))")
+                            + "(#st = :consumed AND consumeRequestId = :rid AND enrollmentId = :eid AND nodeId = :node "
+                            + "AND attribute_not_exists(enrolledAt)))")
                     .expressionAttributeNames(Map.of("#st", "status")).expressionAttributeValues(values)
                     .returnValues(ReturnValue.ALL_NEW))).attributes();
             return Optional.of(toInvitation(item));
         } catch (ConditionalCheckFailedException e) {
             return Optional.empty();
         }
+    }
+
+    @Override
+    public Optional<Invitation> invitation(String tokenHash) {
+        return get(tables.invitations(), "tokenHash", tokenHash).map(DynamoSecurityStore::toInvitation);
     }
 
     @Override
@@ -288,9 +296,7 @@ public class DynamoSecurityStore implements SecurityStore {
     }
 
     @Override
-    public boolean revokeInvitation(String inviteId) {
-        Optional<Invitation> invitation = invitationById(inviteId);
-        if (invitation.isEmpty()) return false;
+    public RevokeOutcome revokeInvitation(String tokenHash, String inviteId) {
         Map<String, AttributeValue> values = new HashMap<>();
         values.put(":id", s(inviteId));
         values.put(":revoked", s(InvitationStatus.REVOKED.name()));
@@ -298,14 +304,24 @@ public class DynamoSecurityStore implements SecurityStore {
         values.put(":consumed", s(InvitationStatus.CONSUMED.name()));
         values.put(":now", n(clock.instant()));
         try {
-            call(() -> db.updateItem(b -> b.tableName(tables.invitations()).key(key("tokenHash", invitation.get().tokenHash()))
+            call(() -> db.updateItem(b -> b.tableName(tables.invitations()).key(key("tokenHash", tokenHash))
                     .updateExpression("SET #st = :revoked, revokedAt = :now")
                     .conditionExpression("inviteId = :id AND (#st = :pending OR (#st = :consumed AND attribute_not_exists(enrolledAt)))")
                     .expressionAttributeNames(Map.of("#st", "status")).expressionAttributeValues(values)));
-            return true;
+            return RevokeOutcome.REVOKED;
         } catch (ConditionalCheckFailedException e) {
-            return false;
+            // Refused: say why, from the base table. States only move forward, so it can't have become revocable since.
+            Optional<Invitation> now = invitation(tokenHash).filter(i -> i.inviteId().equals(inviteId));
+            if (now.isEmpty()) return RevokeOutcome.NOT_FOUND;
+            if (now.get().status() == InvitationStatus.REVOKED) return RevokeOutcome.ALREADY_REVOKED;
+            if (now.get().enrolledAt() != null) return RevokeOutcome.ALREADY_ENROLLED;
+            throw new IllegalStateException("Invitation " + inviteId + " refused revocation in state " + now.get().status());
         }
+    }
+
+    @Override
+    public RevokeOutcome revokeInvitation(String inviteId) {
+        return invitationById(inviteId).map(i -> revokeInvitation(i.tokenHash(), inviteId)).orElse(RevokeOutcome.NOT_FOUND);
     }
 
     /* ---------- consistent views ---------- */

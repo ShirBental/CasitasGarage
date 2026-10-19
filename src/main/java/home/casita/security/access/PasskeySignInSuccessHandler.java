@@ -64,8 +64,8 @@ public class PasskeySignInSuccessHandler implements AuthenticationSuccessHandler
         HttpSession session = request.getSession(false);
         if (session == null) return "no session";
         String member = authentication.getName();
-        String credentialId = (String) session.getAttribute(AccessSession.SIGNED_IN_CREDENTIAL);
-        session.removeAttribute(AccessSession.SIGNED_IN_CREDENTIAL);
+        // The passkey this very request's assertion verified (never one remembered from another request).
+        String credentialId = request.getAttribute(AccessSession.SIGNED_IN_CREDENTIAL) instanceof String id ? id : null;
         if (credentialId == null) return "sign-in without a known passkey";
         Optional<DeviceIdentity> device = devices.resolve(request);
         if (device.isEmpty()) return "device not verified";

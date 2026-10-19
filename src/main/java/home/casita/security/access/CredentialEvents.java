@@ -19,7 +19,7 @@ import jakarta.servlet.http.HttpSession;
  *   <li>a <b>new</b> passkey (its attestation just verified) is stored only by the enrollment transaction:
  *       a live enrollment, for its member, on its device, re-verified now. Otherwise, or if the transaction is
  *       refused, the save fails, the registration fails, and nothing is stored;</li>
- *   <li>a <b>used</b> passkey (its assertion just verified) is noted in the session, so the sign-in success
+ *   <li>a <b>used</b> passkey (its assertion just verified) is noted on the request, so this sign-in's success
  *       handler can tie the session to it.</li>
  * </ul>
  */
@@ -53,7 +53,8 @@ public class CredentialEvents {
     }
 
     public void credentialUsed(CredentialRecord record) {
-        currentRequest().ifPresent(r -> r.getSession().setAttribute(AccessSession.SIGNED_IN_CREDENTIAL, record.getCredentialId().toBase64UrlString()));
+        // On this request only: the success handler of this same sign-in reads it, and no other request can supply it.
+        currentRequest().ifPresent(r -> r.setAttribute(AccessSession.SIGNED_IN_CREDENTIAL, record.getCredentialId().toBase64UrlString()));
     }
 
     private static Optional<HttpServletRequest> currentRequest() {

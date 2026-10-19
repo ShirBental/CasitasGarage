@@ -89,6 +89,22 @@ public interface SecurityStore {
 
     record Cleanup(int devices, int passkeys, int invitations) {}
 
+    /** What revoking an invitation did. Only REVOKED and ALREADY_REVOKED mean its token can't be used. */
+    enum RevokeOutcome {
+        /** It was pending (or consumed, with no device enrolled yet) and is now revoked. */
+        REVOKED,
+        /** It had been revoked already. */
+        ALREADY_REVOKED,
+        /** It already enrolled a device: nothing to revoke; revoke the device instead. */
+        ALREADY_ENROLLED,
+        /** No such invitation. When looked up by id alone, possibly one not indexed yet: nothing was changed. */
+        NOT_FOUND;
+
+        public boolean revoked() {
+            return this == REVOKED || this == ALREADY_REVOKED;
+        }
+    }
+
     /* ---------- members ---------- */
 
     /** Adds members that don't exist yet. Never revives a revoked one. */
@@ -142,12 +158,24 @@ public interface SecurityStore {
      */
     Optional<Invitation> consume(String tokenHash, String nodeId, String nodeName, String consumeRequestId, String enrollmentId);
 
+    /** An invitation by its token hash, read consistently from the base table. */
+    Optional<Invitation> invitation(String tokenHash);
+
     Optional<Invitation> invitationById(String inviteId);
 
     List<Invitation> invitationsOf(String memberId);
 
-    /** Revokes a PENDING invitation, or a CONSUMED one that hasn't enrolled a device. */
-    boolean revokeInvitation(String inviteId);
+    /**
+     * Revokes a PENDING invitation, or a CONSUMED one that hasn't enrolled a device, by its token hash: one
+     * conditional write on the base table, no index involved. The invitation must also carry this id.
+     */
+    RevokeOutcome revokeInvitation(String tokenHash, String inviteId);
+
+    /**
+     * The same, by id alone (when the token is no longer at hand). An index finds the key, and it can lag a
+     * just-created invitation: then NOT_FOUND, and nothing was changed.
+     */
+    RevokeOutcome revokeInvitation(String inviteId);
 
     /* ---------- consistent views for access decisions ---------- */
 

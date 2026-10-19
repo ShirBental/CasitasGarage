@@ -16,7 +16,7 @@ public final class AccessSession {
     /** The enrollment in progress: a {@link home.casita.security.store.SecurityStore.EnrollmentClaim}. */
     public static final String ENROLLMENT = "casita.enrollment";
     public static final String BINDING = "casita.binding";
-    /** The passkey a sign-in just used (set while Spring verifies the assertion). */
+    /** Request attribute: the passkey this sign-in request's assertion just verified (set while Spring verifies it). */
     public static final String SIGNED_IN_CREDENTIAL = "casita.signedInCredential";
     /** Request attribute: the device verified for an invite redemption, before the invite is consumed. */
     public static final String REDEEMING_DEVICE = "casita.redeemingDevice";

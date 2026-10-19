@@ -127,4 +127,63 @@ class DynamoAccessFlowTest extends AccessFlowContract {
                 .andExpect(jsonPath("$.devices").value(1)).andExpect(jsonPath("$.credentials").value(1));
         assertThat(store.device(SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.status()).isEqualTo(SecurityStore.Status.REVOKED));
     }
+
+    /* ---------- M1 against DynamoDB's failure modes ---------- */
+
+    @Test
+    void anInviteRevokedWhileTheIndexLagsIsStillRevokedThroughItsLinkFile() throws Exception {
+        String[] invite = invite("shir", "Shir's iPhone");
+        dynamo.indexesLag(true);
+
+        mvc.perform(delete("/admin/invites/" + invite[0]).header(LocalAdmin.HEADER, adminSecret()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.revoked").value(true));
+
+        dynamo.indexesLag(false);
+        assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.REVOKED);
+    }
+
+    @Test
+    void withoutTheLinkFileAndALaggingIndexItIsNotFoundNotASuccess() throws Exception {
+        String[] invite = invite("shir", "Shir's iPhone");
+        java.nio.file.Files.delete(DATA.resolve("invites").resolve(invite[0] + ".txt"));
+        dynamo.indexesLag(true);
+
+        mvc.perform(delete("/admin/invites/" + invite[0]).header(LocalAdmin.HEADER, adminSecret()))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.revoked").value(false));
+
+        dynamo.indexesLag(false);
+        assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.PENDING);
+        mvc.perform(delete("/admin/invites/" + invite[0]).header(LocalAdmin.HEADER, adminSecret()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.revoked").value(true)); // the rerun the answer asks for
+    }
+
+    @Test
+    void aRevocationDuringAnOutageIsAnErrorAndKeepsTheLinkFile() throws Exception {
+        String[] invite = invite("shir", "Shir's iPhone");
+
+        dynamo.down(true);
+        mvc.perform(delete("/admin/invites/" + invite[0]).header(LocalAdmin.HEADER, adminSecret()))
+                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.revoked").doesNotExist());
+        dynamo.down(false);
+
+        assertThat(DATA.resolve("invites").resolve(invite[0] + ".txt")).exists();
+        assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.PENDING);
+        mvc.perform(delete("/admin/invites/" + invite[0]).header(LocalAdmin.HEADER, adminSecret())).andExpect(status().isOk());
+    }
+
+    @Test
+    void aRegistrationDuringAnOutageIsAClean503() throws Exception {
+        SoftAuthenticator iphone = new SoftAuthenticator();
+        MockHttpSession enrolling = redeem(invite("shir", "Shir's iPhone")[1], SHIR_PHONE);
+        String body = iphone.register(optionsJson("/webauthn/register/options", enrolling, SHIR_PHONE), "iCloud Keychain");
+
+        // The guards' reads pass; then, inside the registration, finding the passkey's member fails.
+        dynamo.failBefore("query", 1);
+        mvc.perform(post("/webauthn/register").session(enrolling).with(from(SHIR_PHONE)).with(csrf())
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string("{\"success\":false}"));
+
+        assertThat(store.device(SHIR_PHONE.nodeId())).isEmpty();
+    }
 }

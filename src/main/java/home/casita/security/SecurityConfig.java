@@ -47,6 +47,7 @@ import home.casita.security.access.EnrollmentSuccessHandler;
 import home.casita.security.access.Invitations;
 import home.casita.security.access.LocalAdmin;
 import home.casita.security.access.PasskeySignInSuccessHandler;
+import home.casita.security.access.RegistrationErrorFilter;
 import home.casita.security.access.RedemptionGuardFilter;
 import home.casita.security.access.TailscaleDeviceIdentity;
 import home.casita.security.access.TailscaleWhois;
@@ -224,6 +225,9 @@ class SecurityConfig {
                 .addFilterAfter(new RedemptionGuardFilter(devices, store), CsrfFilter.class)
                 // Passkeys can be set up only in a live enrollment, on its device.
                 .addFilterAfter(new EnrollmentGuardFilter(decisions, devices), RedemptionGuardFilter.class)
+                // Refused passkey registrations answered 400, not an escaped exception; passkey deletion 405.
+                // (Spring places its registration filter right after AuthorizationFilter; this goes just ahead of it.)
+                .addFilterAfter(new RegistrationErrorFilter(), AuthorizationFilter.class)
                 // Every signed-in request: member, passkey, device authorization and device, again.
                 .addFilterBefore(new AccessCheckFilter(devices, decisions), AuthorizationFilter.class)
                 .exceptionHandling(e -> e

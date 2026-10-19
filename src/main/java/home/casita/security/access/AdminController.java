@@ -9,10 +9,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.web.webauthn.api.Bytes;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -41,6 +43,7 @@ import home.casita.security.store.StoreUnavailableException;
 class AdminController {
 
     private static final Logger log = LoggerFactory.getLogger(AdminController.class);
+    private static final java.util.regex.Pattern INVITE_ID = java.util.regex.Pattern.compile("i-[0-9a-f]{8}");
 
     record CredentialView(String id, String label, boolean syncable, Instant created, Instant lastUsed) {}
 
@@ -67,7 +70,7 @@ class AdminController {
     @ExceptionHandler(StoreUnavailableException.class)
     @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
     Map<String, Object> unavailable() {
-        return Map.of("error", "security store unavailable; nothing was changed unless a later listing shows it");
+        return Map.of("error", "security store unavailable: the change may not have happened; check with a listing before relying on it");
     }
 
     @GetMapping("/access")
@@ -117,12 +120,42 @@ class AdminController {
                 "expiresAt", created.invitation().expiresAt().toString(), "file", file.toString());
     }
 
+    /**
+     * Revokes an invitation. With its link file at hand (the usual case) this is one conditional write on the
+     * base table, by the token's hash: no index, so even an invitation created a moment ago is found. Without
+     * the file, the id is looked up through an index, which may not list a just-created invitation yet.
+     * Only an answer of {@code "revoked": true} means the link can't be used; the link file is deleted only then
+     * (or when the invitation already enrolled its device). Anything else is an error status, and the file stays.
+     */
     @DeleteMapping("/invites/{id}")
-    Map<String, Object> revokeInvite(@PathVariable String id) throws IOException {
-        boolean revoked = invitations.revoke(id);
-        Files.deleteIfExists(properties.dataDir().resolve("invites").resolve(id.replaceAll("[^a-z0-9-]", "") + ".txt"));
-        log.info("Invite {} revoked: {}", id, revoked);
-        return Map.of("revoked", revoked);
+    ResponseEntity<Map<String, Object>> revokeInvite(@PathVariable String id) throws IOException {
+        if (!INVITE_ID.matcher(id).matches()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "not an invite id");
+        Path file = properties.dataDir().resolve("invites").resolve(id + ".txt");
+        Optional<String> token = tokenIn(file);
+        SecurityStore.RevokeOutcome outcome = token.isPresent() ? invitations.revoke(token.get(), id) : invitations.revokeById(id);
+        log.info("Invite {} revocation: {}{}", id, outcome, token.isPresent() ? "" : " (by id: no link file)");
+        return switch (outcome) {
+            case REVOKED, ALREADY_REVOKED -> {
+                Files.deleteIfExists(file);
+                yield ResponseEntity.ok(Map.of("revoked", true, "state", outcome == SecurityStore.RevokeOutcome.REVOKED ? "revoked" : "already-revoked"));
+            }
+            case ALREADY_ENROLLED -> {
+                Files.deleteIfExists(file); // the token has been used: it can't be redeemed again
+                yield ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("revoked", false, "state", "already-enrolled",
+                        "next", "the invitation already enrolled its device: revoke that device (casita-access list)"));
+            }
+            case NOT_FOUND -> ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("revoked", false, "state", "not-found",
+                    "next", token.isPresent() ? "no invitation matches this link file" : "no link file, and no invitation listed with this id "
+                            + "(one created seconds ago may not be listed yet): run it again"));
+        };
+    }
+
+    /** The token in an invite's link file ({@code <origin>/login/ott?token=...}), if the file is there. */
+    private static Optional<String> tokenIn(Path file) throws IOException {
+        if (!Files.isRegularFile(file)) return Optional.empty();
+        String link = Files.readString(file, StandardCharsets.UTF_8).trim();
+        int at = link.indexOf("token=");
+        return at < 0 ? Optional.empty() : Optional.of(link.substring(at + "token=".length())).filter(t -> !t.isBlank());
     }
 
     @DeleteMapping("/devices/{nodeId}")
