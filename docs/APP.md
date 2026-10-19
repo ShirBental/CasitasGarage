@@ -102,12 +102,12 @@ with equal weight.
   Ford's safety rules), reviewed on their own; once the server reports Toyota controllable, its
   control works with no page change, and on a real door only when the server reports it live.
 - **Watson** sits under the header, his chin on the line above Ford: the approved illustration
-  (`casita.brand.illustration`, `static/brand/watson-home.webp`, 4:3, transparent), about 60% of the
+  (`casita.brand.illustration`, `static/brand/watson-idle.webp`, 4:3, transparent), about 60% of the
   screen wide and at most 236 pt (176 on an SE). It is fitted, never cropped. A quarter of the spare
   height goes above him and the rest below the doors, so the group sits high. Without the
   illustration configured, the page shows none and no placeholder.
 - **Watson gets excited** while either door is opening or closing, as the server reports it: an excited
-  version of the same character (`casita.brand.illustration-excited`, same canvas, size and
+  version of the same character (`casita.brand.illustration-excited`, `static/brand/watson-excited.webp`, same canvas, size and
   alignment) cross-fades over the idle one in about 300 ms, instantly with *Reduce Motion*, and back
   when both doors have settled. It never comes from a tap, a pending request or a guess, and his
   expression is decoration, never evidence of what a door is doing. Without the excited art
