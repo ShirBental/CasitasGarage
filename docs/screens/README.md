@@ -1,6 +1,6 @@
 # Home screen review shots
 
-The two-door home screen on the practice door, captured with headless Chrome at iPhone sizes, 3×,
+The two-door home screen on the simulated doors ("Simulation mode"), captured with headless Chrome at iPhone sizes, 3×,
 on 2026-10-19. Standard: 393 × 852 (iPhone 15/16). Small: 375 × 667 (iPhone SE).
 
 | | Standard | Small |

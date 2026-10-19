@@ -75,7 +75,7 @@
     section.className = "door " + tone + (d.controllable ? "" : " unavailable");
     section.dataset.key = k;
     q(".name").textContent = d.name;
-    q(".state").textContent = word;
+    q(".word").textContent = word;
     q(".detail").textContent = VOICE.detail(d, held);
 
     // Moving: an estimate from the configured travel time, labelled so. Never a sensor reading.

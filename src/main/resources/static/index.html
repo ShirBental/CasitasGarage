@@ -17,16 +17,18 @@
   <main>
     <header class="top">
       <span class="wordmark">Casita</span>
+      <span class="tag" id="mode"></span>
       <button id="account-open" class="account" type="button" aria-label="Account">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor"
              stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20c.9-3.6 3.8-5.6 7.2-5.6s6.3 2 7.2 5.6"/></svg>
       </button>
     </header>
-    <p class="tag" id="mode"></p>
 
-    <!-- Two doors, one house: each door is filled in by app.js from /api/doors. -->
+    <!-- Two doors, one house: each door is filled in by app.js from /api/doors. Each sits at the top of
+         its own area (Ford under the header, Toyota under the divider); the spare height is split below each. -->
     <div class="doors" id="doors">
       <section class="door" id="door-0" aria-live="polite"></section>
+      <div class="gap"></div>
 
       <!-- The companion's approved illustration (casita.brand.illustration), resting on the divider. -->
       <div class="fence">
@@ -35,6 +37,7 @@
       </div>
 
       <section class="door" id="door-1" aria-live="polite"></section>
+      <div class="gap"></div>
     </div>
 
     <section class="offline" id="offline" hidden aria-live="polite">
@@ -50,8 +53,8 @@
 
   <template id="door-template">
     <div class="door-text">
-      <p class="name"></p>
-      <p class="state"></p>
+      <h2 class="name"></h2>
+      <p class="state"><span class="dot" aria-hidden="true"></span><span class="word"></span></p>
       <p class="detail"></p>
       <div class="feedback">
         <div class="estimate"><div class="track"><div class="fill"></div></div><span>Estimated</span></div>

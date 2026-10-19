@@ -29,7 +29,7 @@ const VOICE = (function () {
     noHistory() { return "No history yet"; },
 
     modes: {
-      simulated: "Practice door",
+      simulated: "Simulation mode",
       off: "Door control off",
       "dry-run": "Rehearsal: nothing is sent",
       live: "",

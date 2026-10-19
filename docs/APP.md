@@ -88,8 +88,10 @@ casita:
 
 Two doors, one house: Ford above, Toyota below, with equal weight, and Watson between them.
 
-- **Each door** has its name, its state in large serif type, one short line, and one round control
-  (72 pt, 66 on a small iPhone) on the right. States: *Closed* and *Not closed* ("Since 6:42 PM"),
+- **Each door** is its own area, headed by its name in large serif type (36 pt, 32 on a small
+  iPhone). Under it: the status (a dot and a word, coloured only by status), one short line, and on
+  the right one round control (68 pt, 62 on a small iPhone). Ford sits just under the header and
+  Toyota just under the divider; the spare height is split evenly below each. States: *Closed* and *Not closed* ("Since 6:42 PM"),
   *Opening…* / *Closing…* ("About 6 seconds"), *Checking…*, *Unknown* ("The sensor can't confirm
   where Ford is."), *Needs a check* (held).
 - **Which doors can be commanded comes from the server.** A door's control is enabled only when
@@ -124,13 +126,14 @@ Two doors, one house: Ford above, Toyota below, with equal weight, and Watson be
 - **History** is one tap away: the last event is a row; tapping it opens a sheet with the rest.
 - **Account:** a person icon (top right) opens a sheet: who's signed in (and on which device, once
   device access lands), sign out, and the family's line.
-- **Mode tag:** *Practice door* (simulated), *Door control off*, *Rehearsal* (dry run).
+- **Mode tag**, on the header row: *Simulation mode* (simulated doors), *Door control off*,
+  *Rehearsal* (dry run).
 - **App icon:** the approved sage Watson icon (`static/icons/`), in the manifest and as the
   `apple-touch-icon`. iOS fetches it before sign-in, so `/icons/**` must be public: that is in
   `SecurityConfig` (PR #8).
 - **Look:** the approved palette, defined once at the top of `casita.css`: sage `#6B7F6B`,
   terracotta `#C65A3A` (only the active controls), warm cream `#F8F4ED`, deep pine `#2E4A3F`, soft
-  sand `#D9C9B5`, plus darker shades where text needs AA contrast. Serif for states and headings,
+  sand `#D9C9B5`, plus darker shades where text needs AA contrast. Serif for door names and headings,
   the system font for the rest. No cards, boxes or shadows.
 - **iPhone:** safe areas on all sides, 44 pt+ targets, both doors on screen without scrolling on a
   375×667 iPhone, sheets from the bottom. *Reduce Motion* turns off transitions.

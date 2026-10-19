@@ -42,35 +42,44 @@ h1, h2 { font-weight: 600; margin: 0; }
 /* ---------- home: two doors, one house ---------- */
 .home main { display: flex; flex-direction: column; min-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom))); }
 
-.top { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
+.top { display: flex; align-items: center; gap: 10px; min-height: 48px; }
 .wordmark { font-family: var(--serif); font-size: 1.3rem; letter-spacing: 0.01em; }
 .account {
-  width: 44px; height: 44px; margin-right: -8px; border: none; border-radius: 50%; background: none;
+  width: 44px; height: 44px; margin-left: auto; margin-right: -8px; border: none; border-radius: 50%; background: none;
   color: var(--pine); display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
 
+/* The mode ("Simulation mode") sits on the header row, so the doors can start high. */
 .tag {
-  display: none; align-self: flex-start; margin: 4px 0 0; padding: 4px 11px; border-radius: 999px;
-  background: var(--sage-soft); color: var(--pine); font-size: 0.8rem; font-weight: 500;
+  display: none; padding: 4px 10px; border-radius: 999px;
+  background: var(--sage-soft); color: var(--pine); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.01em;
 }
 .tag.shown { display: inline-block; }
 
-/* Ford above, Toyota below, Watson resting on the hairline between them. The block sits centred in the
-   free space, so both doors and their controls stay on screen on a small iPhone, without scrolling. */
-.doors { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 12px 0; }
+/* Ford above, Toyota below, Watson resting on the hairline between them. Each door sits at the top of its
+   own area, Ford just under the header and Toyota just under the divider; the spare height is split
+   evenly below each door, so the two areas balance and both fit a small iPhone without scrolling. */
+.doors { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#door-0 { margin-top: 22px; }
+#door-1 { margin-top: 26px; }
+.gap { flex: 1; min-height: 12px; }
 .doors[hidden], .door[hidden], .offline[hidden] { display: none; }
 
-/* Each door: its status on the left, its one round control on the right. Equal weight for both doors. */
-.door { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+/* Each door: its name as the heading of its area, then its status, then its one round control on the
+   right. Both doors are equal; colour only ever says status or action, never which car. */
+.door { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .door-text { min-width: 0; }
-.door .name { margin: 0; font-size: 0.95rem; color: var(--muted); font-weight: 500; }
-.door .state {
-  margin: 4px 0 0; font-family: var(--serif); font-weight: 600; font-size: 2.9rem;
-  line-height: 1; letter-spacing: -0.015em;
+.door .name {
+  margin: 0; font-family: var(--serif); font-weight: 600; font-size: 2.25rem; line-height: 1.05;
+  letter-spacing: -0.01em; color: var(--pine);
 }
-.door .detail { margin: 8px 0 0; min-height: 1.45em; font-size: 0.95rem; color: var(--muted); }
+.door .state { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 1.3rem; font-weight: 600; line-height: 1.2; }
+.door .dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.door .detail { margin: 4px 0 0; min-height: 1.45em; font-size: 0.95rem; color: var(--muted); }
 .door.closed .state { color: var(--pine); }
+.door.closed .dot { background: var(--sage); }
 .door.not-closed .state, .door.moving .state, .door.alert .state { color: var(--terracotta-deep); }
+.door.not-closed .dot, .door.moving .dot, .door.alert .dot { background: var(--terracotta); }
 .door.quiet .state { color: var(--muted); }
 .door .note { margin: 2px 0 0; font-size: 0.85rem; color: var(--muted); text-align: left; }
 .door .note:empty { display: none; }
@@ -93,9 +102,9 @@ h1, h2 { font-weight: 600; margin: 0; }
 .result { margin: 0; color: var(--pine); }
 .result.alert { color: var(--terracotta-deep); }
 
-/* The round control: one tap, one command. 72 pt, far from the other door's. */
+/* The round control: one tap, one command. 68 pt, far from the other door's. */
 .go {
-  flex: none; width: 72px; height: 72px; border-radius: 50%; border: none;
+  flex: none; width: 68px; height: 68px; border-radius: 50%; border: none;
   background: var(--terracotta); color: #fff; font: inherit; font-size: 1rem; font-weight: 600;
   cursor: pointer; transition: transform 0.1s var(--ease);
 }
@@ -104,7 +113,7 @@ h1, h2 { font-weight: 600; margin: 0; }
 
 /* Watson peeks over the divider: chin on the hairline. Sized by width, about half the screen, at most 220 pt;
    the approved art (4:3) is fitted, never cropped. Hidden, with no stand-in, until it is configured. */
-.fence { margin: 20px 0 22px; }
+.fence { flex: none; }
 .companion { margin: 0; display: flex; justify-content: center; }
 .companion[hidden] { display: none; }
 .companion img { display: block; width: clamp(150px, 50vw, 220px); height: auto; aspect-ratio: 4 / 3; object-fit: contain; object-position: bottom; }
@@ -190,10 +199,11 @@ button.row .when::after { content: "›"; margin-left: 8px; font-size: 1.2rem; c
 
 /* Smaller iPhones (SE): both doors and controls keep their room; Watson and the spacing shrink first. */
 @media (max-height: 700px) {
-  .door .state { font-size: 2.5rem; }
-  .go { width: 66px; height: 66px; }
-  .fence { margin: 12px 0 14px; }
-  .doors { padding: 4px 0; }
+  .door .name { font-size: 2rem; }
+  .door .state { font-size: 1.2rem; margin-top: 6px; }
+  .go { width: 62px; height: 62px; }
+  #door-0 { margin-top: 14px; }
+  #door-1 { margin-top: 18px; }
   .companion img { width: clamp(140px, 50vw, 188px); }
 }
 
