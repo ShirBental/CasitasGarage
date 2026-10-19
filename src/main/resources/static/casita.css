@@ -38,7 +38,6 @@ p { line-height: 1.45; }
 a { color: var(--pine); }
 h1, h2 { font-weight: 600; margin: 0; }
 
-.watson { display: block; border-radius: 50%; }
 
 /* ---------- home: two doors, one house ---------- */
 .home main { display: flex; flex-direction: column; min-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom))); }
@@ -163,7 +162,12 @@ button.row .when::after { content: "›"; margin-left: 8px; font-size: 1.2rem; c
 
 /* ---------- sign-in and Face ID pages ---------- */
 .welcome main { text-align: center; padding-top: 10vh; }
-.welcome .watson { width: 96px; height: 96px; margin: 0 auto 22px; }
+/* The approved app icon (static/icons/), shaped like the iPhone home-screen icon. A background, not an
+   <img>, so the page shows no broken-image box if the icon can't be fetched (it is public in PR #8). */
+.welcome .app-icon {
+  width: 96px; height: 96px; margin: 0 auto 22px; border-radius: 22px;
+  background: url("/icons/icon-192.png") center / cover no-repeat;
+}
 .welcome h1 { font-family: var(--serif); font-size: 2.1rem; }
 .voice { font-size: 1.05rem; color: var(--muted); margin: 12px auto 30px; max-width: 30ch; }
 .note { color: var(--muted); font-size: 0.95rem; margin-top: 18px; }
