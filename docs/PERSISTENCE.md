@@ -181,21 +181,25 @@ UpdateItem  Key: tokenHash
       consumeRequestId = :rid, enrollmentId = :eid, nodeId = :node, nodeName = :nodeName
   CONDITION attribute_exists(tokenHash) AND expiresAt > :now AND (
         #status = :pending
-     OR (#status = :consumed AND consumeRequestId = :rid AND enrollmentId = :eid AND nodeId = :node))
+     OR (#status = :consumed AND consumeRequestId = :rid AND enrollmentId = :eid AND nodeId = :node
+         AND attribute_not_exists(enrolledAt)))
   ReturnValues: ALL_NEW
 ```
 
 - **Concurrent attempts:** exactly one finds `PENDING`; all the others fail the condition.
 - **A retry of the same attempt** passes only if it carries the same `consumeRequestId`, the same
-  `enrollmentId` *and* the same node. It writes the same values again, keeps the original
-  `consumedAt`, and touches neither `expiresAt` nor `ttl`. It can't replace the `enrollmentId` or
-  node, and it can't revive an invite that has been revoked (wrong status) or has expired (`expiresAt`).
+  `enrollmentId` *and* the same node, and only while the invitation hasn't enrolled a device. It
+  writes the same values again, keeps the original `consumedAt`, and touches neither `expiresAt` nor
+  `ttl`. It can't replace the `enrollmentId` or node, and it can't revive an invite that has been
+  revoked (wrong status) or has expired (`expiresAt`).
 - **Any condition failure** answers the same generic "that didn't work", whether the token is
   unknown, used, expired or revoked.
 
 #### Revoke
 
-Look up `byInviteId` to find the key, then:
+The admin's link file holds the token, so revoking normally goes **by the token's hash**: one
+conditional write on the base table, with no index involved. An invitation created a moment ago is
+found too.
 
 ```
 UpdateItem  Key: tokenHash
@@ -203,9 +207,21 @@ UpdateItem  Key: tokenHash
   CONDITION inviteId = :id AND (#status = :pending OR (#status = :consumed AND attribute_not_exists(enrolledAt)))
 ```
 
-A just-created invite may not be in the GSI yet. In that case the admin is told "not found yet,
-try again". Safety doesn't depend on the index: the change itself is a conditional write on the base
-table, and so is every check.
+When the condition refuses, a consistent read of the same item says why:
+
+| Outcome | HTTP | Meaning |
+|---|---|---|
+| `REVOKED` | 200 `"revoked": true` | It is revoked now |
+| `ALREADY_REVOKED` | 200 `"revoked": true` | It was revoked already |
+| `ALREADY_ENROLLED` | 409 `"revoked": false` | It already enrolled its device: revoke that device instead |
+| `NOT_FOUND` | 404 `"revoked": false` | No such invitation, or none with this id under this hash |
+| store unreachable | 503 | The change may not have happened; check before relying on it |
+
+Only without the link file does the id go through `byInviteId`. An index can lag a just-created
+invitation, so a miss there is `NOT_FOUND` with "run it again", never a success. The link file is
+deleted only when the token can't be used any more (revoked, or already enrolled). On any other
+answer it stays, so the admin can retry. `casita-access` prints `FAILED` and exits 1 on every
+answer other than success.
 
 ### `casita-activity` (not built yet)
 

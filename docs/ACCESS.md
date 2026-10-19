@@ -94,8 +94,17 @@ bin/casita-access revoke-device nAbC123CNTRL   # that device (its node id, from 
 bin/casita-access release-device nAbC123CNTRL  # after revoking: lets another member's invite enroll it
 bin/casita-access revoke-passkey <credential>  # that passkey, on every device it synced to
 bin/casita-access revoke-member hubby          # all his devices, passkeys and invites
-bin/casita-access revoke-invite i-1a2b3c4d     # unused, or an enrollment in progress
+bin/casita-access revoke-invite i-1a2b3c4d     # unused, or an enrollment in progress (see below)
 ```
+
+`revoke-invite` says exactly what happened. `"revoked": true` (revoked, or already revoked) means the
+link can't be used. Any other answer prints `FAILED` and exits 1, and nothing should be assumed:
+
+- `already-enrolled`: the invite has already set up its device, so revoke the device instead;
+- `not-found`: if the invite was created seconds ago and its link file is gone, run it again;
+- an unreachable store: check with `list`.
+
+The link file is deleted only once the link can't be used.
 
 Revocation takes effect on the next request of every affected session, and it is on disk before the
 command returns. A revoked device is kept, marked revoked, so a restart can't bring it back. To use it

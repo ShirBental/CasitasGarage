@@ -23,11 +23,17 @@ usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' 
 [ -r "$secret_file" ] || { echo "Can't read $secret_file: start Casita once, and run this as its user." >&2; exit 1; }
 
 # The secret goes to curl on stdin as a header file, never on the command line (where ps would show it).
+# Any answer other than success (an error status, or no answer at all) ends with FAILED and exit code 1.
 call() {
   method="$1"; shift
-  printf 'X-Casita-Admin: %s\n' "$(cat "$secret_file")" |
-    curl --silent --show-error --fail-with-body --noproxy '*' -H @- -X "$method" "$@"
-  echo
+  if printf 'X-Casita-Admin: %s\n' "$(cat "$secret_file")" |
+      curl --silent --show-error --fail-with-body --noproxy '*' -H @- -X "$method" "$@"; then
+    echo
+  else
+    echo
+    echo "casita-access: FAILED: see the answer above; don't rely on the change having happened" >&2
+    exit 1
+  fi
 }
 
 case "$1" in
