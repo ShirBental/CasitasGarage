@@ -108,8 +108,9 @@ with equal weight.
   illustration configured, the page shows none and no placeholder.
 - **Watson gets excited** while either door is opening or closing, as the server reports it: an excited
   version of the same character (`casita.brand.illustration-excited`, `static/brand/watson-excited.webp`, same canvas, size and
-  alignment) cross-fades over the idle one in about 300 ms, instantly with *Reduce Motion*, and back
-  when both doors have settled. It never comes from a tap, a pending request or a guess, and his
+  alignment) fades in over the idle one in 180 ms (never two half-transparent dogs), instantly with
+  *Reduce Motion*, and back to idle once movement ends, fails or is held, or a door becomes unknown
+  (checking, can't see, offline). It never comes from a tap, a pending request or a guess, and his
   expression is decoration, never evidence of what a door is doing. Without the excited art
   configured, Watson doesn't change.
 - **Header:** the family's name for the app, `casita.brand.app-name` ("Bental's Casita"); the sign-in

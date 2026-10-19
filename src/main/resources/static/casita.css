@@ -116,12 +116,15 @@ h1, h2 { font-weight: 600; margin: 0; }
 .companion { position: relative; margin: -12px auto 0; width: clamp(150px, 60vw, 236px); }
 .companion[hidden] { display: none; }
 .companion img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: contain; object-position: bottom; }
-/* Excited Watson sits exactly over idle Watson; a door moving cross-fades between them in about 300 ms. */
-.companion img { transition: opacity 0.3s var(--ease); }
-.companion .excited { position: absolute; inset: 0; opacity: 0; }
+/* Excited Watson sits exactly over idle Watson, in the same box. Never two half-transparent dogs: the excited
+   one fades in OVER idle (idle stays fully visible underneath and drops out only as the fade ends), and on the
+   way back idle is fully there from the start while excited fades out over it. 180 ms; the fade's curve
+   passes its midpoint quickly, so the overlap reads as one dog changing expression. */
+.companion .excited { position: absolute; inset: 0; opacity: 0; transition: opacity 180ms cubic-bezier(0.3, 0, 0.2, 1); }
 .companion .excited[hidden] { display: none; }
 .companion.is-excited .excited:not([hidden]) { opacity: 1; }
-.companion.is-excited:has(.excited:not([hidden])) #companion-art { opacity: 0; }
+#companion-art { transition: opacity 180ms step-start; }          /* back to idle: idle is there at once */
+.companion.is-excited:has(.excited:not([hidden])) #companion-art { opacity: 0; transition: opacity 180ms step-end; }  /* to excited: idle leaves when the fade ends */
 .hairline { height: 1px; background: var(--hairline); }
 
 /* ET phone home: in place of both doors, with nothing to press. */
@@ -212,6 +215,6 @@ button.row .when::after { content: "›"; margin-left: 8px; font-size: 1.2rem; c
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .go, .estimate .fill, .companion img { transition: none; }
+  .go, .estimate .fill, .companion img, .companion .excited, #companion-art { transition: none !important; }
   .sheet[open] { animation: none; }
 }

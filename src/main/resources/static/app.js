@@ -66,8 +66,11 @@
     });
 
     // Watson gets excited while any door is opening or closing, as the server reports it: never from a tap,
-    // a pending request or a guess. His expression is decoration, never evidence of what a door is doing.
-    $("companion").classList.toggle("is-excited", doors.doors.some((d) => d.door === "OPENING" || d.door === "CLOSING"));
+    // a pending request or a guess. He is idle again once movement ends, fails or held (STUCK, LOST: the
+    // server then reports a settled state with held), or becomes unknown (CHECKING, UNKNOWN, offline). His
+    // expression is decoration, never evidence of what a door is doing.
+    const moving = (d) => (d.door === "OPENING" || d.door === "CLOSING") && !(d.status && d.status.held);
+    $("companion").classList.toggle("is-excited", doors.doors.some(moving));
   }
 
   function drawDoor(section, d) {
