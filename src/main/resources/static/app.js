@@ -40,6 +40,7 @@
     if (offline || !doors) {
       // ET phone home: no stale status, no history, nothing to press.
       $("doors").hidden = true;
+      $("spare-above").hidden = $("spare-below").hidden = true;
       $("history-open").hidden = true;
       $("offline").hidden = false;
       $("offline-word").textContent = VOICE.offline[0];
@@ -48,6 +49,7 @@
       return;
     }
     $("doors").hidden = false;
+    $("spare-above").hidden = $("spare-below").hidden = false;
     $("history-open").hidden = false;
     $("offline").hidden = true;
 

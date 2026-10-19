@@ -24,21 +24,18 @@
       </button>
     </header>
 
-    <!-- Two doors, one house: each door is filled in by app.js from /api/doors. Each sits at the top of
-         its own area (Ford under the header, Toyota under the divider); the spare height is split below each. -->
+    <!-- Two doors, one house. Watson (the approved casita.brand.illustration) rests his chin on the line
+         above Ford, looking over both doors; Ford and Toyota sit together below him, filled in by app.js.
+         A quarter of the spare height goes above him and the rest below the doors. -->
+    <div class="spare" id="spare-above"></div>
     <div class="doors" id="doors">
+      <figure class="companion" id="companion" hidden><img id="companion-art" alt=""></figure>
+      <div class="hairline"></div>
       <section class="door" id="door-0" aria-live="polite"></section>
-      <div class="gap"></div>
-
-      <!-- The companion's approved illustration (casita.brand.illustration), resting on the divider. -->
-      <div class="fence">
-        <figure class="companion" id="companion" hidden><img id="companion-art" alt=""></figure>
-        <div class="hairline"></div>
-      </div>
-
+      <div class="hairline"></div>
       <section class="door" id="door-1" aria-live="polite"></section>
-      <div class="gap"></div>
     </div>
+    <div class="spare below" id="spare-below"></div>
 
     <section class="offline" id="offline" hidden aria-live="polite">
       <p class="state" id="offline-word"></p>

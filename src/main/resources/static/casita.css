@@ -56,18 +56,17 @@ h1, h2 { font-weight: 600; margin: 0; }
 }
 .tag.shown { display: inline-block; }
 
-/* Ford above, Toyota below, Watson resting on the hairline between them. Each door sits at the top of its
-   own area, Ford just under the header and Toyota just under the divider; the spare height is split
-   evenly below each door, so the two areas balance and both fit a small iPhone without scrolling. */
-.doors { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-#door-0 { margin-top: 22px; }
-#door-1 { margin-top: 26px; }
-.gap { flex: 1; min-height: 12px; }
-.doors[hidden], .door[hidden], .offline[hidden] { display: none; }
+/* Watson on top, resting his chin on the line above Ford; Ford and Toyota together below him, one
+   hairline between them. A quarter of the spare height goes above Watson and the rest below the doors,
+   so the group sits high under the header; both doors fit a small iPhone without scrolling. */
+.spare { flex: 1; min-height: 4px; }
+.spare.below { flex: 3; }
+.spare[hidden], .doors[hidden], .door[hidden], .offline[hidden] { display: none; }
+.doors { flex: none; }
 
 /* Each door: its name as the heading of its area, then its status, then its one round control on the
    right. Both doors are equal; colour only ever says status or action, never which car. */
-.door { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.door { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 26px 0; }
 .door-text { min-width: 0; }
 .door .name {
   margin: 0; font-family: var(--serif); font-weight: 600; font-size: 2.25rem; line-height: 1.05;
@@ -111,12 +110,12 @@ h1, h2 { font-weight: 600; margin: 0; }
 .go:active:not(:disabled) { transform: scale(0.96); }
 .go:disabled { background: var(--sand-soft); color: var(--muted); cursor: default; }
 
-/* Watson peeks over the divider: chin on the hairline. Sized by width, about half the screen, at most 220 pt;
-   the approved art (4:3) is fitted, never cropped. Hidden, with no stand-in, until it is configured. */
-.fence { flex: none; }
-.companion { margin: 0; display: flex; justify-content: center; }
+/* Watson: the approved art (4:3, transparent), chin on the line above Ford. About 60% of the screen wide,
+   at most 236 pt (the art is 720 px, so it stays sharp at 3x); fitted, never cropped. Its top quarter is
+   transparent, so it tucks a little under the space above. Hidden, with no stand-in, until configured. */
+.companion { margin: -12px 0 0; display: flex; justify-content: center; }
 .companion[hidden] { display: none; }
-.companion img { display: block; width: clamp(150px, 50vw, 220px); height: auto; aspect-ratio: 4 / 3; object-fit: contain; object-position: bottom; }
+.companion img { display: block; width: clamp(150px, 60vw, 236px); height: auto; aspect-ratio: 4 / 3; object-fit: contain; object-position: bottom; }
 .hairline { height: 1px; background: var(--hairline); }
 
 /* ET phone home: in place of both doors, with nothing to press. */
@@ -199,12 +198,11 @@ button.row .when::after { content: "›"; margin-left: 8px; font-size: 1.2rem; c
 
 /* Smaller iPhones (SE): both doors and controls keep their room; Watson and the spacing shrink first. */
 @media (max-height: 700px) {
+  .door { padding: 14px 0; }
   .door .name { font-size: 2rem; }
   .door .state { font-size: 1.2rem; margin-top: 6px; }
   .go { width: 62px; height: 62px; }
-  #door-0 { margin-top: 14px; }
-  #door-1 { margin-top: 18px; }
-  .companion img { width: clamp(140px, 50vw, 188px); }
+  .companion img { width: 176px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -86,12 +86,12 @@ casita:
 
 ## The app
 
-Two doors, one house: Ford above, Toyota below, with equal weight, and Watson between them.
+Two doors, one house: Watson at the top, looking over Ford and Toyota, which sit together below him
+with equal weight.
 
 - **Each door** is its own area, headed by its name in large serif type (36 pt, 32 on a small
   iPhone). Under it: the status (a dot and a word, coloured only by status), one short line, and on
-  the right one round control (68 pt, 62 on a small iPhone). Ford sits just under the header and
-  Toyota just under the divider; the spare height is split evenly below each. States: *Closed* and *Not closed* ("Since 6:42 PM"),
+  the right one round control (68 pt, 62 on a small iPhone). One fine hairline separates the doors. States: *Closed* and *Not closed* ("Since 6:42 PM"),
   *Opening…* / *Closing…* ("About 6 seconds"), *Checking…*, *Unknown* ("The sensor can't confirm
   where Ford is."), *Needs a check* (held).
 - **Which doors can be commanded comes from the server.** A door's control is enabled only when
@@ -101,11 +101,11 @@ Two doors, one house: Ford above, Toyota below, with equal weight, and Watson be
   disabled. Toyota commands are separate work (per-door endpoints, each door run separately,
   Ford's safety rules), reviewed on their own; once the server reports Toyota controllable, its
   control works with no page change, and on a real door only when the server reports it live.
-- **Watson** peeks over the hairline between the doors, chin on the line: the approved
-  illustration (`casita.brand.illustration`, `static/brand/watson-home.webp`, 4:3, transparent),
-  about half the screen wide and at most 220 pt (197 pt on a standard iPhone, 188 on an SE). It is
-  fitted, never cropped, and never overlaps a door's status or control. Without it configured, the
-  page shows no illustration and no placeholder.
+- **Watson** sits under the header, his chin on the line above Ford: the approved illustration
+  (`casita.brand.illustration`, `static/brand/watson-home.webp`, 4:3, transparent), about 60% of the
+  screen wide and at most 236 pt (176 on an SE). It is fitted, never cropped. A quarter of the spare
+  height goes above him and the rest below the doors, so the group sits high. Without the
+  illustration configured, the page shows none and no placeholder.
 - **Can't reach home:** "ET phone home" and "Can't reach home. Trying again…", with *Waiting for
   connection* in place of both doors. No stale status or history, nothing to press, nothing retried.
 - **Measured versus estimated.** The sensor measures only closed / not closed, so the app never says
