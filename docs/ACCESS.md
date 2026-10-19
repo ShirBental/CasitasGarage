@@ -43,8 +43,12 @@ Verified against Tailscale 1.104 (`ipn/ipnlocal/serve.go`) and Go's `httputil.Re
    `Tailscale-Funnel-Request: ?1`.
 3. Casita listens on 127.0.0.1 only. Tomcat accepts `X-Forwarded-*` only from 127.0.0.1
    (`server.tomcat.remoteip.internal-proxies`), so the remote address Casita sees is the one serve
-   set. Anything else on the server could also connect to 127.0.0.1, which is why step 4 asks
-   tailscaled directly, not just the headers.
+   set, **as long as nothing else on the server sends Casita requests.** Any local process can connect to
+   127.0.0.1 and claim a tailnet address in `X-Forwarded-For` along with a matching
+   `Tailscale-User-Login`. Step 4 doesn't stop that: tailscaled vouches for the real node behind the
+   *claimed* address. Such a process can therefore pose as any authorized device. It would still need
+   that member's passkey (with Face ID or the passcode) or a stolen session cookie. A process like that
+   means the server is compromised, which is out of scope (below); keep the server single-purpose.
 4. `TailscaleDeviceIdentity` refuses the request when any of these holds:
    - it is a Funnel request;
    - the address isn't in 100.64.0.0/10 or fd7a:115c:a1e0::/48;
@@ -61,8 +65,9 @@ Settings: `casita.security.device-identity: tailscale` (the default) and `casita
 profile uses `development`, which treats a direct request to `http://localhost` as "this computer". It
 is refused for any `rp-id` other than `localhost`.
 
-**What this trusts:** tailscaled and `tailscale serve` on the server, and the tailnet's admin. A
-compromised server or tailnet admin account is out of scope (as in `APP.md`).
+**What this trusts:** tailscaled and `tailscale serve` on the server, every other process on the
+server (see step 3), and the tailnet's admin. A compromised server or tailnet admin account is out of
+scope (as in `APP.md`).
 
 ## Inviting a device
 
