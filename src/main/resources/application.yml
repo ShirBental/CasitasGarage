@@ -31,9 +31,9 @@ casita:
     companion: Watson
     # One quiet line in the account sheet, e.g. "Your little corner of the wild world.". Empty hides it.
     about-line: ""
-    # Watson's approved illustration for the home screen: a file in static/brand/, e.g. /brand/watson-home.png.
-    # Empty until the approved artwork exists; the home screen then shows no illustration and no placeholder.
-    illustration: ""
+    # Watson's approved illustration on the home screen, resting on the divider between the doors: a file
+    # in static/brand/. Empty shows no illustration and no placeholder.
+    illustration: /brand/watson-home.webp
   # Which door Casita talks to: 'simulated' (pretend door) or 'meross' (the real one).
   door: simulated
   security:

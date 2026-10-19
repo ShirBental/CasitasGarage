@@ -9,6 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Casita">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <title>Casita</title>
   <link rel="stylesheet" href="/casita.css">
 </head>
@@ -23,36 +24,44 @@
     </header>
     <p class="tag" id="mode"></p>
 
-    <div class="stage" id="stage">
-      <section class="ford" id="door" aria-live="polite">
-        <p class="name" id="door-name">Ford</p>
-        <p class="state" id="door-state">One moment…</p>
-        <p class="detail" id="door-detail"></p>
-        <!-- One fixed-height place for feedback: the estimate while moving, then the sensor check. -->
-        <div class="feedback">
-          <div class="estimate" id="estimate">
-            <div class="track"><div class="fill" id="estimate-fill"></div></div>
-            <p>Estimated</p>
-          </div>
-          <p class="result" id="result"></p>
-        </div>
-      </section>
+    <!-- Two doors, one house: each door is filled in by app.js from /api/doors. -->
+    <div class="doors" id="doors">
+      <section class="door" id="door-0" aria-live="polite"></section>
 
-      <!-- The companion's approved illustration (casita.brand.illustration). Hidden, with no stand-in, until it exists. -->
-      <figure class="companion" id="companion" hidden><img id="companion-art" alt=""></figure>
+      <!-- The companion's approved illustration (casita.brand.illustration), resting on the divider. -->
+      <div class="fence">
+        <figure class="companion" id="companion" hidden><img id="companion-art" alt=""></figure>
+        <div class="hairline"></div>
+      </div>
+
+      <section class="door" id="door-1" aria-live="polite"></section>
     </div>
 
-    <div id="below">
-      <div class="watched" id="watched"></div>
-      <button class="row last" id="history-open" type="button">
-        <span id="last-event"></span><span class="when" id="last-when"></span>
-      </button>
-    </div>
+    <section class="offline" id="offline" hidden aria-live="polite">
+      <p class="state" id="offline-word"></p>
+      <p class="detail" id="offline-detail"></p>
+      <p class="waiting" id="offline-button"></p>
+    </section>
 
-    <div class="action">
-      <button id="act" class="act" type="button" disabled>One moment…</button>
-    </div>
+    <button class="row last" id="history-open" type="button">
+      <span id="last-event"></span><span class="when" id="last-when"></span>
+    </button>
   </main>
+
+  <template id="door-template">
+    <div class="door-text">
+      <p class="name"></p>
+      <p class="state"></p>
+      <p class="detail"></p>
+      <div class="feedback">
+        <div class="estimate"><div class="track"><div class="fill"></div></div><span>Estimated</span></div>
+        <p class="result"></p>
+      </div>
+      <p class="note"></p>
+      <button class="checked link" type="button" hidden></button>
+    </div>
+    <button class="go" type="button" disabled></button>
+  </template>
 
   <dialog id="history" class="sheet" aria-labelledby="history-title">
     <div class="sheet-head"><h2 id="history-title">History</h2><button class="close" type="button" data-close>Done</button></div>

@@ -57,7 +57,8 @@ class BrandTest {
     @Test
     void casitaNeverSaysTheDoorIsOpenOnlyThatItIsntClosed() throws Exception {
         String voice = new String(new ClassPathResource("static/voice.js").getContentAsByteArray());
-        assertThat(voice).doesNotContain("\"Open\"").doesNotContain("is open").doesNotContain("fully open\"")
+        // "Open" may label the control (the action); it must never be a door's state ([word, tone] in state()).
+        assertThat(voice).doesNotContain("[\"Open\"").doesNotContain("is open").doesNotContain("fully open\"")
                 .doesNotContain("already open");
     }
 }

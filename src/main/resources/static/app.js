@@ -1,124 +1,164 @@
 "use strict";
-// What the home screen shows and does. Every word comes from voice.js; every rule about the door lives
-// in GarageService on the server, which refuses a second command while one is unchecked (BUSY). This
-// page only offers what /api/doors says is allowed right now, and one tap sends one command.
+// What the home screen shows and does: two doors, each with its own status and one round control. Every
+// word comes from voice.js; every rule about a door lives on the server (GarageService), which refuses a
+// second command while one is unchecked (BUSY). A door's control is enabled only when /api/doors says that
+// door can be commanded right now. A door the server doesn't control stays disabled, with the reason.
 (function () {
   const $ = (id) => document.getElementById(id);
   const POLL_MS = 5000;
-  const FAST_POLL_MS = 1000;      // while a command is out, or the door is moving
+  const FAST_POLL_MS = 1000;      // while a command is out, or a door is moving
   const COMMAND_TIMEOUT_MS = 10000;
   const CHECKS = ["CLOSED_CONFIRMED", "OPEN_INFERRED", "STUCK", "LOST"];
+  const MOVING = ["OPENING", "CLOSING", "CHECKING"];
 
-  let doors = null;
-  let events = [];
+  let doors = null;               // /api/doors
+  let events = [];                // /api/activity, newest first
   let offline = false;
-  let sending = false;
-  let watchAfter = null;          // a command is out: report the first sensor check after this time
-  let resultAt = 0;
   let fastUntil = 0;
   let timer = null;
+  const local = {};               // per door: { sending, watchAfter, resultAt }
 
-  const main = () => doors.doors.find((d) => d.controllable);
+  /* ---------- reading /api/doors (works with the one-controlled-door API and the per-door one) ---------- */
+
+  const keyOf = (d) => d.key || d.name.toLowerCase();
+  const controlOf = (d) => d.control || doors.control;
+  const travelOf = (d) => d.travelTimeSeconds || doors.travelTimeSeconds;
+  const first = () => doors.doors[0];
+  const stateOf = (k) => (local[k] ||= { sending: false, watchAfter: null, resultAt: 0 });
+
+  /** Where a command for this door goes: per-door endpoints when the server has them, else Ford's. */
+  function commandPath(d, action) {
+    return d.key ? `/api/doors/${encodeURIComponent(d.key)}/${action}` : `/api/${action}`;
+  }
+
+  /** Activity for one door. Entries without a door are from the one-controlled-door API: the first door's. */
+  const eventsFor = (d) => events.filter((e) => (e.door ? e.door === keyOf(d) || e.door === d.name : d === first()));
 
   /* ---------- drawing ---------- */
 
   function draw() {
     if (offline || !doors) {
-      // No stale status, Toyota or history while home can't be reached, and nothing to press.
-      const [word, detail] = VOICE.offline;
-      $("door-state").textContent = word;
-      $("door-detail").textContent = detail;
-      $("door").className = "ford quiet offline";
-      $("estimate").classList.remove("shown");
-      $("below").hidden = true;
-      setAct(false, "", VOICE.button.offline);
+      // ET phone home: no stale status, no history, nothing to press.
+      $("doors").hidden = true;
+      $("history-open").hidden = true;
+      $("offline").hidden = false;
+      $("offline-word").textContent = VOICE.offline[0];
+      $("offline-detail").textContent = VOICE.offline[1];
+      $("offline-button").textContent = VOICE.offlineButton;
       return;
     }
-    const ford = main();
-    const status = ford.status;
-    $("below").hidden = false;
-    const [word, tone] = VOICE.state(ford, status.held);
+    $("doors").hidden = false;
+    $("history-open").hidden = false;
+    $("offline").hidden = true;
 
-    $("mode").textContent = VOICE.modes[doors.control] ?? "";
-    $("mode").classList.toggle("shown", !!VOICE.modes[doors.control]);
-    $("door-name").textContent = ford.name;
-    $("door-state").textContent = word;
-    $("door-detail").textContent = VOICE.detail(ford, status.held);
-    $("door").className = "ford " + tone;
-    drawEstimate(ford);
+    const mode = VOICE.modes[doors.control] ?? "";
+    $("mode").textContent = mode;
+    $("mode").classList.toggle("shown", !!mode);
 
-    // Toyota and any other watched door: one quiet, read-only line. Never a button.
-    $("watched").replaceChildren(...doors.doors.filter((d) => !d.controllable).map((d) => {
-      const row = document.createElement("div");
-      row.className = "row";
-      const name = document.createElement("span"); name.textContent = d.name;
-      const state = document.createElement("span"); state.className = "when";
-      state.textContent = VOICE.watched(d.door) + " · view only";
-      row.append(name, state);
-      return row;
-    }));
-
-    // The one action. Real control stays off unless the server says live.
-    const canAct = doors.control === "simulated" || doors.control === "live";
-    const b = VOICE.button;
-    if (sending) setAct(false, "", b.sending);
-    else if (status.held) setAct(true, "resume", b.held);
-    else if (status.canOpen) setAct(canAct, "open", canAct ? b.open(ford.name) : b.openOff);
-    else if (status.canClose) setAct(canAct, "close", canAct ? b.close(ford.name) : b.closeOff);
-    else if (ford.door === "OPENING" || ford.door === "CLOSING") setAct(false, "", word);
-    else if (ford.door === "CHECKING") setAct(false, "", b.checking);
-    else if (ford.door === "UNKNOWN") setAct(false, "", b.cantSee);
-    else setAct(false, "", b.wait);
+    [0, 1].forEach((i) => {
+      const section = $("door-" + i);
+      const d = doors.doors[i];
+      section.hidden = !d;
+      if (d) drawDoor(section, d);
+    });
   }
 
-  /** Travel progress is only an estimate from the configured travel time, labelled so: the sensor can't measure it. */
-  function drawEstimate(ford) {
-    const moving = (ford.door === "OPENING" || ford.door === "CLOSING") && ford.since && !ford.status.held;
-    $("estimate").classList.toggle("shown", !!moving);
-    if (!moving) return;
-    const elapsed = (Date.now() - new Date(ford.since).getTime()) / 1000;
-    const travel = doors.travelTimeSeconds;
-    $("estimate-fill").style.width = Math.max(0, Math.min(100, Math.round((elapsed / travel) * 100))) + "%";
-    $("door-detail").textContent = VOICE.secondsLeft(Math.ceil(travel - elapsed));
-  }
+  function drawDoor(section, d) {
+    if (!section.firstElementChild) section.append($("door-template").content.cloneNode(true));
+    const q = (sel) => section.querySelector(sel);
+    const k = keyOf(d);
+    const me = stateOf(k);
+    const status = d.status;                       // null: the server doesn't control this door
+    const held = !!(status && status.held);
+    const [word, tone] = VOICE.state(d, held);
 
-  function setAct(enabled, action, label) {
-    const act = $("act");
-    act.disabled = !enabled;
-    act.dataset.action = enabled ? action : "";
-    act.className = "act" + (action === "resume" ? " secondary" : "");
-    act.textContent = label;
+    section.className = "door " + tone + (d.controllable ? "" : " unavailable");
+    section.dataset.key = k;
+    q(".name").textContent = d.name;
+    q(".state").textContent = word;
+    q(".detail").textContent = VOICE.detail(d, held);
+
+    // Moving: an estimate from the configured travel time, labelled so. Never a sensor reading.
+    const moving = (d.door === "OPENING" || d.door === "CLOSING") && d.since && !held;
+    q(".estimate").classList.toggle("shown", !!moving);
+    if (moving) {
+      const travel = travelOf(d);
+      const elapsed = (Date.now() - new Date(d.since).getTime()) / 1000;
+      q(".fill").style.width = Math.max(0, Math.min(100, Math.round((elapsed / travel) * 100))) + "%";
+      q(".detail").textContent = VOICE.secondsLeft(Math.ceil(travel - elapsed));
+    }
+
+    // The round control: the door's one action, or disabled with the reason.
+    const control = controlOf(d);
+    const canAct = d.controllable && (control === "simulated" || control === "live" || d.live === true);
+    const go = q(".go");
+    let verb = "", action = "", note = "";
+    if (!d.controllable) {
+      verb = VOICE.control.open;
+      note = VOICE.notSetUp(d.name);
+    } else if (me.sending || MOVING.includes(d.door)) {
+      verb = VOICE.control.busy;
+    } else if (held) {
+      verb = VOICE.control.open;
+    } else if (status.canOpen) {
+      verb = VOICE.control.open; action = canAct ? "open" : "";
+      if (!canAct) note = VOICE.controlOff(d.name);
+    } else if (status.canClose) {
+      verb = VOICE.control.close; action = canAct ? "close" : "";
+      if (!canAct) note = VOICE.controlOff(d.name);
+    } else {
+      verb = d.door === "NOT_CLOSED" ? VOICE.control.close : VOICE.control.open;
+    }
+    go.textContent = verb;
+    go.disabled = !action;
+    go.dataset.action = action;
+    go.setAttribute("aria-label", VOICE.control.label(verb === VOICE.control.busy ? word : verb, d.name));
+    q(".note").textContent = note;
+
+    // After a stuck or lost movement: a person checks the door before it moves again.
+    const checked = q(".checked");
+    checked.hidden = !held;
+    checked.textContent = VOICE.held;
   }
 
   function drawHistory() {
-    const door = doors ? main().name : "Ford";
+    const nameOf = (e) => {
+      const d = e.door ? doors.doors.find((x) => keyOf(x) === e.door || x.name === e.door) : first();
+      return d ? d.name : e.door;
+    };
     const latest = events[0];
-    $("last-event").textContent = latest ? VOICE.event(latest, door) : VOICE.noHistory();
+    $("last-event").textContent = latest ? VOICE.event(latest, nameOf(latest)) : VOICE.noHistory();
     $("last-when").textContent = latest ? VOICE.time(latest.at) : "";
     $("activity").replaceChildren(...events.map((e) => {
       const li = document.createElement("li");
-      const text = document.createElement("span"); text.textContent = VOICE.event(e, door);
+      const text = document.createElement("span"); text.textContent = VOICE.event(e, nameOf(e));
       const when = document.createElement("time"); when.dateTime = e.at; when.textContent = VOICE.time(e.at);
       li.append(text, when);
       return li;
     }));
   }
 
-  /** Once a command is out, say how it ended only when the server's sensor check is in the history. */
-  function reportCheck() {
-    if (!watchAfter) return;
-    const after = new Date(watchAfter).getTime();
-    const check = events.find((e) => CHECKS.includes(e.outcome) && new Date(e.at).getTime() > after);
-    if (check) {
-      showResult(VOICE.checked(check), check.outcome === "STUCK" || check.outcome === "LOST");
-      watchAfter = null;
+  /** Once a command is out, say how it ended only when that door's sensor check is in the history. */
+  function reportChecks() {
+    for (const d of doors.doors) {
+      const me = stateOf(keyOf(d));
+      if (!me.watchAfter) continue;
+      const after = new Date(me.watchAfter).getTime();
+      const check = eventsFor(d).find((e) => CHECKS.includes(e.outcome) && new Date(e.at).getTime() > after);
+      if (check) {
+        showResult(d, VOICE.checked(check), check.outcome === "STUCK" || check.outcome === "LOST");
+        me.watchAfter = null;
+      }
     }
   }
 
-  function showResult(text, alert) {
-    $("result").textContent = text;
-    $("result").classList.toggle("alert", !!alert);
-    resultAt = Date.now();
+  function showResult(d, text, alert) {
+    const section = document.querySelector(`.door[data-key="${CSS.escape(keyOf(d))}"]`);
+    if (!section) return;
+    const result = section.querySelector(".result");
+    result.textContent = text;
+    result.classList.toggle("alert", !!alert);
+    stateOf(keyOf(d)).resultAt = text ? Date.now() : 0;
   }
 
   /* ---------- talking to the server ---------- */
@@ -132,12 +172,17 @@
       offline = true;
     }
     draw();
+    let settled = !offline;
     if (!offline) {
       drawHistory();
-      reportCheck();
+      reportChecks();
+      for (const d of doors.doors) {
+        const me = stateOf(keyOf(d));
+        const doorSettled = !me.watchAfter && !MOVING.includes(d.door);
+        if (doorSettled && me.resultAt && Date.now() - me.resultAt > 20000) showResult(d, "");
+        settled = settled && doorSettled;
+      }
     }
-    const settled = !offline && !watchAfter && !["OPENING", "CLOSING", "CHECKING"].includes(main().door);
-    if (settled && resultAt && Date.now() - resultAt > 20000) { $("result").textContent = ""; resultAt = 0; }
     schedule(settled);
   }
 
@@ -147,16 +192,18 @@
     timer = setTimeout(refresh, !settled || Date.now() < fastUntil ? FAST_POLL_MS : POLL_MS);
   }
 
-  /** One tap, one command. The button is disabled before the request leaves and until the server answers. */
-  async function command(action) {
-    sending = true;
+  /** One tap, one command, for one door. Its control is disabled before the request leaves. */
+  async function command(d, action) {
+    const me = stateOf(keyOf(d));
+    me.sending = true;
+    showResult(d, "");
+    const mine = eventsFor(d);
+    me.watchAfter = mine[0] ? mine[0].at : new Date(0).toISOString();
     draw();
-    $("result").textContent = "";
-    watchAfter = events[0] ? events[0].at : new Date(0).toISOString();
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), COMMAND_TIMEOUT_MS);
     try {
-      const response = await fetch("/api/" + action, {
+      const response = await fetch(commandPath(d, action), {
         method: "POST",
         headers: { Accept: "application/json", ...csrfHeaders() },
         credentials: "same-origin",
@@ -165,36 +212,43 @@
       if (response.status === 401) { window.location.href = "/login"; return; }
       if (!response.ok) throw new Error("HTTP " + response.status);
       const result = await response.json();
-      if (result.outcome === "MOVING") $("result").textContent = "";   // "Opening…" says it; the check follows
-      else if (result.outcome === "UNCONFIRMED") showResult(VOICE.unconfirmed(), true);
-      else { showResult(result.message); watchAfter = null; }   // refused: nothing was sent
+      if (result.outcome === "UNCONFIRMED") showResult(d, VOICE.unconfirmed(), true);
+      else if (result.outcome !== "MOVING") { showResult(d, result.message); me.watchAfter = null; }   // refused: nothing was sent
     } catch (err) {
       // Timed out or lost: the command may or may not have arrived. Keep watching for a check.
-      showResult(VOICE.noAnswer(), true);
+      showResult(d, VOICE.noAnswer(), true);
     } finally {
       clearTimeout(timeout);
-      sending = false;
+      me.sending = false;
       fastUntil = Date.now() + 30000;
       refresh();
     }
   }
 
-  $("act").addEventListener("click", async () => {
-    const action = $("act").dataset.action;
-    if (sending || !action) return;
-    if (action === "resume") {
+  /** Which door a tap inside a door section is for. */
+  function doorFor(el) {
+    const section = el.closest(".door");
+    return section && doors ? doors.doors.find((d) => keyOf(d) === section.dataset.key) : null;
+  }
+
+  $("doors").addEventListener("click", async (e) => {
+    const go = e.target.closest(".go");
+    const checked = e.target.closest(".checked");
+    const d = doorFor(e.target);
+    if (!d) return;
+    if (go && !go.disabled && go.dataset.action && !stateOf(keyOf(d)).sending) {
+      command(d, go.dataset.action);
+    } else if (checked) {
       if (!window.confirm(VOICE.confirmChecked())) return;
-      try { await api("POST", "/api/resume"); } catch (err) { /* refresh shows the state */ }
+      try { await api("POST", commandPath(d, "resume")); } catch (err) { /* refresh shows the state */ }
       refresh();
-      return;
     }
-    command(action);
   });
 
   /* ---------- sheets ---------- */
 
-  document.querySelectorAll("dialog").forEach((d) => {
-    d.addEventListener("click", (e) => { if (e.target === d || e.target.hasAttribute("data-close")) d.close(); });
+  document.querySelectorAll("dialog").forEach((dialog) => {
+    dialog.addEventListener("click", (e) => { if (e.target === dialog || e.target.hasAttribute("data-close")) dialog.close(); });
   });
   $("history-open").addEventListener("click", () => $("history").showModal());
   $("account-open").addEventListener("click", () => $("account").showModal());
@@ -215,14 +269,11 @@
       $("companion-art").src = brand.illustration;
       $("companion-art").alt = brand.companion;
       $("companion").hidden = false;
-      $("stage").classList.add("with-art");
     }
   }
 
   drawBrand();
   api("GET", "/api/brand").then((b) => { VOICE.setBrand(b); drawBrand(); }).catch(() => {});
-  api("GET", "/api/me").then((me) => {
-    $("signed-in").textContent = VOICE.signedIn(me);
-  }).catch(() => {});
+  api("GET", "/api/me").then((me) => { $("signed-in").textContent = VOICE.signedIn(me); }).catch(() => {});
   refresh();
 })();

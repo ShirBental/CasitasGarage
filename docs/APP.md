@@ -17,7 +17,7 @@ disables its action button. Turning it on waits for review.
 | Face ID setup | `/passkey` (Spring's script, Casita's page) |
 | Passkey storage | `FilePasskeyStore`: `<data-dir>/passkeys.json`, public keys only, owner-only file |
 | API | `GarageController`: `/api/doors`, `/api/status`, `/api/open`, `/api/close`, `/api/resume`, `/api/activity`, `/api/me` |
-| Doors shown | `DoorRoster`: Ford (controlled by `GarageService`), Toyota read-only. Channel 3 isn't shown |
+| Doors shown | `DoorRoster`: Ford (controlled by `GarageService`), Toyota shown with its control disabled until the server commands it. Channel 3 isn't shown |
 | Web app | `src/main/resources/static`: `index.html`, `login.html`, `passkey.html`, plain JS and CSS, no build step |
 
 ## Signing in
@@ -86,48 +86,54 @@ casita:
 
 ## The app
 
-One door, one clear status, one action.
+Two doors, one house: Ford above, Toyota below, with equal weight, and Watson between them.
 
-- **Ford** is the focus: its name, the state in large serif type, and one short line. States:
-  *Closed* and *Not closed* ("Since 6:42 PM"), *Opening…* / *Closing…* ("About 6 seconds"),
-  *Checking…*, *Unknown* ("The sensor can't confirm where Ford is."), *Needs a check* (held).
-- **Watson** rests on the divider between Ford's status and Toyota's row, about 200 pt tall on a
-  standard iPhone and scaled down (never hidden) on smaller ones. The slot is
-  `casita.brand.illustration`, a file in `static/brand/`; it stays empty until the approved artwork
-  exists, and the status then sits centred, so nothing looks missing. The art is fitted, never
-  cropped. If the approved pose doesn't rest on a line, its placement is adjusted to the art.
-- **Can't reach home:** "ET phone home" and "Can't reach home. Trying again…", the button *Waiting
-  for connection* (disabled). No stale status, Toyota or history, and nothing is retried on its own.
+- **Each door** has its name, its state in large serif type, one short line, and one round control
+  (72 pt, 66 on a small iPhone) on the right. States: *Closed* and *Not closed* ("Since 6:42 PM"),
+  *Opening…* / *Closing…* ("About 6 seconds"), *Checking…*, *Unknown* ("The sensor can't confirm
+  where Ford is."), *Needs a check* (held).
+- **Which doors can be commanded comes from the server.** A door's control is enabled only when
+  `/api/doors` reports it `controllable` and its control is `simulated` or `live`. Otherwise it is
+  disabled and says why: *Toyota control not set up yet* (the server doesn't command Toyota), or
+  *… control is off*. Today the server commands Ford only, so Toyota's control is in place but
+  disabled. Toyota commands are separate work (per-door endpoints, each door run separately,
+  Ford's safety rules), reviewed on their own; once the server reports Toyota controllable, its
+  control works with no page change, and on a real door only when the server reports it live.
+- **Watson** peeks over the hairline between the doors, chin on the line: the approved
+  illustration (`casita.brand.illustration`, `static/brand/watson-home.webp`, 4:3, transparent),
+  about half the screen wide and at most 220 pt (197 pt on a standard iPhone, 188 on an SE). It is
+  fitted, never cropped, and never overlaps a door's status or control. Without it configured, the
+  page shows no illustration and no placeholder.
+- **Can't reach home:** "ET phone home" and "Can't reach home. Trying again…", with *Waiting for
+  connection* in place of both doors. No stale status or history, nothing to press, nothing retried.
 - **Measured versus estimated.** The sensor measures only closed / not closed, so the app never says
-  *Open* or how far up a door is. While Ford moves, "About X seconds" and a dashed bar labelled
-  *Estimated* come from `casita.garage.travel-time` (`/api/doors` `travelTimeSeconds`), not the sensor.
-- **The action** is one tap on one button in the thumb zone: *Open Ford* when closed, *Close Ford*
-  when it may close. Press-and-hold and any confirmation step are gone. Safeguards:
-  - each button calls one explicit endpoint (`/api/open` or `/api/close`), never a toggle, so a
-    repeated or late tap can't turn into the opposite command;
-  - the button is disabled before the request leaves, until the server answers, and while the
-    server reports the door moving or being checked;
+  *Open* as a state or how far up a door is. While a door moves, "About X seconds" and a dashed bar
+  labelled *Estimated* come from the configured travel time, not the sensor.
+- **One tap per door**, no hold and no confirmation. Safeguards:
+  - each control calls one explicit endpoint for its door (`/api/open` or `/api/close` for Ford;
+    `/api/doors/{door}/open` or `/close` once the server has per-door endpoints), never a toggle;
+  - a door's control is disabled before its request leaves, until the server answers, and while the
+    server reports that door moving or being checked; the other door stays usable;
   - the server refuses any command while one is unchecked (`BUSY`), and never sends toward the state
-    the sensor already reads (`ALREADY`). Simultaneous taps from several phones move the door once
-    (`GarageControllerTest`);
-  - a request that times out (10 s) or is lost is reported as "may or may not have arrived", and
-    nothing else is offered until the server's sensor check.
-- **Success waits for the sensor.** "✓ Sensor confirmed closed" (or "not closed") appears only once
-  `GarageService`'s check is in the history. An unconfirmed or timed-out command says so in one line.
-- **Held:** after a stuck or lost movement the button becomes *I've checked the door*, which asks
-  for confirmation and calls `/api/resume`.
-- **Toyota:** one quiet line, "Toyota · Closed · view only". Never a button.
+    the sensor already reads (`ALREADY`); simultaneous taps move the door once (`GarageControllerTest`);
+  - a request that times out (10 s) or is lost is reported as "may or may not have arrived".
+- **Success waits for the sensor.** "✓ Sensor confirmed closed" (or "not closed") appears under a
+  door only once that door's check is in the history.
+- **Held:** after a stuck or lost movement, *I've checked the door* appears under that door; it asks
+  for confirmation and calls resume.
 - **History** is one tap away: the last event is a row; tapping it opens a sheet with the rest.
 - **Account:** a person icon (top right) opens a sheet: who's signed in (and on which device, once
-  device access lands), sign out, and the family's line. Watson appears once, on the home screen.
-- **Mode tag:** *Practice door* (simulated), *Door control off*, *Rehearsal* (dry run). In off and
-  dry-run the button is disabled.
+  device access lands), sign out, and the family's line.
+- **Mode tag:** *Practice door* (simulated), *Door control off*, *Rehearsal* (dry run).
+- **App icon:** the approved sage Watson icon (`static/icons/`), in the manifest and as the
+  `apple-touch-icon`. iOS fetches it before sign-in, so `/icons/**` must be public: that is in
+  `SecurityConfig` (PR #8).
 - **Look:** the approved palette, defined once at the top of `casita.css`: sage `#6B7F6B`,
-  terracotta `#C65A3A` (only the action), warm cream `#F8F4ED`, deep pine `#2E4A3F`, soft sand
-  `#D9C9B5`, plus darker shades where text needs AA contrast. Serif for the state and headings, the
-  system font for the rest. No cards or shadows; Watson's illustration is the only picture.
-- **iPhone:** safe areas on all sides, 44 pt+ targets, a 60 pt action button, sheets from the bottom.
-  *Reduce Motion* turns off transitions.
+  terracotta `#C65A3A` (only the active controls), warm cream `#F8F4ED`, deep pine `#2E4A3F`, soft
+  sand `#D9C9B5`, plus darker shades where text needs AA contrast. Serif for states and headings,
+  the system font for the rest. No cards, boxes or shadows.
+- **iPhone:** safe areas on all sides, 44 pt+ targets, both doors on screen without scrolling on a
+  375×667 iPhone, sheets from the bottom. *Reduce Motion* turns off transitions.
 
 Run it on the practice door:
 
