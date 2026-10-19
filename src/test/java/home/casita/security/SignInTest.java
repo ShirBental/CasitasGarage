@@ -87,6 +87,11 @@ class SignInTest {
         for (String asset : new String[] {"/login.js", "/common.js", "/casita.css", "/watson.svg"}) {
             mvc.perform(get(asset)).andExpect(status().isOk());
         }
+        // The app icons too (iOS fetches them without the session cookie), and nothing else under /icons.
+        for (String icon : new String[] {"/icons/apple-touch-icon.png", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png"}) {
+            mvc.perform(get(icon)).andExpect(status().isOk()).andExpect(content().contentType("image/png"));
+        }
+        mvc.perform(get("/icons/")).andExpect(status().is3xxRedirection());
         mvc.perform(get("/login/webauthn.js")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("setupLogin")));
     }

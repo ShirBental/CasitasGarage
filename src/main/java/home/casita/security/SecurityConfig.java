@@ -169,7 +169,9 @@ class SecurityConfig {
                         .requestMatchers("/healthz", "/error").permitAll()
                         // The sign-in page and what it needs; nothing about the door.
                         .requestMatchers("/login", "/login.html", "/login.js", "/login/webauthn.js", "/common.js", "/casita.css",
-                                "/watson.svg", "/manifest.webmanifest", "/passkey.html", "/passkey.js")
+                                "/watson.svg", "/manifest.webmanifest", "/passkey.html", "/passkey.js",
+                                // App icons: iOS fetches them for Add to Home Screen without the session cookie.
+                                "/icons/*.png")
                         .permitAll()
                         // Where Spring's passkey script lands after setting one up: a static page, no data.
                         .requestMatchers(path.matcher(HttpMethod.GET, "/webauthn/register")).permitAll()
