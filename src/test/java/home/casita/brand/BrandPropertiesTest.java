@@ -11,16 +11,23 @@ class BrandPropertiesTest {
 
     @Test
     void noIllustrationUntilTheApprovedArtworkIsConfigured() {
-        assertThat(new BrandProperties("", "Watson", "", "").illustration()).isEmpty();
+        assertThat(new BrandProperties("", "Watson", "", "Casita", "", "").illustration()).isEmpty();
     }
 
     @Test
     void theIllustrationIsAFileInTheBrandFolder() {
-        assertThat(new BrandProperties("", "Watson", "", "/brand/watson-home.png").illustration()).isEqualTo("/brand/watson-home.png");
+        assertThat(new BrandProperties("", "Watson", "", "Casita", "/brand/watson-home.png", "").illustration()).isEqualTo("/brand/watson-home.png");
         for (String bad : new String[] {"https://example.com/dog.png", "//example.com/dog.png", "/brand/../login.js",
                 "watson.png", "/watson.svg", "/brand/watson.gif", "javascript:alert(1)"}) {
-            assertThatThrownBy(() -> new BrandProperties("", "Watson", "", bad)).as(bad).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> new BrandProperties("", "Watson", "", "Casita", bad, "")).as(bad).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> new BrandProperties("", "Watson", "", "Casita", "", bad)).as(bad).isInstanceOf(IllegalArgumentException.class);
         }
+    }
+
+    @Test
+    void theHeaderNameIsTheFamilysAndNeverBlank() {
+        assertThat(new BrandProperties("", "Watson", "", "Bental's Casita", "", "").appName()).isEqualTo("Bental's Casita");
+        assertThatThrownBy(() -> new BrandProperties("", "Watson", "", " ", "", "")).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

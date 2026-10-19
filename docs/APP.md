@@ -106,7 +106,15 @@ with equal weight.
   screen wide and at most 236 pt (176 on an SE). It is fitted, never cropped. A quarter of the spare
   height goes above him and the rest below the doors, so the group sits high. Without the
   illustration configured, the page shows none and no placeholder.
-- **Can't reach home:** "ET phone home" and "Can't reach home. Trying again…", with *Waiting for
+- **Watson gets excited** while either door is opening or closing, as the server reports it: an excited
+  version of the same character (`casita.brand.illustration-excited`, same canvas, size and
+  alignment) cross-fades over the idle one in about 300 ms, instantly with *Reduce Motion*, and back
+  when both doors have settled. It never comes from a tap, a pending request or a guess, and his
+  expression is decoration, never evidence of what a door is doing. Without the excited art
+  configured, Watson doesn't change.
+- **Header:** the family's name for the app, `casita.brand.app-name` ("Bental's Casita"); the sign-in
+  page stays "Casita".
+ "ET phone home" and "Can't reach home. Trying again…", with *Waiting for
   connection* in place of both doors. No stale status or history, nothing to press, nothing retried.
 - **Measured versus estimated.** The sensor measures only closed / not closed, so the app never says
   *Open* as a state or how far up a door is. While a door moves, "About X seconds" and a dashed bar
@@ -159,7 +167,9 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev \
       household: wild ones   # "For the wild ones." in the account sheet; empty hides it
       companion: Watson      # the dog's name, for copy that mentions him
       about-line: ""         # one quiet line in the account sheet; empty hides it
+      app-name: "Bental's Casita"  # the home screen's header
       illustration: ""       # Watson's approved home-screen art, e.g. /brand/watson-home.png; empty: none
+      illustration-excited: ""  # the excited Watson for moving doors, same canvas; empty: he doesn't change
   ```
 
 ### Watson and the app icon (waiting for the artwork)

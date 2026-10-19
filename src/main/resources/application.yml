@@ -31,9 +31,14 @@ casita:
     companion: Watson
     # One quiet line in the account sheet, e.g. "Your little corner of the wild world.". Empty hides it.
     about-line: ""
+    # The name in the home screen's header.
+    app-name: "Bental's Casita"
     # Watson's approved illustration on the home screen, resting on the divider between the doors: a file
     # in static/brand/. Empty shows no illustration and no placeholder.
     illustration: /brand/watson-home.webp
+    # The same Watson, excited, shown while a door is opening or closing (the server's movement state, never
+    # a guess). Same canvas, size and alignment as illustration. Empty: Watson doesn't change.
+    illustration-excited: ""
   # Which door Casita talks to: 'simulated' (pretend door) or 'meross' (the real one).
   door: simulated
   security:

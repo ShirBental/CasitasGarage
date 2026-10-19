@@ -113,9 +113,15 @@ h1, h2 { font-weight: 600; margin: 0; }
 /* Watson: the approved art (4:3, transparent), chin on the line above Ford. About 60% of the screen wide,
    at most 236 pt (the art is 720 px, so it stays sharp at 3x); fitted, never cropped. Its top quarter is
    transparent, so it tucks a little under the space above. Hidden, with no stand-in, until configured. */
-.companion { margin: -12px 0 0; display: flex; justify-content: center; }
+.companion { position: relative; margin: -12px auto 0; width: clamp(150px, 60vw, 236px); }
 .companion[hidden] { display: none; }
-.companion img { display: block; width: clamp(150px, 60vw, 236px); height: auto; aspect-ratio: 4 / 3; object-fit: contain; object-position: bottom; }
+.companion img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: contain; object-position: bottom; }
+/* Excited Watson sits exactly over idle Watson; a door moving cross-fades between them in about 300 ms. */
+.companion img { transition: opacity 0.3s var(--ease); }
+.companion .excited { position: absolute; inset: 0; opacity: 0; }
+.companion .excited[hidden] { display: none; }
+.companion.is-excited .excited:not([hidden]) { opacity: 1; }
+.companion.is-excited:has(.excited:not([hidden])) #companion-art { opacity: 0; }
 .hairline { height: 1px; background: var(--hairline); }
 
 /* ET phone home: in place of both doors, with nothing to press. */
@@ -202,10 +208,10 @@ button.row .when::after { content: "›"; margin-left: 8px; font-size: 1.2rem; c
   .door .name { font-size: 2rem; }
   .door .state { font-size: 1.2rem; margin-top: 6px; }
   .go { width: 62px; height: 62px; }
-  .companion img { width: 176px; }
+  .companion { width: 176px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .go, .estimate .fill { transition: none; }
+  .go, .estimate .fill, .companion img { transition: none; }
   .sheet[open] { animation: none; }
 }

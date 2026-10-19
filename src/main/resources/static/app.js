@@ -40,6 +40,7 @@
     if (offline || !doors) {
       // ET phone home: no stale status, no history, nothing to press.
       $("doors").hidden = true;
+      $("companion").classList.remove("is-excited");
       $("spare-above").hidden = $("spare-below").hidden = true;
       $("history-open").hidden = true;
       $("offline").hidden = false;
@@ -63,6 +64,10 @@
       section.hidden = !d;
       if (d) drawDoor(section, d);
     });
+
+    // Watson gets excited while any door is opening or closing, as the server reports it: never from a tap,
+    // a pending request or a guess. His expression is decoration, never evidence of what a door is doing.
+    $("companion").classList.toggle("is-excited", doors.doors.some((d) => d.door === "OPENING" || d.door === "CLOSING"));
   }
 
   function drawDoor(section, d) {
@@ -267,10 +272,18 @@
     $("about").textContent = VOICE.about();
     // The companion's approved illustration, once casita.brand.illustration names it. No stand-in before that.
     const brand = VOICE.brand();
+    if (brand.appName) {
+      $("app-name").textContent = brand.appName;
+      document.title = brand.appName;
+    }
     if (brand.illustration) {
       $("companion-art").src = brand.illustration;
       $("companion-art").alt = brand.companion;
       $("companion").hidden = false;
+      if (brand.illustrationExcited) {
+        $("companion-excited").src = brand.illustrationExcited;
+        $("companion-excited").hidden = false;
+      }
     }
   }
 
