@@ -87,12 +87,13 @@ casita:
     doors:
       1: Ford
       2: Toyota
-    # channel: 1 or 2 (CASITA_MEROSS_CHANNEL); required with the real door
 ```
 
-`casita.meross.channel` must be one of `doors` when doors are listed. With `casita.door=meross`
-and several doors but no channel, Casita refuses to start. Casita's garage logic drives one door,
-so one instance reads one of these; driving both from one instance is a separate change.
+Every listed door is read on its own channel and has its own `GarageService`: its own movement,
+settle watch, hold and resume, and its own activity entries (each names its door). Ford's movement
+never makes Toyota busy, and a stuck Toyota never holds Ford. Channel 3 isn't listed, so it is never
+shown or driven. `casita.meross.channel` is only needed for an opener with no doors listed (an MSG100);
+if set alongside `doors` it must be one of them, and it changes nothing.
 
 | Fact | Status |
 |---|---|
@@ -119,7 +120,8 @@ so one instance reads one of these; driving both from one instance is a separate
 - **Open (2026-10-15):** one `SET`, `SETACK` received, sensor not closed afterwards, door seen fully open.
 - **Close (2026-10-16):** Ford watched not closed for the travel time (20 s), then one `SET`; `SETACK` received, sensor closed afterwards, recorded `MOVING` then `CLOSED_CONFIRMED`.
 
-Each sent exactly one `SET`, with no retry. Toyota and channel 3 have not been sent a command.
+Each sent exactly one `SET`, with no retry. Toyota and channel 3 have not been sent a command; Toyota's
+first commands are the supervised test in "Toyota (channel 2)" below.
 
 | Fact | Status |
 |---|---|
@@ -134,8 +136,10 @@ How Casita sends one (`MerossDoor.command`), in order; anything failing before t
 nothing was sent:
 
 1. `casita.meross.command-mode` is `dry-run` or `live`. The default is `"off"`.
-2. The opener is found and the channel is configured and listed in `casita.meross.command-channels`
-   (`[1]`: Ford only). Toyota (2) and the disabled channel 3 can't be sent anything.
+2. The opener is found and the door's channel is listed in `casita.meross.command-channels`, the
+   per-door switch (`[1]`: Ford only). Toyota (2) can't be sent anything until it is added, and the
+   disabled channel 3 never. A door that isn't listed is refused by its `GarageService` before any
+   check or send (`DISABLED`), and `/api/doors` reports it `"control": "off", "live": false`.
 3. The door is read again, right then: it must be enabled and report the opposite of the target.
 4. **Dry run:** the signed SET is built, the connection is checked, nothing is published, and the
    command is rejected ("nothing was sent"). **Live:** the SET is sent once, QoS 0, never retried.
@@ -152,11 +156,21 @@ Settings:
 casita:
   meross:
     command-mode: "off"     # "off" | dry-run | live; quote "off" (YAML reads a bare off as false)
-    command-channels: [1]   # Ford only
-    channel: 1              # live needs the channel set and listed in command-channels
+    command-channels: [1]   # the per-door switch: Ford only
 ```
 
-Live tests (`MerossLiveCommandTest`, Ford only):
+Per door, the control is `command-mode` if the door's channel is in `command-channels`, otherwise off:
+
+| `command-mode` | `command-channels` | Ford | Toyota |
+|---|---|---|---|
+| `"off"` | anything | off | off |
+| `dry-run` | `[1]` | dry-run | off |
+| `live` | `[1]` | **live** | off |
+| `live` | `[1, 2]` | **live** | **live** (only after its test, below) |
+
+`/api/doors` reports each door's `control` and `live`, so the app shows real control only where it is.
+
+Live tests (`MerossLiveCommandTest`) for Ford; Toyota's are in "Toyota (channel 2)" below:
 
 ```bash
 # Dry run: GETs only; checks on the MQTT connection that no SET was published.
@@ -168,6 +182,67 @@ mvn test -Dtest=MerossLiveCommandTest#dryRunForFordBuildsTheCommandAndPublishesN
 mvn test -Dtest=MerossLiveCommandTest#confirmedOpenOfFord -Dmeross.live=true -Dmeross.command.confirm=open-ford-channel-1-YYYY-MM-DD
 mvn test -Dtest=MerossLiveCommandTest#confirmedCloseOfFord -Dmeross.live=true -Dmeross.command.confirm=close-ford-channel-1-YYYY-MM-DD
 ```
+
+## Toyota (channel 2)
+
+**Status: commands off.** Toyota has never been sent a command. Casita reads it, shows it, and refuses
+every command to it (`DISABLED`) until channel 2 is in `casita.meross.command-channels`. It follows
+exactly Ford's rules: its own `GarageService`, read first, only toward the opposite of a settled reading,
+one movement at a time, unknown outcomes are not failures, no retries, held after stuck or lost until
+someone resumes it (`POST /api/doors/toyota/resume`).
+
+### How channel 2 gets enabled
+
+Only after the hardware test below has passed with someone watching, and with the user's go-ahead:
+
+1. If Toyota's measured travel time differs from `casita.garage.travel-time`, give it its own:
+   `casita.garage.travel-times.Toyota: <seconds>s`. Casita settles and checks Toyota on that time.
+2. Add channel 2 to the switch in the deployed configuration: `casita.meross.command-channels: [1, 2]`
+   (`CASITA_MEROSS_COMMANDCHANNELS=1,2`). With `command-mode: live`, Toyota is then live.
+3. Restart, and check `GET /api/doors`: Toyota `"control": "live", "live": true`; Ford unchanged.
+4. The first Toyota command from the app is made with someone at the garage.
+
+To switch Toyota off again, remove 2 from `command-channels` and restart. Nothing else changes for Ford.
+
+### Hardware test plan (needs the user's approval; not yet run)
+
+Modelled on the Ford close test (2026-10-16). One door per run: every command in it is for channel 2,
+and channel 1 isn't in its command channels, so Ford can't be sent anything. The deployed app stays as
+it is (Toyota off) throughout; the test runs from a laptop with `MerossLiveCommandTest`.
+
+**Before starting**
+
+- Someone at the garage, watching Toyota, the doorway clear, with the wall button or remote in hand.
+- Ford closed, and nobody operating Ford (from the app or by hand) during the test.
+- Stop at the first surprise: any failed assertion, an `UNCONFIRMED`, `STUCK` or `LOST`, a door moving
+  that shouldn't, or Ford changing at all. Don't retry; use the wall button, and write down what happened.
+
+**Steps**
+
+0. *Read only.* `MEROSS_DOORS=2:Toyota mvn test -Dtest=MerossLiveCheckTest -Dmeross.live=true`: channel 2
+   is enabled and reads closed. Open and close Toyota with its own remote while re-running it: it reads
+   not closed, then closed. **Time Toyota's travel** both ways with a stopwatch; take the longer and round
+   up: that is `T` (seconds).
+1. *Dry run (GETs only).*
+   `mvn test -Dtest=MerossLiveCommandTest#dryRunForToyotaBuildsTheCommandAndPublishesNoSet -Dmeross.live=true`.
+   Expect: the built `SET` names `channel: 2`, only `GET`s published, Toyota unchanged.
+2. *One open.* Toyota closed.
+   `MEROSS_TRAVEL_SECONDS=T mvn test -Dtest=MerossLiveCommandTest#confirmedOpenOfToyota -Dmeross.live=true -Dmeross.command.confirm=open-toyota-channel-2-YYYY-MM-DD`.
+   Expect: exactly one `SET`, naming channel 2; `SETACK`; recorded `MOVING` then `OPEN_INFERRED`; Toyota
+   seen fully open; Ford still closed.
+3. *One close.* Toyota open from step 2.
+   `MEROSS_TRAVEL_SECONDS=T mvn test -Dtest=MerossLiveCommandTest#confirmedCloseOfToyota -Dmeross.live=true -Dmeross.command.confirm=close-toyota-channel-2-YYYY-MM-DD`.
+   It watches Toyota not closed for `T` first (if it ever reads closed, nothing is sent), then exactly one
+   `SET` naming channel 2. Expect: `SETACK`; recorded `MOVING` then `CLOSED_CONFIRMED`; Toyota seen closed.
+4. Record the results here, as for Ford (date, `T`, the outcomes), then decide on enabling (above).
+
+Each confirmation names its action, Toyota, channel 2 and the date, so it can't be reused for Ford,
+another day or the other direction; Toyota's tests also refuse to run without `MEROSS_TRAVEL_SECONDS`.
+
+**Not covered by this test:** both doors moving at once. Each `GarageService` allows it, and every
+acknowledgement is checked against its own channel, but how our MSG200 handles two doors moving
+together hasn't been seen. Worth watching the first time it happens, or testing on purpose once
+Toyota is enabled.
 
 ## Local credentials
 

@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import home.casita.garage.ActivityEvent;
 import home.casita.garage.CommandResult;
 import home.casita.garage.DoorCommandRejectedException;
+import home.casita.garage.DoorControl;
 import home.casita.garage.DoorException;
 import home.casita.garage.GarageProperties;
 import home.casita.garage.GarageService;
@@ -26,8 +27,8 @@ import home.casita.meross.MerossDoorTest.FakeTransport;
 import home.casita.meross.MerossException.Kind;
 
 /**
- * The command path, against a fake transport: nothing here reaches Meross. Ford is channel 1 and the
- * only door commands may go to; Toyota (2) and the disabled channel 3 must never be sent one.
+ * The command path, against a fake transport: nothing here reaches Meross. Ford is channel 1 and Toyota
+ * channel 2; a door is sent a command only when its channel is allowed, and the disabled channel 3 never.
  */
 class MerossDoorCommandTest {
 
@@ -105,6 +106,68 @@ class MerossDoorCommandTest {
             assertThatThrownBy(() -> door(TOYOTA, mode, FORD_ONLY).command(true))
                     .isInstanceOf(DoorCommandRejectedException.class).hasMessageContaining("channel 2 aren't allowed");
         }
+        assertThat(transport.sent).isEmpty();
+    }
+
+    /* ---------- Toyota (channel 2), once switched on: the same rules as Ford ---------- */
+
+    @Test
+    void toyotaSwitchedOnIsOffUntilTheModeSaysOtherwise() {
+        doors(0, 0);
+
+        assertThatThrownBy(() -> door(TOYOTA, CommandMode.OFF, Set.of(FORD, TOYOTA)).command(true))
+                .isInstanceOf(DoorCommandRejectedException.class).hasMessageContaining("command-mode");
+        assertThat(transport.sent).isEmpty();
+    }
+
+    @Test
+    void toyotaDryRunReadsAndBuildsChannel2AndPublishesNothing() {
+        doors(0, 0);
+
+        assertThatThrownBy(() -> door(TOYOTA, CommandMode.DRY_RUN, Set.of(TOYOTA)).command(true))
+                .isInstanceOf(DoorCommandRejectedException.class).hasMessageContaining("Dry run").hasMessageContaining("channel 2");
+        assertThat(transport.sent).containsExactly("GET door-200 Appliance.System.All",
+                "DRYRUN door-200 Appliance.GarageDoor.State {state={channel=2, open=1, uuid=door-200}}");
+        assertThat(transport.sets()).isZero();
+    }
+
+    @Test
+    void toyotaLiveSendsExactlyOneSetNamingChannel2AndNeverFord() throws Exception {
+        doors(1, 0); // Ford open: Toyota's command must not touch it
+        transport.ack = Map.of("state", Map.of("channel", 2, "open", 0, "execute", 1));
+
+        door(TOYOTA, CommandMode.LIVE, Set.of(TOYOTA)).command(true);
+
+        assertThat(transport.sent).containsExactly("GET door-200 Appliance.System.All",
+                "SET door-200 Appliance.GarageDoor.State {state={channel=2, open=1, uuid=door-200}}");
+    }
+
+    @Test
+    void toyotaIsReadOnItsOwnChannelBeforeACommand() {
+        doors(0, 1); // Ford closed, Toyota not closed: an open to Toyota would be toward its own state
+
+        assertThatThrownBy(() -> door(TOYOTA, CommandMode.LIVE, Set.of(TOYOTA)).command(true))
+                .isInstanceOf(DoorCommandRejectedException.class).hasMessageContaining("channel 2 already reports not closed");
+        assertThat(transport.sets()).isZero();
+    }
+
+    @Test
+    void anAcknowledgementForFordAfterAToyotaCommandIsAnUnknownOutcome() {
+        doors(0, 0);
+        transport.ack = Map.of("state", Map.of("channel", 1, "open", 0, "execute", 1));
+
+        assertThatThrownBy(() -> door(TOYOTA, CommandMode.LIVE, Set.of(TOYOTA)).command(true))
+                .isNotInstanceOf(DoorCommandRejectedException.class)
+                .isInstanceOfSatisfying(MerossException.class, e -> assertThat(e.kind()).isEqualTo(Kind.PROTOCOL));
+        assertThat(transport.sets()).isOne();
+    }
+
+    @Test
+    void fordIsNeverSentACommandWhileOnlyToyotaIsAllowed() {
+        doors(0, 0);
+
+        assertThatThrownBy(() -> door(FORD, CommandMode.LIVE, Set.of(TOYOTA)).command(true))
+                .isInstanceOf(DoorCommandRejectedException.class).hasMessageContaining("channel 1 aren't allowed");
         assertThat(transport.sent).isEmpty();
     }
 
@@ -230,19 +293,42 @@ class MerossDoorCommandTest {
 
     @Test
     void theLiveCommandTestNeedsAConfirmationNamingTheActionFordChannel1AndToday() {
-        String previous = System.getProperty("meross.command.confirm");
-        try {
+        withConfirmation(() -> {
             System.clearProperty("meross.command.confirm");
-            assertThat(MerossLiveCommandTest.confirmedAction()).isNull();
+            assertThat(MerossLiveCommandTest.confirmedAction(FORD)).isNull();
             for (String wrong : List.of("yes", "open", "open-ford-channel-1", "open-toyota-channel-2-" + java.time.LocalDate.now(),
                     "open-ford-channel-3-" + java.time.LocalDate.now(), "open-ford-channel-1-" + java.time.LocalDate.now().minusDays(1))) {
                 System.setProperty("meross.command.confirm", wrong);
-                assertThat(MerossLiveCommandTest.confirmedAction()).as(wrong).isNull();
+                assertThat(MerossLiveCommandTest.confirmedAction(FORD)).as(wrong).isNull();
             }
             System.setProperty("meross.command.confirm", "open-ford-channel-1-" + java.time.LocalDate.now());
-            assertThat(MerossLiveCommandTest.confirmedAction()).isEqualTo("open");
+            assertThat(MerossLiveCommandTest.confirmedAction(FORD)).isEqualTo("open");
             System.setProperty("meross.command.confirm", "close-ford-channel-1-" + java.time.LocalDate.now());
-            assertThat(MerossLiveCommandTest.confirmedAction()).isEqualTo("close");
+            assertThat(MerossLiveCommandTest.confirmedAction(FORD)).isEqualTo("close");
+        });
+    }
+
+    @Test
+    void theToyotaLiveTestNeedsItsOwnConfirmationNamingToyotaChannel2AndToday() {
+        withConfirmation(() -> {
+            System.clearProperty("meross.command.confirm");
+            assertThat(MerossLiveCommandTest.confirmedAction(TOYOTA)).isNull();
+            // Ford's confirmation never moves Toyota, nor a wrong channel, nor another day.
+            for (String wrong : List.of("open-ford-channel-1-" + java.time.LocalDate.now(), "open-toyota-channel-1-" + java.time.LocalDate.now(),
+                    "open-toyota-channel-2", "open-toyota-channel-2-" + java.time.LocalDate.now().minusDays(1))) {
+                System.setProperty("meross.command.confirm", wrong);
+                assertThat(MerossLiveCommandTest.confirmedAction(TOYOTA)).as(wrong).isNull();
+            }
+            System.setProperty("meross.command.confirm", "close-toyota-channel-2-" + java.time.LocalDate.now());
+            assertThat(MerossLiveCommandTest.confirmedAction(TOYOTA)).isEqualTo("close");
+            assertThat(MerossLiveCommandTest.confirmedAction(FORD)).isNull();
+        });
+    }
+
+    private static void withConfirmation(Runnable test) {
+        String previous = System.getProperty("meross.command.confirm");
+        try {
+            test.run();
         } finally {
             if (previous == null) System.clearProperty("meross.command.confirm");
             else System.setProperty("meross.command.confirm", previous);
@@ -255,7 +341,7 @@ class MerossDoorCommandTest {
     void anAcknowledgedOpenWhoseSensorNeverChangesEndsStuckNotDone() {
         doors(0, 0);
         transport.ack = Map.of("state", Map.of("channel", 1, "open", 0, "execute", 1));
-        Rig rig = new Rig(door(FORD, CommandMode.LIVE, FORD_ONLY));
+        Rig rig = new Rig(door(FORD, CommandMode.LIVE, FORD_ONLY), DoorControl.LIVE);
 
         CommandResult result = rig.service.open("Shir");
 
@@ -274,21 +360,21 @@ class MerossDoorCommandTest {
     void anAcknowledgedOpenIsConfirmedOnlyByTheSensorAfterwards() {
         doors(0, 0);
         transport.ack = Map.of("state", Map.of("channel", 1, "open", 0, "execute", 1));
-        Rig rig = new Rig(door(FORD, CommandMode.LIVE, FORD_ONLY));
+        Rig rig = new Rig(door(FORD, CommandMode.LIVE, FORD_ONLY), DoorControl.LIVE);
 
         rig.service.open("Shir");
         doors(1, 0); // the sensor changes
         rig.runDueChecks();
 
         assertThat(rig.outcomes()).containsExactly(Outcome.MOVING, Outcome.OPEN_INFERRED); // judged by the sensor, recorded
-        assertThat(rig.notifications).anyMatch(n -> n.startsWith("Opening the garage"));
+        assertThat(rig.notifications).anyMatch(n -> n.startsWith("Opening the Ford door"));
         assertThat(rig.notifications).noneMatch(n -> n.contains("didn't open"));
     }
 
     @Test
     void inDryRunGarageServiceReportsThatNothingWasSent() {
         doors(0, 0);
-        Rig rig = new Rig(door(FORD, CommandMode.DRY_RUN, FORD_ONLY));
+        Rig rig = new Rig(door(FORD, CommandMode.DRY_RUN, FORD_ONLY), DoorControl.DRY_RUN);
 
         CommandResult result = rig.service.open("Shir");
 
@@ -304,8 +390,8 @@ class MerossDoorCommandTest {
         final List<Runnable> due = new ArrayList<>();
         final GarageService service;
 
-        Rig(MerossDoor door) {
-            service = new GarageService(door, activity, notifications::add, (when, task) -> due.add(task),
+        Rig(MerossDoor door, DoorControl control) {
+            service = new GarageService("Ford", door, control, activity, notifications::add, (when, task) -> due.add(task),
                     Clock.fixed(Instant.parse("2026-10-16T12:00:00Z"), ZoneOffset.UTC),
                     new GarageProperties(Duration.ofSeconds(10), Duration.ofSeconds(2), true));
         }

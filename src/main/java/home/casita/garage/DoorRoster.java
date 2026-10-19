@@ -1,22 +1,42 @@
 package home.casita.garage;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
- * The doors the app shows: the one {@link GarageService} controls, and others it only watches (Toyota,
- * until its commands are tested). Watched doors are read, never sent a command.
- *
- * @param controlled the name of the door GarageService drives
- * @param control    how commands reach that door: {@code simulated}, or the Meross command mode
- *                   ({@code off}, {@code dry-run}, {@code live})
- * @param watched    doors shown read-only
+ * The doors Casita drives, in the order the app shows them (Ford first). Each gets its own
+ * {@link GarageService}: its own movement, hold and activity. How commands reach each door is decided per
+ * door ({@link DoorControl}), so Toyota's live commands can stay off while Ford's are on.
  */
-public record DoorRoster(String controlled, String control, List<Watched> watched) {
+public record DoorRoster(List<Door> doors) {
 
-    /** A door the app reads and never commands. */
-    public record Watched(String name, DoorDevice door) {}
+    /**
+     * @param name    the door's name, as people say it (Ford, Toyota)
+     * @param device  the door itself
+     * @param control how its commands are handled
+     */
+    public record Door(String name, DoorDevice device, DoorControl control) {
+
+        /** The door in API paths: its name in lower case ({@code /api/doors/toyota/open}). */
+        public String key() {
+            return key(name);
+        }
+
+        static String key(String name) {
+            return name.trim().toLowerCase(Locale.ROOT);
+        }
+    }
 
     public DoorRoster {
-        watched = List.copyOf(watched);
+        doors = List.copyOf(doors);
+        if (doors.isEmpty()) throw new IllegalArgumentException("Casita needs at least one door");
+        Set<String> keys = new HashSet<>();
+        for (Door door : doors) {
+            if (door.name() == null || door.name().isBlank() || !keys.add(door.key())) {
+                throw new IllegalArgumentException("Every door needs its own name, but got " + doors.stream().map(Door::name).toList());
+            }
+        }
     }
 }

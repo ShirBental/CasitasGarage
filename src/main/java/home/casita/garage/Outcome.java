@@ -19,7 +19,7 @@ public enum Outcome {
     UNKNOWN,
     /** The command was definitely not sent; nothing moved. */
     ERROR,
-    /** Closing from the app is switched off in configuration. */
+    /** This door's commands, or closing from the app, are switched off in configuration; nothing was sent. */
     DISABLED,
     /** Check after a close: the sensor reports closed. Proven by the sensor. */
     CLOSED_CONFIRMED,
