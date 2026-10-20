@@ -187,8 +187,9 @@ class SecurityConfig {
                         .requestMatchers("/passkey").hasAuthority(AccessSession.ROLE_ENROLLING)
                         .requestMatchers(path.matcher(HttpMethod.POST, "/webauthn/register")).hasAuthority(AccessSession.ROLE_ENROLLING)
                         // The same files by their content-hashed names (PagesConfig), and only those files.
+                        // (The pages and the manifest are never hashed; /icons/*.png already covers the icons'.)
                         .requestMatchers(versioned("/login.js"), versioned("/common.js"), versioned("/casita.css"),
-                                versioned("/watson.svg"))
+                                versioned("/watson.svg"), versioned("/passkey.js"))
                         .permitAll()
                         .anyRequest().hasRole(ROLE))
                 .webAuthn(webAuthn -> webAuthn
