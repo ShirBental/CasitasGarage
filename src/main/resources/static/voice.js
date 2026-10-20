@@ -6,7 +6,7 @@
 "use strict";
 
 const VOICE = (function () {
-  let brand = { household: "", companion: "Watson", aboutLine: "", illustration: "" };
+  let brand = { household: "", companion: "Watson", aboutLine: "", appName: "Casita", illustration: "", illustrationExcited: "" };
 
   function time(iso) {
     const d = new Date(iso);
@@ -29,7 +29,7 @@ const VOICE = (function () {
     noHistory() { return "No history yet"; },
 
     modes: {
-      simulated: "Practice door",
+      simulated: "Simulation mode",
       off: "Door control off",
       "dry-run": "Rehearsal: nothing is sent",
       live: "",
@@ -55,7 +55,7 @@ const VOICE = (function () {
         case "CLOSED":
         case "NOT_CLOSED": return view.since ? "Since " + time(view.since) : "";
         case "CHECKING": return "Waiting for the sensor";
-        case "UNKNOWN": return "The sensor can't confirm where Ford is.";
+        case "UNKNOWN": return `The sensor can't confirm where ${view.name} is.`;
         default: return "";
       }
     },
@@ -76,12 +76,18 @@ const VOICE = (function () {
 
     offline: ["ET phone home", "Can't reach home. Trying again…"],
 
-    button: {
-      open: (door) => `Open ${door}`, close: (door) => `Close ${door}`, sending: "Sending…",
-      held: "I've checked the door", checking: "Checking…",
-      cantSee: "Unavailable for now", offline: "Waiting for connection", wait: "One moment…",
-      openOff: "Opening is switched off", closeOff: "Closing is switched off",
+    /** Each door's round control: a short verb inside, the full action for screen readers. */
+    control: {
+      open: "Open", close: "Close", busy: "…",
+      label: (verb, door) => `${verb} ${door}`,
     },
+    held: "I've checked the door",
+    offlineButton: "Waiting for connection",
+
+    /** Why a door's control is unavailable, when it isn't obvious from the door's state. */
+    notSetUp(door) { return `${door} control not set up yet`; },
+    controlOff(door) { return `${door} control is off`; },
+    closeOff() { return "Closing from the app is off"; },
 
     /** After a command: only what needs saying. Success waits for the sensor check. */
     unconfirmed() { return "No confirmation from the door. Checking the sensor."; },

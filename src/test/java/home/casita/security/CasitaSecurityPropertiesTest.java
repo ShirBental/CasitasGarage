@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 class CasitaSecurityPropertiesTest {
 
     private static CasitaSecurityProperties props(String rpId, Set<String> origins, List<String> family) {
-        return new CasitaSecurityProperties(rpId, origins, family, Path.of("data"));
+        return new CasitaSecurityProperties(rpId, origins, family, Path.of("data"), CasitaSecurityProperties.DeviceIdentityMode.TAILSCALE, "tailscale");
     }
 
     @Test
@@ -41,5 +41,15 @@ class CasitaSecurityPropertiesTest {
             assertThatThrownBy(() -> props("localhost", Set.of("http://localhost:8080"), List.of(bad)))
                     .as(bad).isInstanceOf(IllegalArgumentException.class);
         }
+    }
+
+    @Test
+    void developmentDeviceIdentityIsOnlyForLocalhost() {
+        assertThat(new CasitaSecurityProperties("localhost", Set.of("http://localhost:8080"), List.of(), Path.of("data"),
+                CasitaSecurityProperties.DeviceIdentityMode.DEVELOPMENT, "tailscale").deviceIdentity())
+                .isEqualTo(CasitaSecurityProperties.DeviceIdentityMode.DEVELOPMENT);
+        assertThatThrownBy(() -> new CasitaSecurityProperties("casita.example-tailnet.ts.net", Set.of("https://casita.example-tailnet.ts.net"),
+                List.of(), Path.of("data"), CasitaSecurityProperties.DeviceIdentityMode.DEVELOPMENT, "tailscale"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

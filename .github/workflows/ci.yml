@@ -11,6 +11,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      FIRESTORE_EMULATOR_VERSION: v1.22.0
+      FIRESTORE_EMULATOR_SHA256: 9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -18,8 +21,31 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      # The Firestore emulator: Google's jar, the one firebase-tools downloads, pinned by version and SHA-256
+      # (docs/FIRESTORE.md). The tests start it themselves on 127.0.0.1 and a free port. No Google account, no
+      # credentials: nothing here can reach a real project.
+      - name: Firestore emulator (cached)
+        uses: actions/cache@v4
+        with:
+          path: ~/firestore-emulator
+          key: firestore-emulator-${{ env.FIRESTORE_EMULATOR_VERSION }}
+      - name: Firestore emulator (download and verify)
+        run: |
+          mkdir -p ~/firestore-emulator
+          JAR=~/firestore-emulator/cloud-firestore-emulator-$FIRESTORE_EMULATOR_VERSION.jar
+          [ -f "$JAR" ] || curl -fsSL -o "$JAR" \
+            "https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-$FIRESTORE_EMULATOR_VERSION.jar"
+          echo "$FIRESTORE_EMULATOR_SHA256  $JAR" | sha256sum -c -
+          echo "FIRESTORE_EMULATOR_JAR=$JAR" >> "$GITHUB_ENV"
       - name: Build and test
-        run: mvn -B -ntp verify 2>&1 | tee build.log; exit "${PIPESTATUS[0]}"
+        # The emulator is required: without it the Firestore tests fail instead of skipping.
+        run: |
+          unset FIRESTORE_EMULATOR_HOST GOOGLE_APPLICATION_CREDENTIALS
+          mvn -B -ntp verify -Dfirestore.emulator.jar="$FIRESTORE_EMULATOR_JAR" -Dfirestore.emulator.required=true 2>&1 | tee build.log
+          exit "${PIPESTATUS[0]}"
+      - name: No unexpected skips
+        if: always()
+        run: python3 scripts/ci/check-test-report.py target/surefire-reports
       - name: Report failures as annotations
         if: failure()
         run: |

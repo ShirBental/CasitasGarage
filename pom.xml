@@ -20,7 +20,60 @@
     <properties>
         <java.version>21</java.version>
         <hivemq-mqtt-client.version>1.3.3</hivemq-mqtt-client.version>
+        <!-- Runs the home screen's JavaScript (static/poller.js) in the unit tests: no Node needed. -->
+        <graaljs.version>25.0.1</graaljs.version>
+        <aws-sdk.version>2.50.0</aws-sdk.version>
+        <google-cloud-bom.version>26.90.0</google-cloud-bom.version>
+        <!-- Tests only: DynamoDB Local, in the test JVM (no Docker, no port, no AWS account). -->
+        <dynamodb-local.version>2.6.1</dynamodb-local.version>
+        <sqlite4java.version>1.0.392</sqlite4java.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws-sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.google.cloud</groupId>
+                <artifactId>libraries-bom</artifactId>
+                <version>${google-cloud-bom.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- GraalJS runs only in the tests, and its SDK must match it exactly. Google's libraries-bom (Firestore)
+                 also manages org.graalvm.sdk:nativeimage and word, at 25.0.0, which would mix into polyglot 25.0.1:
+                 entries here win over every imported BOM. Test scope: nothing here reaches the app. -->
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>collections</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>nativeimage</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>word</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>jniutils</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -41,6 +94,23 @@
             <artifactId>hivemq-mqtt-client</artifactId>
             <version>${hivemq-mqtt-client.version}</version>
         </dependency>
+        <!-- DynamoDB (casita.storage=dynamodb). Credentials from the EC2 instance profile via the default chain. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>dynamodb</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- Firestore (casita.storage=firestore). Credentials from Application Default Credentials only: on GCE, the
+             VM's attached service account through the metadata server. No key files. -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-firestore</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -52,6 +122,25 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.graalvm.polyglot</groupId>
+            <artifactId>polyglot</artifactId>
+            <version>${graaljs.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.graalvm.polyglot</groupId>
+            <artifactId>js-community</artifactId>
+            <version>${graaljs.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>DynamoDBLocal</artifactId>
+            <version>${dynamodb-local.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -59,6 +148,38 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <!-- DynamoDB Local's SQLite native libraries, for the tests. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>sqlite4java-natives</id>
+                        <phase>process-test-resources</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeGroupIds>com.almworks.sqlite4java</includeGroupIds>
+                            <includeTypes>so,dylib,dll</includeTypes>
+                            <outputDirectory>${project.build.directory}/native-libs</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <sqlite4java.library.path>${project.build.directory}/native-libs</sqlite4java.library.path>
+                    </systemPropertyVariables>
+                    <!-- DynamoDB Local's usage telemetry off (also off in code): the tests make no network calls. -->
+                    <environmentVariables>
+                        <DDB_LOCAL_TELEMETRY>0</DDB_LOCAL_TELEMETRY>
+                    </environmentVariables>
+                </configuration>
             </plugin>
         </plugins>
     </build>

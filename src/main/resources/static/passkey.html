@@ -9,16 +9,16 @@
 </head>
 <body class="welcome">
   <main>
-    <img class="watson" src="/watson.svg" alt="Watson" width="132" height="132">
+    <div class="app-icon" aria-hidden="true"></div>
     <h1>Welcome home</h1>
-    <p class="voice">Let's set up Face ID, so next time you can sign in with just a glance.</p>
-    <p class="success" id="success">All set! From now on, sign in with Face ID. <a href="/">Go to Casita</a></p>
+    <p class="voice">Let's set up Face ID on this phone, so you can sign in with just a glance.</p>
+    <p class="success" id="success">All set! This phone can use Casita now. <a href="/login">Sign in with Face ID</a></p>
     <p class="error" id="error"></p>
     <label class="field">Name this phone
       <input id="label" type="text" value="iPhone" maxlength="40" autocomplete="off">
     </label>
     <button id="register" class="primary" type="button">Set up Face ID</button>
-    <p class="note"><a class="link" href="/">Back to Casita</a></p>
+    <p class="note">Already have a Casita passkey from another Apple device? <a href="/login">Sign in with it here</a>, and this phone is set up too.</p>
   </main>
   <script src="/login/webauthn.js"></script>
   <script src="/common.js"></script>

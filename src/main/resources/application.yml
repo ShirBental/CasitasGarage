@@ -1,6 +1,10 @@
 spring:
   application:
     name: casita
+  web:
+    resources:
+      # Static files are served by PagesConfig (content-hashed URLs, cached for a year) and PagesController.
+      add-mappings: false
 
 server:
   # Never listen on a public interface: 'tailscale serve' publishes Casita to the tailnet.
@@ -31,9 +35,14 @@ casita:
     companion: Watson
     # One quiet line in the account sheet, e.g. "Your little corner of the wild world.". Empty hides it.
     about-line: ""
-    # Watson's approved illustration for the home screen: a file in static/brand/, e.g. /brand/watson-home.png.
-    # Empty until the approved artwork exists; the home screen then shows no illustration and no placeholder.
-    illustration: ""
+    # The name in the home screen's header.
+    app-name: "Bental's Casita"
+    # Watson's approved illustration on the home screen, resting on the divider between the doors: a file
+    # in static/brand/. Empty shows no illustration and no placeholder.
+    illustration: /brand/watson-idle.webp
+    # The same Watson, excited, shown while a door is opening or closing (the server's movement state, never
+    # a guess). Same canvas, size and alignment as illustration. Empty: Watson doesn't change.
+    illustration-excited: /brand/watson-excited.webp
   # Which door Casita talks to: 'simulated' (pretend door) or 'meross' (the real one).
   door: simulated
   security:
@@ -43,8 +52,26 @@ casita:
     allowed-origins: [http://localhost:8080]
     # Who may sign in, by short name. Nobody else can, even with an invite link.
     family: []
-    # Passkeys (public keys only) and invite links; outside git, readable by Casita's user only.
+    # Passkeys (public keys only), device authorizations, invite links and the admin secret; outside git,
+    # readable by Casita's user only.
     data-dir: data
+    # Which device a request comes from: its tailnet node, via tailscale serve and `tailscale whois`.
+    # Unverifiable: no access. (The dev profile uses 'development' for plain http://localhost.)
+    device-identity: tailscale
+    # The tailscale command. On a Mac with the App Store app: /Applications/Tailscale.app/Contents/MacOS/Tailscale
+    tailscale-cli: tailscale
+  # Members, passkeys, device authorizations and invitations, always together (docs/PERSISTENCE.md):
+  # 'file' (<data-dir>/security.json, local development), 'dynamodb' (AWS; tables must already exist,
+  # credentials from the EC2 instance profile only) or 'firestore' (GCP, docs/FIRESTORE.md; the (default)
+  # database, provisioned first; credentials from Application Default Credentials only, never a key file).
+  # Unreachable store: access refused.
+  storage:
+    type: file
+    table-prefix: casita-
+    region: ""
+    firestore:
+      project-id: ""        # empty: ADC's own project (on Compute Engine, the VM's)
+      timeout: 5s
   meross:
     api-base-url: https://iotx-us.meross.com
     # email / password: from the environment for now (CASITA_MEROSS_EMAIL, CASITA_MEROSS_PASSWORD),

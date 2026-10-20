@@ -13,26 +13,30 @@ disables its action button. Turning it on waits for review.
 | Piece | Where |
 |---|---|
 | Passkey sign-in (Face ID) | `SecurityConfig`: Spring Security WebAuthn, Casita's own `/login` page using Spring's passkey script |
-| Invites for a new phone | Spring Security one-time tokens; `InviteLinks` writes the link to a file on the server |
+| Who and which device | `security.access`: a passkey for who, the tailnet node for which device; one invite per device; revocation. See `docs/ACCESS.md` |
+| Invites and administration | `bin/casita-access` on the server (`/admin`, 127.0.0.1 plus a secret only); invite links go to owner-only files |
 | Face ID setup | `/passkey` (Spring's script, Casita's page) |
-| Passkey storage | `FilePasskeyStore`: `<data-dir>/passkeys.json`, public keys only, owner-only file |
+| Security store | Members, passkeys (public keys only), device authorizations and invitations: `<data-dir>/security.json` (owner-only) for local development, DynamoDB on AWS (`docs/PERSISTENCE.md`) |
 | API | `GarageController`: `/api/doors`, `/api/status`, `/api/open`, `/api/close`, `/api/resume`, `/api/activity`, `/api/me` |
-| Doors shown | `DoorRoster`: Ford (controlled by `GarageService`), Toyota read-only. Channel 3 isn't shown |
+| Doors shown | `DoorRoster`: Ford (controlled by `GarageService`), Toyota shown with its control disabled until the server commands it. Channel 3 isn't shown |
 | Web app | `src/main/resources/static`: `index.html`, `login.html`, `passkey.html`, plain JS and CSS, no build step |
+| Polling and caching | `poller.js` (visible only, idle slowdown, one request at a time, backoff); content-hashed file URLs cached for a year, pages revalidated, API never stored: [POLLING_AND_CACHING.md](POLLING_AND_CACHING.md) |
 
 ## Signing in
 
-1. **Invite.** On the server (it never leaves the machine):
+Full rules and the Tailscale trust chain are in `docs/ACCESS.md`. In short:
+
+1. **Invite one device.** On the server:
    ```bash
-   curl -X POST -d username=hubby http://127.0.0.1:8080/ott/generate
-   cat data/invites/hubby.txt      # the link: single use, expires in 5 minutes (Spring's default)
+   bin/casita-access invite hubby "Hubby's iPhone"
+   cat data/invites/i-….txt     # the link: single use, 5 minutes, never logged
    ```
-   Send the link to him privately. Asking for an invite returns nothing to the caller, and a name
-   outside `casita.security.family` gets nothing written.
-2. **He opens it** on his iPhone and taps *Sign in*. That signs him in once and lands on *Set up
-   Face ID*, which creates a passkey. Casita stores only its public key.
-3. **From then on** he signs in with Face ID. iCloud Keychain syncs the passkey to his other Apple
-   devices.
+   Send the link to him privately.
+2. **He opens it on that iPhone** (Tailscale on) and taps *Sign in*. That gives a session that can only
+   set up Face ID on that phone. He taps *Set up Face ID*, or *Sign in with it here* if his iCloud
+   Keychain already has his Casita passkey. Either way, that phone is now authorized for him.
+3. **From then on** he signs in with Face ID on that phone. Another device, even with the synced
+   passkey, needs its own invite.
 
 ## Threat model
 
@@ -41,15 +45,16 @@ Casita is reachable only on our tailnet, so an attacker must first be a device o
 | Threat | What stops it |
 |---|---|
 | Someone on the internet | No public endpoint: Casita binds to 127.0.0.1; `tailscale serve` publishes it to the tailnet only |
-| A tailnet device that isn't family | Every page and API call needs a signed-in family member (role `FAMILY`); `/api` answers 401, pages go to `/login` |
+| A tailnet device that isn't family | Every page and API call needs a passkey sign-in by a family member **on a device authorized for them**, checked again on every request; `/api` answers 401, pages go to `/login` |
+| A family member's passkey on an unauthorized device | The device (tailnet node, from `tailscale serve` and tailscaled) must have been enrolled through its own invite |
 | Password guessing, phishing | There are no passwords. Passkeys are bound to Casita's host name (`rp-id`) and allowed origins, so a look-alike site can't use them |
-| A stolen invite link | Single use and short-lived; written to an owner-only file on the server, never logged, never shown to whoever asked |
+| A stolen invite link | Single use, 5 minutes, revocable; it only gives an enrollment session (no garage) for the device that redeems it; written to an owner-only file on the server, never logged |
 | Cross-site request forgery | CSRF tokens on every POST (Spring's single-page-app mode: `XSRF-TOKEN` cookie, `X-XSRF-TOKEN` header), plus `SameSite=Lax` session cookies |
 | Injected script | Content-Security-Policy `script-src 'self'`, no inline script or style; pages build text with `textContent` only |
 | Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |
-| A stolen session cookie | `HttpOnly` and `Secure`; ends after 7 idle days or a restart. Revocation (below) is still to do |
+| A stolen session cookie | `HttpOnly` and `Secure`; tied to the device it signed in on (a request from any other node ends it); ends on revocation, after 7 idle days, or at a restart |
 | An unlocked phone in the wrong hands | Accepted in the design (no extra Face ID per action). Explicit one-tap actions (never a toggle: *Open Ford* can only open), the activity log, and `GarageService`'s rules limit it |
-| The server's disk | `data/` holds public keys and short-lived invite links only, owner-only; it is outside git |
+| The server's disk | `data/` holds public keys, device authorizations, short-lived invite links and the admin secret, owner-only; it is outside git |
 
 Out of scope here: a compromised server or tailnet admin account, and the opener's physical safety
 (photo eyes, auto-reverse).
@@ -86,48 +91,66 @@ casita:
 
 ## The app
 
-One door, one clear status, one action.
+Two doors, one house: Watson at the top, looking over Ford and Toyota, which sit together below him
+with equal weight.
 
-- **Ford** is the focus: its name, the state in large serif type, and one short line. States:
-  *Closed* and *Not closed* ("Since 6:42 PM"), *Opening…* / *Closing…* ("About 6 seconds"),
-  *Checking…*, *Unknown* ("The sensor can't confirm where Ford is."), *Needs a check* (held).
-- **Watson** rests on the divider between Ford's status and Toyota's row, about 200 pt tall on a
-  standard iPhone and scaled down (never hidden) on smaller ones. The slot is
-  `casita.brand.illustration`, a file in `static/brand/`; it stays empty until the approved artwork
-  exists, and the status then sits centred, so nothing looks missing. The art is fitted, never
-  cropped. If the approved pose doesn't rest on a line, its placement is adjusted to the art.
-- **Can't reach home:** "ET phone home" and "Can't reach home. Trying again…", the button *Waiting
-  for connection* (disabled). No stale status, Toyota or history, and nothing is retried on its own.
+- **Each door** is its own area, headed by its name in large serif type (36 pt, 32 on a small
+  iPhone). Under it: the status (a dot and a word, coloured only by status), one short line, and on
+  the right one round control (68 pt, 62 on a small iPhone). One fine hairline separates the doors. States: *Closed* and *Not closed* ("Since 6:42 PM"),
+  *Opening…* / *Closing…* ("About 6 seconds"), *Checking…*, *Unknown* ("The sensor can't confirm
+  where Ford is."), *Needs a check* (held).
+- **Which doors can be commanded comes from the server.** A door's control is enabled only when
+  `/api/doors` reports it `controllable` and its control is `simulated` or `live`. Otherwise it is
+  disabled and says why: *Toyota control not set up yet* (the server doesn't command Toyota), or
+  *… control is off*. Today the server commands Ford only, so Toyota's control is in place but
+  disabled. Toyota commands are separate work (per-door endpoints, each door run separately,
+  Ford's safety rules), reviewed on their own; once the server reports Toyota controllable, its
+  control works with no page change, and on a real door only when the server reports it live.
+- **Watson** sits under the header, his chin on the line above Ford: the approved illustration
+  (`casita.brand.illustration`, `static/brand/watson-idle.webp`, 4:3, transparent), about 60% of the
+  screen wide and at most 236 pt (176 on an SE). It is fitted, never cropped. A quarter of the spare
+  height goes above him and the rest below the doors, so the group sits high. Without the
+  illustration configured, the page shows none and no placeholder.
+- **Watson gets excited** while either door is opening or closing, as the server reports it: an excited
+  version of the same character (`casita.brand.illustration-excited`, `static/brand/watson-excited.webp`, same canvas, size and
+  alignment) fades in over the idle one in 180 ms (never two half-transparent dogs), instantly with
+  *Reduce Motion*, and back to idle once movement ends, fails or is held, or a door becomes unknown
+  (checking, can't see, offline). It never comes from a tap, a pending request or a guess, and his
+  expression is decoration, never evidence of what a door is doing. Without the excited art
+  configured, Watson doesn't change.
+- **Header:** the family's name for the app, `casita.brand.app-name` ("Bental's Casita"); the sign-in
+  page stays "Casita".
+ "ET phone home" and "Can't reach home. Trying again…", with *Waiting for
+  connection* in place of both doors. No stale status or history, nothing to press, nothing retried.
 - **Measured versus estimated.** The sensor measures only closed / not closed, so the app never says
-  *Open* or how far up a door is. While Ford moves, "About X seconds" and a dashed bar labelled
-  *Estimated* come from `casita.garage.travel-time` (`/api/doors` `travelTimeSeconds`), not the sensor.
-- **The action** is one tap on one button in the thumb zone: *Open Ford* when closed, *Close Ford*
-  when it may close. Press-and-hold and any confirmation step are gone. Safeguards:
-  - each button calls one explicit endpoint (`/api/open` or `/api/close`), never a toggle, so a
-    repeated or late tap can't turn into the opposite command;
-  - the button is disabled before the request leaves, until the server answers, and while the
-    server reports the door moving or being checked;
+  *Open* as a state or how far up a door is. While a door moves, "About X seconds" and a dashed bar
+  labelled *Estimated* come from the configured travel time, not the sensor.
+- **One tap per door**, no hold and no confirmation. Safeguards:
+  - each control calls one explicit endpoint for its door (`/api/open` or `/api/close` for Ford;
+    `/api/doors/{door}/open` or `/close` once the server has per-door endpoints), never a toggle;
+  - a door's control is disabled before its request leaves, until the server answers, and while the
+    server reports that door moving or being checked; the other door stays usable;
   - the server refuses any command while one is unchecked (`BUSY`), and never sends toward the state
-    the sensor already reads (`ALREADY`). Simultaneous taps from several phones move the door once
-    (`GarageControllerTest`);
-  - a request that times out (10 s) or is lost is reported as "may or may not have arrived", and
-    nothing else is offered until the server's sensor check.
-- **Success waits for the sensor.** "✓ Sensor confirmed closed" (or "not closed") appears only once
-  `GarageService`'s check is in the history. An unconfirmed or timed-out command says so in one line.
-- **Held:** after a stuck or lost movement the button becomes *I've checked the door*, which asks
-  for confirmation and calls `/api/resume`.
-- **Toyota:** one quiet line, "Toyota · Closed · view only". Never a button.
+    the sensor already reads (`ALREADY`); simultaneous taps move the door once (`GarageControllerTest`);
+  - a request that times out (10 s) or is lost is reported as "may or may not have arrived".
+- **Success waits for the sensor.** "✓ Sensor confirmed closed" (or "not closed") appears under a
+  door only once that door's check is in the history.
+- **Held:** after a stuck or lost movement, *I've checked the door* appears under that door; it asks
+  for confirmation and calls resume.
 - **History** is one tap away: the last event is a row; tapping it opens a sheet with the rest.
 - **Account:** a person icon (top right) opens a sheet: who's signed in (and on which device, once
-  device access lands), sign out, and the family's line. Watson appears once, on the home screen.
-- **Mode tag:** *Practice door* (simulated), *Door control off*, *Rehearsal* (dry run). In off and
-  dry-run the button is disabled.
+  device access lands), sign out, and the family's line.
+- **Mode tag**, on the header row: *Simulation mode* (simulated doors), *Door control off*,
+  *Rehearsal* (dry run).
+- **App icon:** the approved sage Watson icon (`static/icons/`), in the manifest and as the
+  `apple-touch-icon`. iOS fetches it before sign-in, so `/icons/**` must be public: that is in
+  `SecurityConfig` (PR #8).
 - **Look:** the approved palette, defined once at the top of `casita.css`: sage `#6B7F6B`,
-  terracotta `#C65A3A` (only the action), warm cream `#F8F4ED`, deep pine `#2E4A3F`, soft sand
-  `#D9C9B5`, plus darker shades where text needs AA contrast. Serif for the state and headings, the
-  system font for the rest. No cards or shadows; Watson's illustration is the only picture.
-- **iPhone:** safe areas on all sides, 44 pt+ targets, a 60 pt action button, sheets from the bottom.
-  *Reduce Motion* turns off transitions.
+  terracotta `#C65A3A` (only the active controls), warm cream `#F8F4ED`, deep pine `#2E4A3F`, soft
+  sand `#D9C9B5`, plus darker shades where text needs AA contrast. Serif for door names and headings,
+  the system font for the rest. No cards, boxes or shadows.
+- **iPhone:** safe areas on all sides, 44 pt+ targets, both doors on screen without scrolling on a
+  375×667 iPhone, sheets from the bottom. *Reduce Motion* turns off transitions.
 
 Run it on the practice door:
 
@@ -150,7 +173,9 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev \
       household: wild ones   # "For the wild ones." in the account sheet; empty hides it
       companion: Watson      # the dog's name, for copy that mentions him
       about-line: ""         # one quiet line in the account sheet; empty hides it
+      app-name: "Bental's Casita"  # the home screen's header
       illustration: ""       # Watson's approved home-screen art, e.g. /brand/watson-home.png; empty: none
+      illustration-excited: ""  # the excited Watson for moving doors, same canvas; empty: he doesn't change
   ```
 
 ### Watson and the app icon (waiting for the artwork)
@@ -198,10 +223,9 @@ control through the app.
 
 ## Still to do
 
-- **Remember-me and revocation** (design section 3): a 6-month signed cookie with a per-user secret,
-  and `casita revoke` expiring sessions, rotating secrets and deleting tokens. Until then: remove a
-  person from `family`, delete their entries in `passkeys.json`, and restart.
-- **Parameter Store** for passkeys and secrets (build step 5), replacing `FilePasskeyStore`.
+- **Remember-me** (design section 3): a 6-month signed cookie. Revocation is built (`docs/ACCESS.md`).
+- **AWS persistence**: DynamoDB for members, passkeys, device authorizations and activity, plus
+  Parameter Store for secrets (`docs/PERSISTENCE.md`), replacing the files.
 - **Push notifications** for every move and failure (`LoggingNotifier` only logs today).
 - **Styling Spring's token page** (`/login/ott`): it works but looks like Spring's default.
 - **Watson's illustration and the app icon**: the slots are ready (above); the art isn't.
