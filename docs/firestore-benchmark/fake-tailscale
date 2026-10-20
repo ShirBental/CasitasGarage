@@ -1,0 +1,8 @@
+#!/bin/sh
+# Stand-in for `tailscale whois --json <addr>` (benchmark only): two tailnet phones.
+[ "$1" = whois ] || exit 2
+case "$3" in
+  100.64.0.1) echo '{"Node":{"StableID":"nShirPhoneCNTRL","ComputedName":"shirs-iphone","Tags":null},"UserProfile":{"LoginName":"shir@example.com"}}' ;;
+  100.64.0.2) echo '{"Node":{"StableID":"nHubbyPhoneCNTRL","ComputedName":"hubbys-iphone","Tags":null},"UserProfile":{"LoginName":"hubby@example.com"}}' ;;
+  *) echo "no such peer" >&2; exit 1 ;;
+esac
