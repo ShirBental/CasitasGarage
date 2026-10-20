@@ -20,6 +20,7 @@ disables its action button. Turning it on waits for review.
 | API | `GarageController`: `/api/doors`, `/api/status`, `/api/open`, `/api/close`, `/api/resume`, `/api/activity`, `/api/me` |
 | Doors shown | `DoorRoster`: Ford (controlled by `GarageService`), Toyota shown with its control disabled until the server commands it. Channel 3 isn't shown |
 | Web app | `src/main/resources/static`: `index.html`, `login.html`, `passkey.html`, plain JS and CSS, no build step |
+| Polling and caching | `poller.js` (visible only, idle slowdown, one request at a time, backoff); content-hashed file URLs cached for a year, pages revalidated, API never stored: [POLLING_AND_CACHING.md](POLLING_AND_CACHING.md) |
 
 ## Signing in
 
@@ -90,12 +91,12 @@ casita:
 
 ## The app
 
-Two doors, one house: Ford above, Toyota below, with equal weight, and Watson between them.
+Two doors, one house: Watson at the top, looking over Ford and Toyota, which sit together below him
+with equal weight.
 
 - **Each door** is its own area, headed by its name in large serif type (36 pt, 32 on a small
   iPhone). Under it: the status (a dot and a word, coloured only by status), one short line, and on
-  the right one round control (68 pt, 62 on a small iPhone). Ford sits just under the header and
-  Toyota just under the divider; the spare height is split evenly below each. States: *Closed* and *Not closed* ("Since 6:42 PM"),
+  the right one round control (68 pt, 62 on a small iPhone). One fine hairline separates the doors. States: *Closed* and *Not closed* ("Since 6:42 PM"),
   *Opening…* / *Closing…* ("About 6 seconds"), *Checking…*, *Unknown* ("The sensor can't confirm
   where Ford is."), *Needs a check* (held).
 - **Which doors can be commanded comes from the server.** A door's control is enabled only when
@@ -105,12 +106,21 @@ Two doors, one house: Ford above, Toyota below, with equal weight, and Watson be
   disabled. Toyota commands are separate work (per-door endpoints, each door run separately,
   Ford's safety rules), reviewed on their own; once the server reports Toyota controllable, its
   control works with no page change, and on a real door only when the server reports it live.
-- **Watson** peeks over the hairline between the doors, chin on the line: the approved
-  illustration (`casita.brand.illustration`, `static/brand/watson-home.webp`, 4:3, transparent),
-  about half the screen wide and at most 220 pt (197 pt on a standard iPhone, 188 on an SE). It is
-  fitted, never cropped, and never overlaps a door's status or control. Without it configured, the
-  page shows no illustration and no placeholder.
-- **Can't reach home:** "ET phone home" and "Can't reach home. Trying again…", with *Waiting for
+- **Watson** sits under the header, his chin on the line above Ford: the approved illustration
+  (`casita.brand.illustration`, `static/brand/watson-idle.webp`, 4:3, transparent), about 60% of the
+  screen wide and at most 236 pt (176 on an SE). It is fitted, never cropped. A quarter of the spare
+  height goes above him and the rest below the doors, so the group sits high. Without the
+  illustration configured, the page shows none and no placeholder.
+- **Watson gets excited** while either door is opening or closing, as the server reports it: an excited
+  version of the same character (`casita.brand.illustration-excited`, `static/brand/watson-excited.webp`, same canvas, size and
+  alignment) fades in over the idle one in 180 ms (never two half-transparent dogs), instantly with
+  *Reduce Motion*, and back to idle once movement ends, fails or is held, or a door becomes unknown
+  (checking, can't see, offline). It never comes from a tap, a pending request or a guess, and his
+  expression is decoration, never evidence of what a door is doing. Without the excited art
+  configured, Watson doesn't change.
+- **Header:** the family's name for the app, `casita.brand.app-name` ("Bental's Casita"); the sign-in
+  page stays "Casita".
+ "ET phone home" and "Can't reach home. Trying again…", with *Waiting for
   connection* in place of both doors. No stale status or history, nothing to press, nothing retried.
 - **Measured versus estimated.** The sensor measures only closed / not closed, so the app never says
   *Open* as a state or how far up a door is. While a door moves, "About X seconds" and a dashed bar
@@ -163,7 +173,9 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev \
       household: wild ones   # "For the wild ones." in the account sheet; empty hides it
       companion: Watson      # the dog's name, for copy that mentions him
       about-line: ""         # one quiet line in the account sheet; empty hides it
+      app-name: "Bental's Casita"  # the home screen's header
       illustration: ""       # Watson's approved home-screen art, e.g. /brand/watson-home.png; empty: none
+      illustration-excited: ""  # the excited Watson for moving doors, same canvas; empty: he doesn't change
   ```
 
 ### Watson and the app icon (waiting for the artwork)

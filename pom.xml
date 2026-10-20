@@ -20,6 +20,8 @@
     <properties>
         <java.version>21</java.version>
         <hivemq-mqtt-client.version>1.3.3</hivemq-mqtt-client.version>
+        <!-- Runs the home screen's JavaScript (static/poller.js) in the unit tests: no Node needed. -->
+        <graaljs.version>25.0.1</graaljs.version>
         <aws-sdk.version>2.50.0</aws-sdk.version>
         <!-- Tests only: DynamoDB Local, in the test JVM (no Docker, no port, no AWS account). -->
         <dynamodb-local.version>2.6.1</dynamodb-local.version>
@@ -77,6 +79,19 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.graalvm.polyglot</groupId>
+            <artifactId>polyglot</artifactId>
+            <version>${graaljs.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.graalvm.polyglot</groupId>
+            <artifactId>js-community</artifactId>
+            <version>${graaljs.version}</version>
+            <type>pom</type>
             <scope>test</scope>
         </dependency>
         <dependency>

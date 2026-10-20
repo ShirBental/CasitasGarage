@@ -163,6 +163,12 @@ class SecurityConfig {
         return operations;
     }
 
+    /** "/common.js" -> "/common-{hash:[0-9a-f]{32}}.js": the file's content-hashed URL, whatever its hash. */
+    static String versioned(String file) {
+        int dot = file.lastIndexOf('.');
+        return file.substring(0, dot) + "-{hash:[0-9a-f]{32}}" + file.substring(dot);
+    }
+
     /** Redirects to {@code /login} relatively: behind tailscale serve, Casita sees http://127.0.0.1, not the real host. */
     private static LoginUrlAuthenticationEntryPoint loginPage() {
         LoginUrlAuthenticationEntryPoint entryPoint = new LoginUrlAuthenticationEntryPoint("/login");
@@ -191,6 +197,11 @@ class SecurityConfig {
                         // Enrollment: setting up a passkey for the invite's device, nothing else.
                         .requestMatchers("/passkey").hasAuthority(AccessSession.ROLE_ENROLLING)
                         .requestMatchers(path.matcher(HttpMethod.POST, "/webauthn/register")).hasAuthority(AccessSession.ROLE_ENROLLING)
+                        // The same files by their content-hashed names (PagesConfig), and only those files.
+                        // (The pages and the manifest are never hashed; /icons/*.png already covers the icons'.)
+                        .requestMatchers(versioned("/login.js"), versioned("/common.js"), versioned("/casita.css"),
+                                versioned("/watson.svg"), versioned("/passkey.js"))
+                        .permitAll()
                         .anyRequest().hasRole(ROLE))
                 .webAuthn(webAuthn -> webAuthn
                         .rpName("Casita")

@@ -6,7 +6,7 @@
 "use strict";
 
 const VOICE = (function () {
-  let brand = { household: "", companion: "Watson", aboutLine: "", illustration: "" };
+  let brand = { household: "", companion: "Watson", aboutLine: "", appName: "Casita", illustration: "", illustrationExcited: "" };
 
   function time(iso) {
     const d = new Date(iso);

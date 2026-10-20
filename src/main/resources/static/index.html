@@ -10,13 +10,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="icon" href="/icons/icon-192.png">
   <title>Casita</title>
   <link rel="stylesheet" href="/casita.css">
 </head>
 <body class="home">
   <main>
     <header class="top">
-      <span class="wordmark">Casita</span>
+      <span class="wordmark" id="app-name">Casita</span>
       <span class="tag" id="mode"></span>
       <button id="account-open" class="account" type="button" aria-label="Account">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor"
@@ -24,21 +25,20 @@
       </button>
     </header>
 
-    <!-- Two doors, one house: each door is filled in by app.js from /api/doors. Each sits at the top of
-         its own area (Ford under the header, Toyota under the divider); the spare height is split below each. -->
+    <!-- Two doors, one house. Watson (the approved casita.brand.illustration) rests his chin on the line
+         above Ford, looking over both doors; Ford and Toyota sit together below him, filled in by app.js.
+         A quarter of the spare height goes above him and the rest below the doors. -->
+    <div class="spare" id="spare-above"></div>
     <div class="doors" id="doors">
+      <!-- Idle and excited are the same character on the same canvas, stacked in one box: switching between
+           them cross-fades, and nothing on the page moves. -->
+      <figure class="companion" id="companion" hidden><img id="companion-art" alt=""><img id="companion-excited" class="excited" alt="" aria-hidden="true" hidden></figure>
+      <div class="hairline"></div>
       <section class="door" id="door-0" aria-live="polite"></section>
-      <div class="gap"></div>
-
-      <!-- The companion's approved illustration (casita.brand.illustration), resting on the divider. -->
-      <div class="fence">
-        <figure class="companion" id="companion" hidden><img id="companion-art" alt=""></figure>
-        <div class="hairline"></div>
-      </div>
-
+      <div class="hairline"></div>
       <section class="door" id="door-1" aria-live="polite"></section>
-      <div class="gap"></div>
     </div>
+    <div class="spare below" id="spare-below"></div>
 
     <section class="offline" id="offline" hidden aria-live="polite">
       <p class="state" id="offline-word"></p>
@@ -81,6 +81,7 @@
 
   <script src="/common.js"></script>
   <script src="/voice.js"></script>
+  <script src="/poller.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
