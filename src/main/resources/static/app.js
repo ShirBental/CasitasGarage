@@ -5,8 +5,7 @@
 // door can be commanded right now. A door the server doesn't control stays disabled, with the reason.
 (function () {
   const $ = (id) => document.getElementById(id);
-  const POLL_MS = 5000;
-  const FAST_POLL_MS = 1000;      // while a command is out, or a door is moving
+  const FAST_AFTER_COMMAND_MS = 30000;   // poll every second this long after a command (poller.js)
   const COMMAND_TIMEOUT_MS = 10000;
   const CHECKS = ["CLOSED_CONFIRMED", "OPEN_INFERRED", "STUCK", "LOST"];
   const MOVING = ["OPENING", "CLOSING", "CHECKING"];
@@ -14,8 +13,6 @@
   let doors = null;               // /api/doors
   let events = [];                // /api/activity, newest first
   let offline = false;
-  let fastUntil = 0;
-  let timer = null;
   const local = {};               // per door: { sending, watchAfter, resultAt }
 
   /* ---------- reading /api/doors (works with the one-controlled-door API and the per-door one) ---------- */
@@ -173,34 +170,37 @@
 
   /* ---------- talking to the server ---------- */
 
-  async function refresh() {
-    try {
-      doors = await api("GET", "/api/doors");
-      events = await api("GET", "/api/activity");
+  // When to ask: poller.js (one request at a time; nothing while hidden; slower when nobody's using the page;
+  // backoff after failures). What to do with the answer: here.
+  const poller = CasitaPoller.create({
+    async load(signal) {
+      const d = await api("GET", "/api/doors", signal);
+      const e = await api("GET", "/api/activity", signal);
+      return { doors: d, events: e };
+    },
+    apply(data) {
+      doors = data.doors;
+      events = data.events;
       offline = false;
-    } catch (err) {
-      offline = true;
-    }
-    draw();
-    let settled = !offline;
-    if (!offline) {
+      draw();
       drawHistory();
       reportChecks();
+      let settled = true;
       for (const d of doors.doors) {
         const me = stateOf(keyOf(d));
         const doorSettled = !me.watchAfter && !MOVING.includes(d.door);
         if (doorSettled && me.resultAt && Date.now() - me.resultAt > 20000) showResult(d, "");
         settled = settled && doorSettled;
       }
-    }
-    schedule(settled);
-  }
-
-  function schedule(settled) {
-    clearTimeout(timer);
-    if (document.hidden) return;
-    timer = setTimeout(refresh, !settled || Date.now() < fastUntil ? FAST_POLL_MS : POLL_MS);
-  }
+      return settled;
+    },
+    fail() {
+      // ET phone home: a failed or late poll never shows a door's state (draw() hides the doors).
+      offline = true;
+      draw();
+    },
+  });
+  const refresh = () => poller.refresh();
 
   /** One tap, one command, for one door. Its control is disabled before the request leaves. */
   async function command(d, action) {
@@ -230,7 +230,7 @@
     } finally {
       clearTimeout(timeout);
       me.sending = false;
-      fastUntil = Date.now() + 30000;
+      poller.fastFor(FAST_AFTER_COMMAND_MS);
       refresh();
     }
   }
@@ -268,7 +268,14 @@
     window.location.href = "/login?signed-out";
   });
 
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  // Polling only while the page is shown; straight back to the real status when it is shown again.
+  document.addEventListener("visibilitychange", () => (document.hidden ? poller.hide() : poller.show()));
+  window.addEventListener("pagehide", () => poller.hide());
+  window.addEventListener("pageshow", (e) => { if (e.persisted && !document.hidden) poller.show(); });
+  // Someone using the page keeps the 5 s rhythm; after a few idle minutes it slows, and a touch refreshes.
+  for (const type of ["pointerdown", "keydown", "touchstart", "wheel", "scroll"]) {
+    document.addEventListener(type, () => poller.activity(), { capture: true, passive: true });
+  }
 
   function drawBrand() {
     $("household").textContent = VOICE.household();
@@ -293,5 +300,6 @@
   drawBrand();
   api("GET", "/api/brand").then((b) => { VOICE.setBrand(b); drawBrand(); }).catch(() => {});
   api("GET", "/api/me").then((me) => { $("signed-in").textContent = VOICE.signedIn(me); }).catch(() => {});
+  if (document.hidden) poller.hide();
   refresh();
 })();

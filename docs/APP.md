@@ -19,6 +19,7 @@ disables its action button. Turning it on waits for review.
 | API | `GarageController`: `/api/doors`, `/api/status`, `/api/open`, `/api/close`, `/api/resume`, `/api/activity`, `/api/me` |
 | Doors shown | `DoorRoster`: Ford (controlled by `GarageService`), Toyota shown with its control disabled until the server commands it. Channel 3 isn't shown |
 | Web app | `src/main/resources/static`: `index.html`, `login.html`, `passkey.html`, plain JS and CSS, no build step |
+| Polling and caching | `poller.js` (visible only, idle slowdown, one request at a time, backoff); content-hashed file URLs cached for a year, pages revalidated, API never stored: [POLLING_AND_CACHING.md](POLLING_AND_CACHING.md) |
 
 ## Signing in
 

@@ -7,7 +7,6 @@ import static org.springframework.security.test.web.servlet.setup.SecurityMockMv
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
@@ -80,7 +79,7 @@ class SignInTest {
 
     @Test
     void theSignInPageAndOnlyWhatItNeedsArePublic() throws Exception {
-        mvc.perform(get("/login")).andExpect(status().isOk()).andExpect(forwardedUrl("/login.html"));
+        mvc.perform(get("/login")).andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.containsString("Sign in with Face ID")));
         mvc.perform(get("/login.html")).andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.containsString("Sign in with Face ID")));
         for (String asset : new String[] {"/login.js", "/common.js", "/casita.css", "/watson.svg"}) {
             mvc.perform(get(asset)).andExpect(status().isOk());

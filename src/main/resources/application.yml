@@ -1,6 +1,10 @@
 spring:
   application:
     name: casita
+  web:
+    resources:
+      # Static files are served by PagesConfig (content-hashed URLs, cached for a year) and PagesController.
+      add-mappings: false
 
 server:
   # Never listen on a public interface: 'tailscale serve' publishes Casita to the tailnet.
