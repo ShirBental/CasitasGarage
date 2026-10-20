@@ -1,0 +1,5 @@
+run=1 healthz_s=1.862 Started CasitaApplication in 1.576 seconds rss_kb_10s=177088 cpu=  0:02.27
+run=2 healthz_s=1.769 Started CasitaApplication in 1.506 seconds rss_kb_10s=177600 cpu=  0:02.23
+run=3 healthz_s=1.769 Started CasitaApplication in 1.495 seconds rss_kb_10s=177504 cpu=  0:02.23
+run=4 healthz_s=1.862 Started CasitaApplication in 1.529 seconds rss_kb_10s=177312 cpu=  0:02.32
+run=5 healthz_s=1.818 Started CasitaApplication in 1.523 seconds rss_kb_10s=177440 cpu=  0:02.26

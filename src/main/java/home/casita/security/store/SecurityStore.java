@@ -11,8 +11,9 @@ import org.springframework.security.web.webauthn.api.CredentialRecord;
 
 /**
  * Members, passkeys, device authorizations and invitations: everything an access decision reads, in one
- * store, so enrolling a device is one atomic change (docs/PERSISTENCE.md). Two implementations with the
- * same contract: {@link FileSecurityStore} (local development) and {@link DynamoSecurityStore} (AWS).
+ * store, so enrolling a device is one atomic change (docs/PERSISTENCE.md). Three implementations with the
+ * same contract: {@link FileSecurityStore} (local development), {@link DynamoSecurityStore} (AWS) and
+ * {@link FirestoreSecurityStore} (GCP, docs/FIRESTORE.md).
  *
  * <p>Reads that decide access are strongly consistent. Any failure to reach the store is a
  * {@link StoreUnavailableException}, and callers refuse (fail closed). Revoking never deletes.

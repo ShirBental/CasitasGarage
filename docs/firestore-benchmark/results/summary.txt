@@ -1,0 +1,208 @@
+===== realistic-file-tuned -XX:MaxRAM=1g -XX:ActiveProcessorCount=2 -XX:+UseSerialGC -Xms32m -Xmx128m -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -Xss512k -XX:TieredStopAtLevel=1 -XX:+ExitOnOutOfMemoryError
+wall_to_first_healthz_s 1.105
+Started CasitaApplication in 0.824 seconds (process running for 1.024)
+after_start_rss_kb 143664 cpu_time 0:01.48
+idle_rss_kb 143792 cpu_time 0:01.50
+app_log_warn_error_lines 0
+end_rss_kb 142720 cpu_time 0:03.97
+phase   label                             n     p50     p95     p99     max statuses             bytes/req
+burst   api_activity                      2    0.42    0.48    0.49    0.49 {'200': 2}           2126
+burst   api_me                            2    0.36    0.43    0.43    0.43 {'200': 2}           54
+burst   asset                            14    1.43    2.28    2.42    2.46 {'200': 14}          20654
+burst   cmd_race:BUSY                     3    2.83    2.83    2.83    2.83 {'200': 3}           192
+burst   cmd_race:MOVING                   1    2.85    2.85    2.85    2.85 {'200': 1}           164
+burst   page_login                        2    3.19    4.95    5.11    5.15 {'200': 2}           870
+burst   poll_doors                      200    0.80    2.17    2.54    2.65 {'200': 200}         602
+burst   signin_assertion                  2   15.86   22.45   23.03   23.18 {'200': 2}           40
+burst   signin_options                    2    0.80    1.20    1.24    1.25 {'200': 2}           165
+checks  api_activity                      1    1.77    1.77    1.77    1.77 {'200': 1}           2
+checks  api_me                            1    2.73    2.73    2.73    2.73 {'200': 1}           53
+checks  asset                             7    2.12    5.01    5.26    5.32 {'200': 7}           20654
+checks  deny_cookie_other_node            1    0.96    0.96    0.96    0.96 {'401': 1}           0
+checks  deny_unknown_node                 1    1.23    1.23    1.23    1.23 {'401': 1}           0
+checks  page_login                        1    1.88    1.88    1.88    1.88 {'200': 1}           870
+checks  signin_assertion                  1   23.48   23.48   23.48   23.48 {'200': 1}           40
+checks  signin_options                    1    3.60    3.60    3.60    3.60 {'200': 1}           165
+setup   admin_invite                      2   14.24   25.14   26.11   26.35 {'200': 2}           285
+setup   page_login                        2    5.51    8.59    8.86    8.93 {'200': 2}           870
+setup   redeem_invite                     2   97.45  179.06  186.32  188.13 {'302': 2}           0
+setup   register_options                  2    8.96   15.61   16.20   16.34 {'200': 2}           489
+setup   register_passkey                  2   24.76   44.09   45.81   46.24 {'200': 2}           16
+work    api_activity                      4    0.88    0.93    0.93    0.93 {'200': 4}           1059
+work    api_me                            4    0.82    0.96    0.97    0.97 {'200': 4}           54
+work    asset                            28    1.97    3.68    3.78    3.81 {'200': 28}          20654
+work    cmd_close:MOVING                 10    2.06    3.09    3.09    3.09 {'200': 10}          156
+work    cmd_open:MOVING                  10    2.86   11.04   11.28   11.34 {'200': 10}          164
+work    logout                            2    2.77    4.03    4.14    4.17 {'302': 2}           0
+work    page_login                        4    2.60    4.79    5.03    5.10 {'200': 4}           870
+work    poll_doors                      480    3.38   13.35   18.39   20.66 {'200': 480}         609
+work    signin_assertion                  4   10.75   17.48   17.53   17.54 {'200': 4}           40
+work    signin_options                    4    0.86    1.07    1.09    1.09 {'200': 4}           165
+work span 598s requests 550 (3312/h) authed-checked 536 (3227/h) response bytes 5.31 MB/h
+non-2xx in work: 0 set()
+RSS MiB: first 140 min 139 median 151 max 158 last 139 samples 132
+RSS trend: first-10% median 150  last-10% median 139
+CPU time total 4.0s over 658s wall -> avg 0.60% of one core
+heap-after-start def new generation total 13568K, used 9923K [0x000000034d000000, 0x000000034deb0000, 0x000000034faa0000) | eden space 12096K, 82% used [0x000000034d000000, 0x000000034d9b0c70, 0x000000034dbd0000) | from space 1472K, 0% used [0x000000034dbd0000, 0x000000034dbd0000, 0x000000034dd40000) | to space 1472K, 0% used [0x000000034dd40000, 0x000000034dd40000, 0x000000034deb0000) | tenured generation total 30032K, used 18011K [0x000000034faa0000, 0x00000003517f4000, 0x0000000355000000)
+heap-idle def new generation total 13568K, used 10042K [0x000000034d000000, 0x000000034deb0000, 0x000000034faa0000) | eden space 12096K, 83% used [0x000000034d000000, 0x000000034d9ce970, 0x000000034dbd0000) | from space 1472K, 0% used [0x000000034dbd0000, 0x000000034dbd0000, 0x000000034dd40000) | to space 1472K, 0% used [0x000000034dd40000, 0x000000034dd40000, 0x000000034deb0000) | tenured generation total 30032K, used 18011K [0x000000034faa0000, 0x00000003517f4000, 0x0000000355000000)
+heap-end def new generation total 13568K, used 5818K [0x000000034d000000, 0x000000034deb0000, 0x000000034faa0000) | eden space 12096K, 39% used [0x000000034d000000, 0x000000034d4b6c28, 0x000000034dbd0000) | from space 1472K, 67% used [0x000000034dbd0000, 0x000000034dcc7da0, 0x000000034dd40000) | to space 1472K, 0% used [0x000000034dd40000, 0x000000034dd40000, 0x000000034deb0000) | tenured generation total 30032K, used 20135K [0x000000034faa0000, 0x00000003517f4000, 0x0000000355000000)
+nmt-after-start committed MiB 144 Java Heap=44 Class=6 Thread=20 Code=9 Internal=1 Symbol=13 Native Memory Tracking=2 Shared class space=12 Arena Chunk=3 Metaspace=30
+nmt-end committed MiB 151 Java Heap=44 Class=7 Thread=22 Code=13 Internal=1 Symbol=13 Native Memory Tracking=2 Shared class space=12 Metaspace=33
+GC pauses: n=57 p50=1.16ms max=16.46ms total=96ms
+driver: Driver.java:154: warning: [deprecation] asText() in JsonNode has been deprecated |                         if (d.path("name").asText().equals(door)) state = d.path("door").asText(); |
+===== realistic-firestore-tuned -XX:MaxRAM=1g -XX:ActiveProcessorCount=2 -XX:+UseSerialGC -Xms32m -Xmx128m -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -Xss512k -XX:TieredStopAtLevel=1 -XX:+ExitOnOutOfMemoryError
+wall_to_first_healthz_s 1.739
+Started CasitaApplication in 1.477 seconds (process running for 1.674)
+after_start_rss_kb 182912 cpu_time 0:02.17
+idle_rss_kb 183328 cpu_time 0:02.20
+app_log_warn_error_lines 0
+end_rss_kb 193744 cpu_time 0:06.05
+phase   label                             n     p50     p95     p99     max statuses             bytes/req
+burst   api_activity                      2    0.84    0.97    0.99    0.99 {'200': 2}           2126
+burst   api_me                            2    1.97    2.07    2.08    2.08 {'200': 2}           54
+burst   asset                            14    1.94    3.26    3.41    3.45 {'200': 14}          20654
+burst   cmd_race:BUSY                     3    5.93    5.93    5.93    5.93 {'200': 3}           192
+burst   cmd_race:MOVING                   1    5.88    5.88    5.88    5.88 {'200': 1}           164
+burst   page_login                        2    3.63    5.83    6.03    6.08 {'200': 2}           870
+burst   poll_doors                      200    2.52    4.98    5.31    5.66 {'200': 200}         602
+burst   signin_assertion                  2   20.04   27.85   28.54   28.71 {'200': 2}           40
+burst   signin_options                    2    0.79    1.20    1.24    1.25 {'200': 2}           165
+checks  api_activity                      1    3.32    3.32    3.32    3.32 {'200': 1}           2
+checks  api_me                            1    6.47    6.47    6.47    6.47 {'200': 1}           53
+checks  asset                             7    2.82    9.59   10.91   11.24 {'200': 7}           20654
+checks  deny_cookie_other_node            1    0.97    0.97    0.97    0.97 {'401': 1}           0
+checks  deny_unknown_node                 1    1.47    1.47    1.47    1.47 {'401': 1}           0
+checks  page_login                        1    1.99    1.99    1.99    1.99 {'200': 1}           870
+checks  signin_assertion                  1   29.66   29.66   29.66   29.66 {'200': 1}           40
+checks  signin_options                    1    1.83    1.83    1.83    1.83 {'200': 1}           165
+setup   admin_invite                      2   25.15   43.73   45.38   45.79 {'200': 2}           290
+setup   page_login                        2    4.32    6.18    6.35    6.39 {'200': 2}           870
+setup   redeem_invite                     2   17.79   22.96   23.42   23.53 {'302': 2}           0
+setup   register_options                  2   40.22   68.05   70.52   71.14 {'200': 2}           489
+setup   register_passkey                  2   36.76   57.06   58.86   59.32 {'200': 2}           16
+work    api_activity                      4    2.15    2.37    2.39    2.40 {'200': 4}           1059
+work    api_me                            4    3.69    4.05    4.06    4.07 {'200': 4}           54
+work    asset                            28    3.02    4.33    4.95    5.02 {'200': 28}          20654
+work    cmd_close:MOVING                 10    3.56    5.49    5.57    5.58 {'200': 10}          156
+work    cmd_open:MOVING                  10    4.16    8.35    8.35    8.35 {'200': 10}          164
+work    logout                            2    5.28    5.28    5.28    5.28 {'302': 2}           0
+work    page_login                        4    7.35   12.69   12.70   12.70 {'200': 4}           870
+work    poll_doors                      480    6.25   16.20   20.27   21.82 {'200': 480}         609
+work    signin_assertion                  4   17.64   24.65   24.66   24.66 {'200': 4}           40
+work    signin_options                    4    1.07    1.33    1.34    1.34 {'200': 4}           165
+work span 598s requests 550 (3308/h) authed-checked 536 (3224/h) response bytes 5.31 MB/h
+non-2xx in work: 0 set()
+RSS MiB: first 179 min 166 median 189 max 196 last 189 samples 132
+RSS trend: first-10% median 193  last-10% median 189
+CPU time total 6.0s over 658s wall -> avg 0.92% of one core
+heap-after-start def new generation total 12672K, used 10412K [0x00000007f8000000, 0x00000007f8dc0000, 0x00000007faaa0000) | eden space 11264K, 83% used [0x00000007f8000000, 0x00000007f8932418, 0x00000007f8b00000) | from space 1408K, 70% used [0x00000007f8b00000, 0x00000007f8bf8d28, 0x00000007f8c60000) | to space 1408K, 0% used [0x00000007f8c60000, 0x00000007f8c60000, 0x00000007f8dc0000) | tenured generation total 28112K, used 22384K [0x00000007faaa0000, 0x00000007fc614000, 0x0000000800000000)
+heap-idle def new generation total 12672K, used 10636K [0x00000007f8000000, 0x00000007f8dc0000, 0x00000007faaa0000) | eden space 11264K, 85% used [0x00000007f8000000, 0x00000007f896a358, 0x00000007f8b00000) | from space 1408K, 70% used [0x00000007f8b00000, 0x00000007f8bf8d28, 0x00000007f8c60000) | to space 1408K, 0% used [0x00000007f8c60000, 0x00000007f8c60000, 0x00000007f8dc0000) | tenured generation total 28112K, used 22384K [0x00000007faaa0000, 0x00000007fc614000, 0x0000000800000000)
+heap-end def new generation total 16192K, used 13583K [0x00000007f8000000, 0x00000007f9190000, 0x00000007faaa0000) | eden space 14400K, 81% used [0x00000007f8000000, 0x00000007f8b83d88, 0x00000007f8e10000) | from space 1792K, 100% used [0x00000007f8fd0000, 0x00000007f9190000, 0x00000007f9190000) | to space 1792K, 0% used [0x00000007f8e10000, 0x00000007f8e10000, 0x00000007f8fd0000) | tenured generation total 35904K, used 22273K [0x00000007faaa0000, 0x00000007fcdb0000, 0x0000000800000000)
+nmt-after-start committed MiB 173 Java Heap=41 Class=8 Thread=23 Code=9 Internal=1 Other=6 Symbol=18 Native Memory Tracking=3 Shared class space=12 Arena Chunk=3 Metaspace=45
+nmt-end committed MiB 211 Java Heap=52 Class=9 Thread=35 Code=18 Internal=1 Other=8 Symbol=19 Native Memory Tracking=3 Shared class space=12 Metaspace=49
+GC pauses: n=100 p50=0.95ms max=37.20ms total=186ms
+driver: Driver.java:154: warning: [deprecation] asText() in JsonNode has been deprecated |                         if (d.path("name").asText().equals(door)) state = d.path("door").asText(); |
+===== realistic-firestore-default -XX:MaxRAM=1g -XX:ActiveProcessorCount=2
+wall_to_first_healthz_s 1.36
+Started CasitaApplication in 1.073 seconds (process running for 1.266)
+after_start_rss_kb 248528 cpu_time 0:03.07
+idle_rss_kb 248864 cpu_time 0:03.11
+app_log_warn_error_lines 0
+end_rss_kb 260880 cpu_time 0:09.85
+phase   label                             n     p50     p95     p99     max statuses             bytes/req
+burst   api_activity                      2    0.99    1.12    1.13    1.14 {'200': 2}           2126
+burst   api_me                            2    2.21    2.37    2.38    2.39 {'200': 2}           54
+burst   asset                            14    1.46    2.44    2.95    3.08 {'200': 14}          20654
+burst   cmd_race:BUSY                     3    6.68    6.70    6.71    6.71 {'200': 3}           192
+burst   cmd_race:MOVING                   1    6.59    6.59    6.59    6.59 {'200': 1}           164
+burst   page_login                        2    3.30    5.49    5.68    5.73 {'200': 2}           870
+burst   poll_doors                      200    3.38    4.77    4.97    5.05 {'200': 200}         602
+burst   signin_assertion                  2   20.55   28.54   29.25   29.42 {'200': 2}           40
+burst   signin_options                    2    1.06    1.66    1.71    1.72 {'200': 2}           165
+checks  api_activity                      1    3.90    3.90    3.90    3.90 {'200': 1}           2
+checks  api_me                            1    6.84    6.84    6.84    6.84 {'200': 1}           53
+checks  asset                             7    3.49    8.86    8.94    8.96 {'200': 7}           20654
+checks  deny_cookie_other_node            1    1.07    1.07    1.07    1.07 {'401': 1}           0
+checks  deny_unknown_node                 1    1.53    1.53    1.53    1.53 {'401': 1}           0
+checks  page_login                        1    1.72    1.72    1.72    1.72 {'200': 1}           870
+checks  signin_assertion                  1   33.32   33.32   33.32   33.32 {'200': 1}           40
+checks  signin_options                    1    2.15    2.15    2.15    2.15 {'200': 1}           165
+setup   admin_invite                      2   22.65   38.20   39.59   39.93 {'200': 2}           292
+setup   page_login                        2    4.37    6.43    6.61    6.66 {'200': 2}           870
+setup   redeem_invite                     2   19.73   27.78   28.50   28.68 {'302': 2}           0
+setup   register_options                  2   23.35   36.50   37.67   37.96 {'200': 2}           489
+setup   register_passkey                  2   31.68   49.47   51.05   51.45 {'200': 2}           16
+work    api_activity                      4    2.13    2.19    2.20    2.20 {'200': 4}           1059
+work    api_me                            4    4.27    4.79    4.80    4.80 {'200': 4}           54
+work    asset                            28    2.63    3.07    3.10    3.10 {'200': 28}          20654
+work    cmd_close:MOVING                 10    5.44    5.97    5.97    5.97 {'200': 10}          156
+work    cmd_open:MOVING                  10    4.64   11.97   11.99   12.00 {'200': 10}          164
+work    logout                            2    4.90    5.19    5.22    5.22 {'302': 2}           0
+work    page_login                        4    3.26    4.77    4.78    4.78 {'200': 4}           870
+work    poll_doors                      480    7.16   16.73   21.45   23.37 {'200': 480}         609
+work    signin_assertion                  4   21.46   31.02   31.07   31.08 {'200': 4}           40
+work    signin_options                    4    1.50    3.39    3.58    3.63 {'200': 4}           165
+work span 599s requests 550 (3307/h) authed-checked 536 (3223/h) response bytes 5.31 MB/h
+non-2xx in work: 0 set()
+RSS MiB: first 243 min 226 median 246 max 264 last 255 samples 132
+RSS trend: first-10% median 260  last-10% median 255
+CPU time total 9.8s over 659s wall -> avg 1.49% of one core
+heap-after-start garbage-first heap total 72704K, used 51672K [0x0000000345000000, 0x0000000355000000) | region size 1024K, 32 young (32768K), 5 survivors (5120K) | Metaspace used 55983K, committed 56768K, reserved 1114112K | class space used 7236K, committed 7616K, reserved 1048576K
+heap-idle garbage-first heap total 72704K, used 52165K [0x0000000345000000, 0x0000000355000000) | region size 1024K, 33 young (33792K), 5 survivors (5120K) | Metaspace used 55992K, committed 56768K, reserved 1114112K | class space used 7237K, committed 7616K, reserved 1048576K
+heap-end garbage-first heap total 72704K, used 61604K [0x0000000345000000, 0x0000000355000000) | region size 1024K, 38 young (38912K), 3 survivors (3072K) | Metaspace used 64408K, committed 65216K, reserved 1114112K | class space used 7873K, committed 8256K, reserved 1048576K
+nmt-after-start committed MiB 316 Java Heap=71 Class=8 Thread=80 Code=15 GC=37 Internal=1 Other=6 Symbol=18 Native Memory Tracking=3 Shared class space=12 Arena Chunk=11 Metaspace=48
+nmt-end committed MiB 397 Java Heap=71 Class=9 Thread=139 Code=33 GC=38 Internal=1 Other=8 Symbol=19 Native Memory Tracking=4 Shared class space=12 Arena Chunk=1 Synchronization=1 Metaspace=55
+GC pauses: n=47 p50=1.24ms max=10.80ms total=81ms
+driver: Driver.java:154: warning: [deprecation] asText() in JsonNode has been deprecated |                         if (d.path("name").asText().equals(door)) state = d.path("door").asText(); |
+===== soak-firestore-tuned -XX:MaxRAM=1g -XX:ActiveProcessorCount=2 -XX:+UseSerialGC -Xms32m -Xmx128m -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -Xss512k -XX:TieredStopAtLevel=1 -XX:+ExitOnOutOfMemoryError
+wall_to_first_healthz_s 1.803
+Started CasitaApplication in 1.488 seconds (process running for 1.688)
+after_start_rss_kb 183024 cpu_time 0:02.20
+idle_rss_kb 183408 cpu_time 0:02.22
+app_log_warn_error_lines 0
+end_rss_kb 140384 cpu_time 0:28.71
+phase   label                             n     p50     p95     p99     max statuses             bytes/req
+burst   api_activity                      2    0.76    0.85    0.86    0.86 {'200': 2}           2126
+burst   api_me                            2    2.02    2.47    2.51    2.52 {'200': 2}           54
+burst   asset                            14    1.87    3.78    3.82    3.83 {'200': 14}          20654
+burst   cmd_race:BUSY                     3   16.03   16.05   16.05   16.05 {'200': 3}           192
+burst   cmd_race:MOVING                   1   15.87   15.87   15.87   15.87 {'200': 1}           164
+burst   page_login                        2    3.71    5.96    6.16    6.21 {'200': 2}           870
+burst   poll_doors                      200    1.57    3.35    3.93    4.25 {'200': 200}         602
+burst   signin_assertion                  2    7.58    9.19    9.33    9.36 {'200': 2}           40
+burst   signin_options                    2    0.50    0.65    0.66    0.66 {'200': 2}           165
+checks  api_activity                      1    3.40    3.40    3.40    3.40 {'200': 1}           2
+checks  api_me                            1    5.60    5.60    5.60    5.60 {'200': 1}           53
+checks  asset                             7    2.80    6.98    7.43    7.55 {'200': 7}           20654
+checks  deny_cookie_other_node            1    0.99    0.99    0.99    0.99 {'401': 1}           0
+checks  deny_unknown_node                 1    1.41    1.41    1.41    1.41 {'401': 1}           0
+checks  page_login                        1    2.01    2.01    2.01    2.01 {'200': 1}           870
+checks  signin_assertion                  1   28.81   28.81   28.81   28.81 {'200': 1}           40
+checks  signin_options                    1    1.83    1.83    1.83    1.83 {'200': 1}           165
+setup   admin_invite                      2   26.19   45.60   47.33   47.76 {'200': 2}           285
+setup   page_login                        2    4.50    6.55    6.73    6.77 {'200': 2}           870
+setup   redeem_invite                     2   17.76   24.74   25.36   25.52 {'302': 2}           0
+setup   register_options                  2   28.71   47.97   49.68   50.10 {'200': 2}           489
+setup   register_passkey                  2   34.45   56.14   58.07   58.55 {'200': 2}           16
+work    api_activity                    120    0.87    2.04    4.56    4.99 {'200': 120}         2068
+work    api_me                          120    2.88    6.24   11.49   12.25 {'200': 120}         54
+work    asset                           840    2.26    3.96    5.22   11.27 {'200': 840}         20654
+work    cmd_close:MOVING                178    2.60    5.36    7.91    8.96 {'200': 178}         156
+work    cmd_open:MOVING                 178    2.52    5.41    7.08    7.74 {'200': 178}         164
+work    logout                          118    2.09    3.78    7.28    7.63 {'302': 118}         0
+work    page_login                      120    5.60   10.09   14.40   15.40 {'200': 120}         870
+work    poll_doors                     7132    3.47    7.25   17.20  199.26 {'200': 7132}        609
+work    signin_assertion                120   26.30   43.89   74.97   80.97 {'200': 120}         40
+work    signin_options                  120    0.90    1.63    2.00    2.27 {'200': 120}         165
+work span 3600s requests 9046 (9046/h) authed-checked 8568 (8568/h) response bytes 22.13 MB/h
+non-2xx in work: 0 set()
+RSS MiB: first 179 min 64 median 125 max 196 last 137 samples 728
+RSS trend: first-10% median 150  last-10% median 126
+CPU time total 28.7s over 3653s wall -> avg 0.79% of one core
+heap-after-start def new generation total 12672K, used 10249K [0x00000005a2800000, 0x00000005a35c0000, 0x00000005a52a0000) | eden space 11264K, 82% used [0x00000005a2800000, 0x00000005a3107bb8, 0x00000005a3300000) | from space 1408K, 71% used [0x00000005a3300000, 0x00000005a33fac28, 0x00000005a3460000) | to space 1408K, 0% used [0x00000005a3460000, 0x00000005a3460000, 0x00000005a35c0000) | tenured generation total 28112K, used 22385K [0x00000005a52a0000, 0x00000005a6e14000, 0x00000005aa800000)
+heap-idle def new generation total 12672K, used 10473K [0x00000005a2800000, 0x00000005a35c0000, 0x00000005a52a0000) | eden space 11264K, 84% used [0x00000005a2800000, 0x00000005a313fa20, 0x00000005a3300000) | from space 1408K, 71% used [0x00000005a3300000, 0x00000005a33fac28, 0x00000005a3460000) | to space 1408K, 0% used [0x00000005a3460000, 0x00000005a3460000, 0x00000005a35c0000) | tenured generation total 28112K, used 22385K [0x00000005a52a0000, 0x00000005a6e14000, 0x00000005aa800000)
+heap-end def new generation total 16192K, used 15771K [0x00000005a2800000, 0x00000005a3990000, 0x00000005a52a0000) | eden space 14400K, 97% used [0x00000005a2800000, 0x00000005a35a6fe8, 0x00000005a3610000) | from space 1792K, 100% used [0x00000005a37d0000, 0x00000005a3990000, 0x00000005a3990000) | to space 1792K, 0% used [0x00000005a3610000, 0x00000005a3610000, 0x00000005a37d0000) | tenured generation total 35888K, used 21103K [0x00000005a52a0000, 0x00000005a75ac000, 0x00000005aa800000)
+nmt-after-start committed MiB 173 Java Heap=41 Class=8 Thread=23 Code=9 Internal=1 Other=6 Symbol=18 Native Memory Tracking=3 Shared class space=12 Arena Chunk=3 Metaspace=45
+nmt-end committed MiB 215 Java Heap=52 Class=9 Thread=36 Code=21 Internal=1 Other=8 Symbol=19 Native Memory Tracking=3 Shared class space=12 Metaspace=49
+GC pauses: n=191 p50=1.46ms max=58.84ms total=551ms
+driver: Driver.java:154: warning: [deprecation] asText() in JsonNode has been deprecated |                         if (d.path("name").asText().equals(door)) state = d.path("door").asText(); |

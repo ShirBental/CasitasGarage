@@ -23,6 +23,7 @@
         <!-- Runs the home screen's JavaScript (static/poller.js) in the unit tests: no Node needed. -->
         <graaljs.version>25.0.1</graaljs.version>
         <aws-sdk.version>2.50.0</aws-sdk.version>
+        <google-cloud-bom.version>26.90.0</google-cloud-bom.version>
         <!-- Tests only: DynamoDB Local, in the test JVM (no Docker, no port, no AWS account). -->
         <dynamodb-local.version>2.6.1</dynamodb-local.version>
         <sqlite4java.version>1.0.392</sqlite4java.version>
@@ -36,6 +37,40 @@
                 <version>${aws-sdk.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.google.cloud</groupId>
+                <artifactId>libraries-bom</artifactId>
+                <version>${google-cloud-bom.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- GraalJS runs only in the tests, and its SDK must match it exactly. Google's libraries-bom (Firestore)
+                 also manages org.graalvm.sdk:nativeimage and word, at 25.0.0, which would mix into polyglot 25.0.1:
+                 entries here win over every imported BOM. Test scope: nothing here reaches the app. -->
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>collections</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>nativeimage</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>word</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>jniutils</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -69,6 +104,12 @@
                     <artifactId>netty-nio-client</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+        <!-- Firestore (casita.storage=firestore). Credentials from Application Default Credentials only: on GCE, the
+             VM's attached service account through the metadata server. No key files. -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-firestore</artifactId>
         </dependency>
 
         <dependency>
