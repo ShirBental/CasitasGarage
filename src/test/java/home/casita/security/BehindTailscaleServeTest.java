@@ -19,7 +19,8 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 
-import home.casita.security.access.Invites;
+import home.casita.security.access.Invitations;
+import home.casita.security.store.SecurityStore;
 import home.casita.security.access.TestTailnet;
 
 /**
@@ -47,7 +48,9 @@ class BehindTailscaleServeTest {
     @LocalServerPort
     int port;
     @Autowired
-    Invites invites;
+    Invitations invitations;
+    @Autowired
+    SecurityStore store;
 
     private final HttpClient http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
     private final Map<String, String> cookies = new LinkedHashMap<>(); // what Safari would keep for the site
@@ -85,7 +88,7 @@ class BehindTailscaleServeTest {
 
     @Test
     void anInviteSignInBehindTheProxyRedirectsToTheRealSiteAndFaceIdSetupLoads() throws Exception {
-        String token = invites.create("shir", "Shir's iPhone").token();
+        String token = invitations.create("shir", "Shir's iPhone").token();
         String link = ORIGIN + "/login/ott?token=" + token;
 
         // 1. The link opens Spring's token page; its CSRF cookie is Secure, as the site is https.
@@ -113,7 +116,7 @@ class BehindTailscaleServeTest {
 
     @Test
     void anInviteIsntRedeemedWhenTheDeviceCantBeVerified() throws Exception {
-        Invites.Created invite = invites.create("shir", "Shir's iPhone");
+        Invitations.Created invite = invitations.create("shir", "Shir's iPhone");
         String token = invite.token();
         HttpResponse<String> page = send(proxied("/login/ott?token=" + token).GET());
         Matcher hidden = Pattern.compile("name=\"_csrf\" type=\"hidden\" value=\"([^\"]+)\"").matcher(page.body());
@@ -127,7 +130,8 @@ class BehindTailscaleServeTest {
 
         assertThat(signIn.statusCode()).isEqualTo(302);
         assertThat(signIn.headers().firstValue("Location").orElseThrow()).isIn("/login?device-unverified", ORIGIN + "/login?device-unverified");
-        assertThat(invites.pending()).extracting(Invites.Invite::id).contains(invite.invite().id()); // still unused
+        assertThat(store.invitationById(invite.invitation().inviteId())).get()
+                .extracting(SecurityStore.Invitation::status).isEqualTo(SecurityStore.InvitationStatus.PENDING); // still unused
     }
 
     @Test

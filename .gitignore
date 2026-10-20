@@ -17,3 +17,6 @@ config/meross.local.json
 
 # Passkeys and invite links (casita.security.data-dir)
 /data/
+
+# DynamoDB Local (tests) writes this in the working directory
+dynamodb-local-metadata.json

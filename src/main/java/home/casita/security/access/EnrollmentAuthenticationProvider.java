@@ -3,36 +3,50 @@ package home.casita.security.access;
 import java.util.List;
 
 import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.ott.OneTimeTokenAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import home.casita.security.store.SecurityStore.EnrollmentClaim;
+import home.casita.security.store.StoreUnavailableException;
 
 /**
- * Redeems an invite. The result can only enroll a device (ROLE_ENROLLING): it can't see or move the door,
- * and an invite is never a way to sign in day to day.
+ * Redeems an invitation on the device RedemptionGuardFilter verified. The result can only enroll that device
+ * (ROLE_ENROLLING): it can't see or move the door, and an invitation is never a way to sign in day to day.
  */
 public class EnrollmentAuthenticationProvider implements AuthenticationProvider {
 
-    private final Invites invites;
+    private final Invitations invitations;
     private final List<String> family;
 
-    public EnrollmentAuthenticationProvider(Invites invites, List<String> family) {
-        this.invites = invites;
+    public EnrollmentAuthenticationProvider(Invitations invitations, List<String> family) {
+        this.invitations = invitations;
         this.family = family;
     }
 
     @Override
     public Authentication authenticate(Authentication authentication) {
         String token = ((OneTimeTokenAuthenticationToken) authentication).getTokenValue();
-        Invites.Invite invite = invites.redeem(token).orElseThrow(() -> new BadCredentialsException("Invalid or expired invite"));
-        if (!family.contains(invite.member())) {
-            invites.revoke(invite.id());
-            throw new BadCredentialsException("Invite for someone outside the family");
+        DeviceIdentity device = RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes a
+                && a.getRequest().getAttribute(AccessSession.REDEEMING_DEVICE) instanceof DeviceIdentity d ? d : null;
+        if (device == null) throw new BadCredentialsException("Device not verified");
+        EnrollmentClaim claim;
+        try {
+            claim = invitations.redeem(token, device).orElseThrow(() -> new BadCredentialsException("Invalid, used, expired or revoked invitation"));
+        } catch (StoreUnavailableException e) {
+            throw new AuthenticationServiceException("Security store unavailable", e);
         }
-        OneTimeTokenAuthenticationToken enrolling = OneTimeTokenAuthenticationToken.authenticated(invite.member(),
+        if (!family.contains(claim.memberId())) {
+            invitations.revokeByHash(claim.tokenHash(), claim.inviteId());
+            throw new BadCredentialsException("Invitation for someone outside the family");
+        }
+        OneTimeTokenAuthenticationToken enrolling = OneTimeTokenAuthenticationToken.authenticated(claim.memberId(),
                 List.of(new SimpleGrantedAuthority(AccessSession.ROLE_ENROLLING)));
-        enrolling.setDetails(invite);
+        enrolling.setDetails(claim);
         return enrolling;
     }
 

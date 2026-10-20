@@ -15,6 +15,8 @@ import org.springframework.security.authorization.AuthorizationManager;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 
+import home.casita.security.store.FileSecurityStore;
+
 import jakarta.servlet.http.HttpServletRequest;
 
 /**
@@ -34,11 +36,11 @@ public class LocalAdmin implements AuthorizationManager<RequestAuthorizationCont
         try {
             if (!Files.exists(file)) {
                 Files.createDirectories(dataDir);
-                AccessStore.restrict(dataDir, "rwx------");
+                FileSecurityStore.restrict(dataDir, "rwx------");
                 byte[] raw = new byte[32];
                 new SecureRandom().nextBytes(raw);
                 Files.createFile(file);
-                AccessStore.restrict(file, "rw-------");
+                FileSecurityStore.restrict(file, "rw-------");
                 Files.writeString(file, HexFormat.of().formatHex(raw) + "\n", StandardCharsets.UTF_8);
             }
             this.secret = Files.readString(file, StandardCharsets.UTF_8).trim().getBytes(StandardCharsets.UTF_8);
