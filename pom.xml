@@ -45,6 +45,33 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+            <!-- GraalJS runs only in the tests, and its SDK must match it exactly. Google's libraries-bom (Firestore)
+                 also manages org.graalvm.sdk:nativeimage and word, at 25.0.0, which would mix into polyglot 25.0.1:
+                 entries here win over every imported BOM. Test scope: nothing here reaches the app. -->
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>collections</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>nativeimage</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>word</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.graalvm.sdk</groupId>
+                <artifactId>jniutils</artifactId>
+                <version>${graaljs.version}</version>
+                <scope>test</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
