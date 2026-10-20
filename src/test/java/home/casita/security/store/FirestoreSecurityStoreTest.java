@@ -374,6 +374,115 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         }
     }
 
+    /* ---------- a decision can't land on documents that changed after it read them ---------- */
+
+    /** Runs {@code call} until its commit is about to be sent, does {@code meanwhile} from another server, then lets it go. */
+    private <T> T interleaved(java.util.concurrent.Callable<T> call, Runnable meanwhile) throws Exception {
+        FaultyFirestore.Hold hold = faults.holdNext("Commit");
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            java.util.concurrent.Future<T> result = pool.submit(call);
+            hold.reached();      // its read is done and its decision made; its write isn't sent yet
+            meanwhile.run();     // another server changes what it read
+            hold.release();
+            return result.get(30, TimeUnit.SECONDS);
+        } finally {
+            hold.release();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void anEnrollmentDecidedBeforeTheMemberWasRevokedCantLandAfter() throws Exception {
+        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        CredentialRecord record = passkey("shir", "c2hpcnMta2V5");
+        SecurityStore other = restarted();
+
+        boolean enrolled = interleaved(() -> store.enroll(claim, record, null), () -> other.revokeMember("shir"));
+
+        assertThat(enrolled).isFalse();
+        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(store.passkey(record.getCredentialId())).isEmpty();
+        assertThat(events("ENROLLMENT_REFUSED")).singleElement().extracting(SecurityEvent::reason).isEqualTo("member-inactive");
+        assertThat(events("DEVICE_ENROLLED")).isEmpty();
+    }
+
+    @Test
+    void anEnrollmentWithAnExistingPasskeyDecidedBeforeItWasRevokedCantLandAfter() throws Exception {
+        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        EnrollmentClaim ipad = consume(invite("shir"), TestTailnet.SHIR_IPAD);
+        SecurityStore other = restarted();
+
+        boolean enrolled = interleaved(() -> store.enroll(ipad, null, Bytes.fromBase64("c2hpcnMta2V5")),
+                () -> other.revokePasskey(Bytes.fromBase64("c2hpcnMta2V5")));
+
+        assertThat(enrolled).isFalse();
+        assertThat(store.device(TestTailnet.SHIR_IPAD.nodeId())).isEmpty();
+    }
+
+    @Test
+    void anEnrollmentDecidedBeforeItsInvitationWasRevokedCantLandAfter() throws Exception {
+        Invitation i = invite("shir");
+        EnrollmentClaim claim = consume(i, TestTailnet.SHIR_PHONE);
+        CredentialRecord record = passkey("shir", "c2hpcnMta2V5");
+        SecurityStore other = restarted();
+
+        boolean enrolled = interleaved(() -> store.enroll(claim, record, null),
+                () -> assertThat(other.revokeInvitation(i.tokenHash(), i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED));
+
+        assertThat(enrolled).isFalse();
+        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(store.invitation(i.tokenHash())).get().extracting(Invitation::status).isEqualTo(InvitationStatus.REVOKED);
+    }
+
+    @Test
+    void anEnrollmentDecidedBeforeAnotherMemberTookTheNodeCantLandAfter() throws Exception {
+        user("shir");
+        user("hubby");
+        EnrollmentClaim shir = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim hubby = consume(invite("hubby"), TestTailnet.SHIR_PHONE);
+        CredentialRecord shirs = passkey("shir", "c2hpcg");
+        CredentialRecord hubbys = passkey("hubby", "aHViYnk");
+        SecurityStore other = restarted();
+
+        boolean enrolled = interleaved(() -> store.enroll(shir, shirs, null), () -> assertThat(other.enroll(hubby, hubbys, null)).isTrue());
+
+        assertThat(enrolled).isFalse();
+        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("hubby")).isTrue());
+        assertThat(store.passkey(shirs.getCredentialId())).isEmpty();
+    }
+
+    @Test
+    void aRedemptionDecidedBeforeTheInviteWasRevokedOrUsedCantLandAfter() throws Exception {
+        Invitation revoked = invite("shir");
+        SecurityStore other = restarted();
+        Optional<Invitation> afterRevoke = interleaved(
+                () -> store.consume(revoked.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1"),
+                () -> other.revokeInvitation(revoked.tokenHash(), revoked.inviteId()));
+        assertThat(afterRevoke).isEmpty();
+        assertThat(store.invitation(revoked.tokenHash())).get().extracting(Invitation::status).isEqualTo(InvitationStatus.REVOKED);
+
+        Invitation raced = invite("shir");
+        Optional<Invitation> afterOther = interleaved(
+                () -> store.consume(raced.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-2", "eid-2"),
+                () -> assertThat(other.consume(raced.tokenHash(), TestTailnet.SHIR_IPAD.nodeId(), "ipad", "rid-3", "eid-3")).isPresent());
+        assertThat(afterOther).isEmpty();
+        assertThat(store.invitation(raced.tokenHash())).get().extracting(Invitation::enrollmentId).isEqualTo("eid-3");
+        assertThat(events("INVITATION_CONSUMED")).hasSize(1);
+    }
+
+    @Test
+    void aSignInRecordedAfterThePasskeyWasRevokedIsRefused() throws Exception {
+        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        CredentialRecord used = passkey("shir", "c2hpcnMta2V5");
+        SecurityStore other = restarted();
+
+        boolean recorded = interleaved(() -> store.recordUse(used, "shir"), () -> other.revokePasskey(used.getCredentialId()));
+
+        assertThat(recorded).isFalse();
+        assertThat(events("SIGNED_IN")).isEmpty();
+    }
+
     /* ---------- revocation and outages ---------- */
 
     @Test

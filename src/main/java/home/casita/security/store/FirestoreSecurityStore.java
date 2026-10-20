@@ -575,6 +575,9 @@ public class FirestoreSecurityStore implements SecurityStore {
         long deadline = System.nanoTime() + timeout.toNanos();
         StoreUnavailableException last = null;
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            // No new read once the time is up: one that has started may still take up to the timeout itself, so a call
+            // ends within about twice the timeout at worst.
+            if (attempt > 1 && deadline - System.nanoTime() <= 0) break;
             Decision<T> d = decide.decide();
             if (d.writes() == null) return d.answer();
             long left = deadline - System.nanoTime();

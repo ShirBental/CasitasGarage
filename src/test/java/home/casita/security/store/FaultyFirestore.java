@@ -34,12 +34,45 @@ public final class FaultyFirestore {
     /** After the next response lost on this RPC, everything goes down: the caller's retries and read-back fail too. */
     private final Map<String, AtomicBoolean> downAfterLoss = new ConcurrentHashMap<>();
 
+    /** A call held at the door: {@link #reached} once it arrives, sent only after {@link #release}. */
+    public static final class Hold {
+        private final java.util.concurrent.CountDownLatch arrived = new java.util.concurrent.CountDownLatch(1);
+        private final java.util.concurrent.CountDownLatch released = new java.util.concurrent.CountDownLatch(1);
+
+        /** Waits until the held call has been made (its decision is read and made, its write not yet sent). */
+        public void reached() throws InterruptedException {
+            if (!arrived.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("the held call never came");
+        }
+
+        public void release() {
+            released.countDown();
+        }
+    }
+
+    private final Map<String, Hold> holds = new ConcurrentHashMap<>();
+
+    /** Holds the next call of the RPC until released, so a test can change Firestore between a decision and its write. */
+    public Hold holdNext(String rpc) {
+        Hold hold = new Hold();
+        holds.put(rpc, hold);
+        return hold;
+    }
+
     public ClientInterceptor interceptor() {
         return new ClientInterceptor() {
             @Override
             public <Q, R> ClientCall<Q, R> interceptCall(MethodDescriptor<Q, R> method, CallOptions options, Channel next) {
                 String op = method.getBareMethodName();
                 calls.computeIfAbsent(op, k -> new AtomicInteger()).incrementAndGet();
+                Hold hold = holds.remove(op);
+                if (hold != null) {
+                    hold.arrived.countDown();
+                    try {
+                        hold.released.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
                 if (down.get()) return failing(Status.UNAVAILABLE.withDescription("Firestore is down (test)"));
                 if (!take(skip, op) && take(failBefore, op)) return failing(Status.UNAVAILABLE.withDescription("Failed before sending " + op + " (test)"));
                 if (take(abort, op)) return failing(Status.ABORTED.withDescription("Contention on " + op + " (test)"));
@@ -136,6 +169,8 @@ public final class FaultyFirestore {
         loseResponse.clear();
         abort.clear();
         downAfterLoss.clear();
+        holds.values().forEach(Hold::release);
+        holds.clear();
         calls.clear();
         down.set(false);
     }

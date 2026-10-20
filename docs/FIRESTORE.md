@@ -147,17 +147,31 @@ share documents. Faults are injected at the gRPC layer **under** the real client
 (`FaultyFirestore`): failures before sending, applied-but-lost answers, `ABORTED` contention, and outages.
 The library's own retries then behave as they would against Google.
 
+**The emulator jar:** `cloud-firestore-emulator-v1.22.0.jar`, 136,707,194 bytes, from Google's bucket that
+firebase-tools downloads it from,
+`https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.22.0.jar`.
+SHA-256 `9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c` (it also matches the bucket's own
+MD5, `XXTMa+6eGFYNLq4sZED9Ew==`). It needs only Java 21.
+
+**Locally:**
+
 ```bash
-# Once: the emulator jar (137 MB), from the bucket firebase-tools downloads it from
-curl -fo /path/cloud-firestore-emulator-v1.22.0.jar \
+curl -fo ~/cloud-firestore-emulator-v1.22.0.jar \
   https://storage.googleapis.com/firebase-preview-drop/emulator/cloud-firestore-emulator-v1.22.0.jar
-mvn test -Dfirestore.emulator.jar=/path/cloud-firestore-emulator-v1.22.0.jar
-# or, with an emulator already running: mvn test -Dfirestore.emulator.host=127.0.0.1:PORT
+echo "9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c  $HOME/cloud-firestore-emulator-v1.22.0.jar" | shasum -a 256 -c -
+mvn test -Dfirestore.emulator.jar=$HOME/cloud-firestore-emulator-v1.22.0.jar -Dfirestore.emulator.required=true
+# or, with an emulator already running (never on 8080): mvn test -Dfirestore.emulator.host=127.0.0.1:PORT
 ```
 
-Without either property the Firestore tests are **skipped** (surefire counts them as 0 tests run). The rest of
-the suite runs as before. CI should add `-Dfirestore.emulator.required=true`: then a missing emulator fails the
-build instead of skipping silently.
+Without either property, the Firestore tests are **skipped** (surefire counts them as 0 tests run), and the rest
+of the suite runs as before. `-Dfirestore.emulator.required=true` makes a missing emulator a failure.
+
+**CI** (`.github/workflows/ci.yml`): caches the jar by version, verifies its SHA-256 (a mismatch fails the job),
+and runs `mvn verify -Dfirestore.emulator.jar=… -Dfirestore.emulator.required=true` with
+`FIRESTORE_EMULATOR_HOST` and `GOOGLE_APPLICATION_CREDENTIALS` unset. The tests start the emulator on
+127.0.0.1 and a free port, in a fresh project per store. Then `scripts/ci/check-test-report.py` fails the job
+if any test was skipped other than the opt-in Meross live tests, or if fewer than 60 / 50 Firestore store /
+access-flow tests ran. No Google account and no credentials exist in CI: nothing can reach a real project.
 
 **What the emulator can't show:** IAM, real network latency, Firestore's production lock manager (the
 emulator's contention behaviour is close, but not the same), TTL, PITR, and quotas. Latency measured
