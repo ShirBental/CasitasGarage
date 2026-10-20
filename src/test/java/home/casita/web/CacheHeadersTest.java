@@ -2,51 +2,108 @@ package home.casita.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.RequestBuilder;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import home.casita.security.access.Invites;
+import home.casita.security.access.LocalAdmin;
+import home.casita.security.access.TestTailnet;
+
 /**
  * Cache-Control by kind of response, through the real filter chain: hashed static files for a year, pages and
  * the manifest revalidated, the API and everything about signing in never stored. And none of it changes who
- * may fetch what, or the security headers.
+ * may fetch what, or the security headers. Signed-in requests come from Shir's authorized phone through
+ * tailscale serve, signed in with a passkey (so they pass AccessCheckFilter); the passkey page from a phone
+ * in enrollment, the only session that page is for.
  */
-@SpringBootTest(properties = {
-        "casita.security.data-dir=target/test-data/cache-headers",
-        "casita.security.family=shir,hubby"})
-@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
+@SpringBootTest(properties = "casita.security.family=shir,hubby")
+@Import(TestTailnet.Config.class)
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class CacheHeadersTest {
 
-    private static final RequestPostProcessor FAMILY = user("shir").roles("FAMILY");
+    /** A fresh data directory for every run, emptied after every test: an enrolled phone can't enroll again. */
+    private static final Path DATA;
+
+    static {
+        try {
+            DATA = Files.createTempDirectory("casita-cache-headers");
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @DynamicPropertySource
+    static void dataDir(DynamicPropertyRegistry registry) {
+        registry.add("casita.security.data-dir", DATA::toString);
+    }
+
     private static final Pattern HASHED = Pattern.compile("-[0-9a-f]{32}\\.[a-z0-9]+$");
     private static final Pattern LINK = Pattern.compile("(?:src|href)=\"(/[^\"]*)\"|\"src\": \"(/[^\"]*)\"");
 
     @Autowired
     private WebApplicationContext context;
+    @Autowired
+    private Invites invitations;
+    @Autowired
+    private TestTailnet.FakeWhois whois;
 
     private MockMvc mvc;
+
+    /** Shir, signed in with a passkey, on her authorized phone. */
+    private RequestPostProcessor FAMILY;
 
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        FAMILY = on(TestTailnet.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestTailnet.SHIR_PHONE), TestTailnet.SHIR_PHONE);
+    }
+
+    @AfterEach
+    void forgetEnrollments() throws IOException {
+        Files.deleteIfExists(DATA.resolve("security.json"));
+        whois.reset();
+    }
+
+    private static RequestPostProcessor on(MockHttpSession session, TestTailnet.Phone phone) {
+        return request -> {
+            request.setSession(session);
+            return TestTailnet.from(phone).postProcessRequest(request);
+        };
+    }
+
+    /** Hubby's new phone, after tapping the invite link's Sign in: an enrollment-only session. */
+    private RequestPostProcessor enrolling() throws Exception {
+        String token = invitations.create("hubby", "Hubby's iPhone").token();
+        var redeemed = mvc.perform(post("/login/ott").param("token", token).with(csrf())
+                .with(TestTailnet.from(TestTailnet.HUBBY_PHONE))).andReturn();
+        assertThat(redeemed.getResponse().getRedirectedUrl()).isEqualTo("/passkey");
+        return on((MockHttpSession) redeemed.getRequest().getSession(), TestTailnet.HUBBY_PHONE);
     }
 
     private MockHttpServletResponse fetch(RequestBuilder request) throws Exception {
@@ -147,9 +204,18 @@ class CacheHeadersTest {
             if (link.equals("/login/webauthn.js")) continue;    // Spring Security's own script, as before
             assertImmutable(fetch(get(link)), link);
         }
-        // The home screen's files still need someone signed in, by either name.
+        // The home screen's files still need someone signed in, by either name. (Its app icons are public since
+        // PR #8, for Add to Home Screen: PublicFilesTest.)
+        List<String> refused = new ArrayList<>();
         for (String link : links("/", FAMILY)) {
-            if (link.contains("/common-") || link.contains("/casita-") || link.equals("/manifest.webmanifest")) continue;
+            if (link.contains("/common-") || link.contains("/casita-") || link.equals("/manifest.webmanifest")
+                    || link.startsWith("/icons/")) continue;
+            refused.add(link);
+            refused.add(link.replaceAll("-[0-9a-f]{32}(\\.[a-z0-9]+)$", "$1"));
+        }
+        assertThat(refused).contains("/app.js", "/poller.js", "/voice.js")
+                .anyMatch(l -> l.matches("/app-[0-9a-f]{32}\\.js")).anyMatch(l -> l.matches("/poller-[0-9a-f]{32}\\.js"));
+        for (String link : refused) {
             MockHttpServletResponse response = fetch(get(link));
             assertThat(response.getStatus()).as(link).isEqualTo(302);
             assertNoStore(response, link);
@@ -160,10 +226,16 @@ class CacheHeadersTest {
 
     @Test
     void pagesAndTheManifestAreRevalidatedWithAnEtag() throws Exception {
-        String[][] pages = {{"/", "y"}, {"/index.html", "y"}, {"/passkey", "y"}, {"/webauthn/register", "y"},
+        // y: signed in; e: enrolling (the passkey page is only for setting up a passkey); n: nobody.
+        String[][] pages = {{"/", "y"}, {"/index.html", "y"}, {"/passkey", "e"}, {"/webauthn/register", "y"},
                 {"/login", "n"}, {"/login.html", "n"}, {"/manifest.webmanifest", "n"}};
+        RequestPostProcessor enrolling = enrolling();
         for (String[] page : pages) {
-            RequestPostProcessor who = page[1].equals("y") ? FAMILY : nobody();
+            RequestPostProcessor who = switch (page[1]) {
+                case "y" -> FAMILY;
+                case "e" -> enrolling;
+                default -> nobody();
+            };
             MockHttpServletResponse response = fetch(get(page[0]).with(who));
             assertThat(response.getStatus()).as(page[0]).isEqualTo(200);
             assertThat(response.getHeader("Cache-Control")).as(page[0]).isEqualTo("no-cache");
@@ -208,5 +280,15 @@ class CacheHeadersTest {
         assertNoStore(fetch(post("/login/ott").param("token", "not-a-token").with(csrf())), "signing in with an invite");
         assertNoStore(fetch(post("/logout").with(FAMILY).with(csrf())), "signing out");
         assertNoStore(fetch(get("/login/webauthn.js")), "Spring Security's passkey script");
+        // Access administration (PR #8): never stored, refused or not.
+        String admin = Files.readString(DATA.resolve("admin.secret")).trim();
+        MockHttpServletResponse access = fetch(get("/admin/access").header(LocalAdmin.HEADER, admin));
+        assertThat(access.getStatus()).isEqualTo(200);
+        assertNoStore(access, "the access listing");
+        MockHttpServletResponse invite = fetch(post("/admin/invites").param("member", "hubby").param("label", "Hubby's iPad")
+                .header(LocalAdmin.HEADER, admin));
+        assertThat(invite.getStatus()).isEqualTo(200);
+        assertNoStore(invite, "a new invite");
+        assertNoStore(fetch(get("/admin/access")), "the access listing without the admin secret");
     }
 }

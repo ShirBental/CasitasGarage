@@ -14,7 +14,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -22,7 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.mock.web.MockHttpSession;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -31,8 +30,11 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
-/** Sign-in end to end through the real filter chain: public pages, passkey options, invites, CSRF, CSP. */
+import home.casita.security.access.TestTailnet;
+
+/** Sign-in through the real filter chain: public pages, passkey options, CSRF, CSP. Invites and devices: AccessFlowTest. */
 @SpringBootTest
+@Import(TestTailnet.Config.class)
 @DirtiesContext
 class SignInTest {
 
@@ -84,6 +86,11 @@ class SignInTest {
         for (String asset : new String[] {"/login.js", "/common.js", "/casita.css", "/watson.svg"}) {
             mvc.perform(get(asset)).andExpect(status().isOk());
         }
+        // The app icons too (iOS fetches them without the session cookie), and nothing else under /icons.
+        for (String icon : new String[] {"/icons/apple-touch-icon.png", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png"}) {
+            mvc.perform(get(icon)).andExpect(status().isOk()).andExpect(content().contentType("image/png"));
+        }
+        mvc.perform(get("/icons/")).andExpect(status().is3xxRedirection());
         mvc.perform(get("/login/webauthn.js")).andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("setupLogin")));
     }
@@ -117,54 +124,27 @@ class SignInTest {
     }
 
     @Test
-    void settingUpAPasskeyNeedsSomeoneSignedIn() throws Exception {
-        mvc.perform(post("/webauthn/register/options").with(csrf())).andExpect(status().is4xxClientError());
-        mvc.perform(post("/webauthn/register/options").with(csrf()).with(user("shir").roles("FAMILY")))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.rp.id").value("localhost"))
-                .andExpect(jsonPath("$.user.name").value("shir"));
+    void settingUpAPasskeyNeedsAnEnrollmentNotJustASignIn() throws Exception {
+        mvc.perform(post("/webauthn/register/options").with(csrf())).andExpect(status().isForbidden());
+        mvc.perform(post("/webauthn/register/options").with(csrf()).with(user("shir").roles("FAMILY")).with(TestTailnet.from(TestTailnet.SHIR_PHONE)))
+                .andExpect(status().isForbidden());
+        // The enrollment itself is covered in AccessFlowTest.
     }
 
     /* ---------- invites ---------- */
 
     @Test
-    void anInviteIsWrittenToAPrivateFileUsedOnceAndLeadsToFaceIdSetup() throws Exception {
-        MvcResult asked = mvc.perform(post("/ott/generate").param("username", "hubby"))
-                .andExpect(status().isOk()).andReturn();
-        assertThat(asked.getResponse().getContentAsString()).doesNotContain("token=");
-
-        Path invite = DATA.resolve("invites/hubby.txt");
-        assertThat(invite).exists();
-        assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(invite))).isEqualTo("rw-------");
-        Matcher link = Pattern.compile("^http://localhost:8080/login/ott\\?token=(\\S+)$").matcher(Files.readString(invite).trim());
-        assertThat(link.matches()).isTrue();
-        String token = link.group(1);
-
-        // The link opens Spring's token page, which posts the token back.
-        mvc.perform(get("/login/ott").param("token", token)).andExpect(status().isOk());
-        MockHttpSession session = (MockHttpSession) mvc.perform(post("/login/ott").param("token", token).with(csrf()))
-                .andExpect(status().isFound()).andExpect(redirectedUrl("/passkey"))
-                .andReturn().getRequest().getSession();
-        mvc.perform(get("/api/me").session(session)).andExpect(status().isOk()).andExpect(jsonPath("$.name").value("hubby"));
-
-        // Single use.
-        mvc.perform(post("/login/ott").param("token", token).with(csrf())).andExpect(status().isFound())
-                .andExpect(redirectedUrl("/login?error"));
-    }
-
-    @Test
-    void anInviteForSomeoneOutsideTheFamilyWritesNothingAndAnswersTheSame() throws Exception {
-        String family = mvc.perform(post("/ott/generate").param("username", "shir")).andReturn().getResponse().getContentAsString();
-        String stranger = mvc.perform(post("/ott/generate").param("username", "stranger")).andReturn().getResponse().getContentAsString();
-
-        assertThat(stranger).isEqualTo(family);
-        assertThat(DATA.resolve("invites/stranger.txt")).doesNotExist();
-    }
-
-    @Test
     void aWrongInviteTokenSignsNobodyIn() throws Exception {
-        mvc.perform(post("/login/ott").param("token", "not-a-token").with(csrf()))
+        mvc.perform(post("/login/ott").param("token", "not-a-token").with(csrf()).with(TestTailnet.from(TestTailnet.SHIR_PHONE)))
                 .andExpect(status().isFound()).andExpect(redirectedUrl("/login?error"));
+        // From a device Casita can't identify, it isn't even tried.
+        mvc.perform(post("/login/ott").param("token", "not-a-token").with(csrf()))
+                .andExpect(status().isFound()).andExpect(redirectedUrl("/login?device-unverified"));
+    }
+
+    @Test
+    void theInviteLinkOpensSpringsTokenPage() throws Exception {
+        mvc.perform(get("/login/ott").param("token", "anything")).andExpect(status().isOk());
     }
 
     /* ---------- signing out ---------- */
