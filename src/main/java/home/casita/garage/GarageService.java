@@ -186,7 +186,7 @@ public class GarageService {
         boolean wantOpen = action.wantsOpen();
         if (reading.open() == wantOpen) {
             record(who, action, Outcome.ALREADY);
-            return result(Outcome.ALREADY, wantOpen ? "It's already open." : "It's already closed.");
+            return result(Outcome.ALREADY, wantOpen ? "It isn't closed, so there's nothing to open." : "It's already closed.");
         }
         if (reading.open() && !settled()) {
             return result(Outcome.BUSY,

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f8f4ed">
+  <title>Casita: Face ID</title>
+  <link rel="stylesheet" href="/casita.css">
+</head>
+<body class="welcome">
+  <main>
+    <div class="app-icon" aria-hidden="true"></div>
+    <h1>Welcome home</h1>
+    <p class="voice">Let's set up Face ID, so next time you can sign in with just a glance.</p>
+    <p class="success" id="success">All set! From now on, sign in with Face ID. <a href="/">Go to Casita</a></p>
+    <p class="error" id="error"></p>
+    <label class="field">Name this phone
+      <input id="label" type="text" value="iPhone" maxlength="40" autocomplete="off">
+    </label>
+    <button id="register" class="primary" type="button">Set up Face ID</button>
+    <p class="note"><a class="link" href="/">Back to Casita</a></p>
+  </main>
+  <script src="/login/webauthn.js"></script>
+  <script src="/common.js"></script>
+  <script src="/passkey.js"></script>
+</body>
+</html>

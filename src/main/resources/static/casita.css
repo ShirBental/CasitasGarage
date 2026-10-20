@@ -1,0 +1,220 @@
+/* Casita: two doors, one house, one tap each. Warm cream, deep pine, sage, terracotta. iPhone first. */
+:root {
+  /* The approved palette (docs/APP.md, "Look") */
+  --sage: #6b7f6b;          /* accent */
+  --terracotta: #c65a3a;    /* the one action */
+  --cream: #f8f4ed;         /* background */
+  --pine: #2e4a3f;          /* text */
+  --sand: #d9c9b5;          /* secondary surfaces */
+  /* Derived, for contrast on cream (AA for body text) */
+  --paper: #fdfbf7;
+  --sand-soft: #ece3d6;
+  --hairline: #e6dccd;
+  --sage-soft: #e4e9e0;
+  --muted: #56685a;           /* 5.4:1 on cream */
+  --terracotta-deep: #a8452a; /* 5.4:1 on cream */
+  --serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  font-family: -apple-system, system-ui, "SF Pro Text", "Segoe UI", sans-serif;
+  color: var(--pine);
+  background: var(--cream);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--cream);
+  padding: max(10px, env(safe-area-inset-top)) max(22px, env(safe-area-inset-right))
+           max(20px, env(safe-area-inset-bottom)) max(22px, env(safe-area-inset-left));
+}
+
+main { max-width: 440px; margin: 0 auto; }
+p { line-height: 1.45; }
+a { color: var(--pine); }
+h1, h2 { font-weight: 600; margin: 0; }
+
+
+/* ---------- home: two doors, one house ---------- */
+.home main { display: flex; flex-direction: column; min-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom))); }
+
+.top { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+.wordmark { font-family: var(--serif); font-size: 1.3rem; letter-spacing: 0.01em; }
+.account {
+  width: 44px; height: 44px; margin-left: auto; margin-right: -8px; border: none; border-radius: 50%; background: none;
+  color: var(--pine); display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+
+/* The mode ("Simulation mode") sits on the header row, so the doors can start high. */
+.tag {
+  display: none; padding: 4px 10px; border-radius: 999px;
+  background: var(--sage-soft); color: var(--pine); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.01em;
+}
+.tag.shown { display: inline-block; }
+
+/* Watson on top, resting his chin on the line above Ford; Ford and Toyota together below him, one
+   hairline between them. A quarter of the spare height goes above Watson and the rest below the doors,
+   so the group sits high under the header; both doors fit a small iPhone without scrolling. */
+.spare { flex: 1; min-height: 4px; }
+.spare.below { flex: 3; }
+.spare[hidden], .doors[hidden], .door[hidden], .offline[hidden] { display: none; }
+.doors { flex: none; }
+
+/* Each door: its name as the heading of its area, then its status, then its one round control on the
+   right. Both doors are equal; colour only ever says status or action, never which car. */
+.door { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 26px 0; }
+.door-text { min-width: 0; }
+.door .name {
+  margin: 0; font-family: var(--serif); font-weight: 600; font-size: 2.25rem; line-height: 1.05;
+  letter-spacing: -0.01em; color: var(--pine);
+}
+.door .state { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 1.3rem; font-weight: 600; line-height: 1.2; }
+.door .dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.door .detail { margin: 4px 0 0; min-height: 1.45em; font-size: 0.95rem; color: var(--muted); }
+.door.closed .state { color: var(--pine); }
+.door.closed .dot { background: var(--sage); }
+.door.not-closed .state, .door.moving .state, .door.alert .state { color: var(--terracotta-deep); }
+.door.not-closed .dot, .door.moving .dot, .door.alert .dot { background: var(--terracotta); }
+.door.quiet .state { color: var(--muted); }
+.door .note { margin: 2px 0 0; font-size: 0.85rem; color: var(--muted); text-align: left; }
+.door .note:empty { display: none; }
+/* A door the app can't command yet: its reason sits right under its status, with no empty feedback lines. */
+.door.unavailable .detail:empty, .door.unavailable .feedback { display: none; }
+.door .checked { margin: 2px 0 0; padding: 0; min-height: 44px; color: var(--pine); font-weight: 600; text-decoration: underline; }
+.door .checked[hidden] { display: none; }
+
+/* One fixed line per door for feedback: the estimate while moving, then the sensor check. */
+.feedback { min-height: 1.45em; margin-top: 4px; font-size: 0.9rem; }
+.estimate { display: none; align-items: center; gap: 10px; color: var(--muted); font-size: 0.8rem; letter-spacing: 0.02em; }
+.estimate.shown { display: flex; }
+.estimate.shown + .result { display: none; }
+.estimate .track { flex: 1; max-width: 160px; height: 3px; border-radius: 2px; background: var(--sand-soft); overflow: hidden; }
+/* Dashed while estimating: it reads as a guess, not a measurement */
+.estimate .fill {
+  height: 100%; width: 0; transition: width 1s linear;
+  background: repeating-linear-gradient(90deg, var(--sage) 0 6px, transparent 6px 9px);
+}
+.result { margin: 0; color: var(--pine); }
+.result.alert { color: var(--terracotta-deep); }
+
+/* The round control: one tap, one command. 68 pt, far from the other door's. */
+.go {
+  flex: none; width: 68px; height: 68px; border-radius: 50%; border: none;
+  background: var(--terracotta); color: #fff; font: inherit; font-size: 1rem; font-weight: 600;
+  cursor: pointer; transition: transform 0.1s var(--ease);
+}
+.go:active:not(:disabled) { transform: scale(0.96); }
+.go:disabled { background: var(--sand-soft); color: var(--muted); cursor: default; }
+
+/* Watson: the approved art (4:3, transparent), chin on the line above Ford. About 60% of the screen wide,
+   at most 236 pt (the art is 720 px, so it stays sharp at 3x); fitted, never cropped. Its top quarter is
+   transparent, so it tucks a little under the space above. Hidden, with no stand-in, until configured. */
+.companion { position: relative; margin: -12px auto 0; width: clamp(150px, 60vw, 236px); }
+.companion[hidden] { display: none; }
+.companion img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: contain; object-position: bottom; }
+/* Excited Watson sits exactly over idle Watson, in the same box. Never two half-transparent dogs: the excited
+   one fades in OVER idle (idle stays fully visible underneath and drops out only as the fade ends), and on the
+   way back idle is fully there from the start while excited fades out over it. 180 ms; the fade's curve
+   passes its midpoint quickly, so the overlap reads as one dog changing expression. */
+.companion .excited { position: absolute; inset: 0; opacity: 0; transition: opacity 180ms cubic-bezier(0.3, 0, 0.2, 1); }
+.companion .excited[hidden] { display: none; }
+.companion.is-excited .excited:not([hidden]) { opacity: 1; }
+#companion-art { transition: opacity 180ms step-start; }          /* back to idle: idle is there at once */
+.companion.is-excited:has(.excited:not([hidden])) #companion-art { opacity: 0; transition: opacity 180ms step-end; }  /* to excited: idle leaves when the fade ends */
+.hairline { height: 1px; background: var(--hairline); }
+
+/* ET phone home: in place of both doors, with nothing to press. */
+.offline { flex: 1; display: flex; flex-direction: column; justify-content: center; padding-bottom: 8vh; }
+.offline .state { margin: 0; font-family: var(--serif); font-weight: 600; font-size: 3.4rem; line-height: 1.02; color: var(--muted); letter-spacing: -0.015em; }
+.offline .detail { margin: 12px 0 0; color: var(--muted); }
+.offline .waiting {
+  align-self: flex-start; margin: 22px 0 0; padding: 12px 18px; border-radius: 999px;
+  background: var(--sand-soft); color: var(--muted); font-weight: 600;
+}
+
+/* Secondary information: quiet rows with hairlines */
+.row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+  min-height: 52px; padding: 0 2px; border: none; border-top: 1px solid var(--hairline);
+  background: none; font: inherit; font-size: 1rem; color: var(--pine); text-align: left;
+}
+.row .when { color: var(--muted); font-size: 0.95rem; white-space: nowrap; }
+button.row { cursor: pointer; }
+button.row[hidden] { display: none; }
+button.row .when::after { content: "›"; margin-left: 8px; font-size: 1.2rem; color: var(--sand); }
+.last { margin-bottom: 6px; }
+
+:focus-visible { outline: 3px solid var(--sage); outline-offset: 3px; }
+
+/* ---------- sheets: history and account ---------- */
+.sheet {
+  width: 100%; max-width: 480px; max-height: 80dvh; margin: auto auto 0; padding: 8px 22px max(22px, env(safe-area-inset-bottom));
+  border: none; border-radius: 22px 22px 0 0; background: var(--paper); color: var(--pine); overflow-y: auto;
+}
+.sheet[open] { animation: rise 0.28s var(--ease); }
+.sheet::backdrop { background: rgba(46, 74, 63, 0.28); }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; min-height: 56px; }
+.sheet-head h2 { font-family: var(--serif); font-size: 1.3rem; }
+.close { min-height: 44px; padding: 0 4px; border: none; background: none; font: inherit; font-weight: 600; color: var(--sage); cursor: pointer; }
+.sheet ul { list-style: none; margin: 0; padding: 0; }
+.sheet li { display: flex; justify-content: space-between; gap: 12px; padding: 13px 0; border-top: 1px solid var(--hairline); }
+.sheet li time { color: var(--muted); white-space: nowrap; font-size: 0.95rem; }
+.household { margin: 0; font-family: var(--serif); font-style: italic; color: var(--sage); }
+.household:empty { display: none; }
+.signed-in { margin: 6px 0 14px; color: var(--muted); }
+.sheet-link {
+  display: flex; align-items: center; width: 100%; min-height: 52px; padding: 0; border: none;
+  border-top: 1px solid var(--hairline); background: none; font: inherit; color: var(--pine);
+  text-decoration: none; cursor: pointer;
+}
+.sheet-link[hidden] { display: none; }
+.about { margin: 22px 0 0; font-family: var(--serif); font-style: italic; font-size: 0.9rem; color: var(--muted); }
+.about:empty { display: none; }
+
+@keyframes rise { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---------- sign-in and Face ID pages ---------- */
+.welcome main { text-align: center; padding-top: 10vh; }
+/* The approved app icon (static/icons/), shaped like the iPhone home-screen icon. A background, not an
+   <img>, so the page shows no broken-image box if the icon can't be fetched (it is public in PR #8). */
+.welcome .app-icon {
+  width: 96px; height: 96px; margin: 0 auto 22px; border-radius: 22px;
+  background: url("/icons/icon-192.png") center / cover no-repeat;
+}
+.welcome h1 { font-family: var(--serif); font-size: 2.1rem; }
+.voice { font-size: 1.05rem; color: var(--muted); margin: 12px auto 30px; max-width: 30ch; }
+.note { color: var(--muted); font-size: 0.95rem; margin-top: 18px; }
+.note a, .success a { color: var(--pine); font-weight: 600; }
+.primary, .secondary {
+  display: block; width: 100%; min-height: 56px; border: none; border-radius: 18px; padding: 14px;
+  font: inherit; font-size: 1.05rem; font-weight: 600; cursor: pointer;
+}
+.primary { background: var(--terracotta); color: #fff; }
+.secondary { background: var(--sand-soft); color: var(--pine); }
+.field { display: block; text-align: left; margin: 0 0 14px; color: var(--muted); }
+.field input {
+  display: block; width: 100%; margin-top: 6px; padding: 14px; border-radius: 14px; min-height: 50px;
+  border: 1px solid var(--sand); background: var(--paper); font: inherit; color: var(--pine);
+}
+.success, .error { display: none; padding: 14px; border-radius: 16px; margin: 0 0 16px; }
+.success { background: var(--sage-soft); }
+.error { background: #f4e1d8; }
+.link { background: none; border: none; color: var(--muted); font: inherit; min-height: 44px; cursor: pointer; text-decoration: none; }
+
+/* Smaller iPhones (SE): both doors and controls keep their room; Watson and the spacing shrink first. */
+@media (max-height: 700px) {
+  .door { padding: 14px 0; }
+  .door .name { font-size: 2rem; }
+  .door .state { font-size: 1.2rem; margin-top: 6px; }
+  .go { width: 62px; height: 62px; }
+  .companion { width: 176px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .go, .estimate .fill, .companion img, .companion .excited, #companion-art { transition: none !important; }
+  .sheet[open] { animation: none; }
+}
