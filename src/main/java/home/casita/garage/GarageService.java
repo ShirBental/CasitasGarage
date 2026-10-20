@@ -1,14 +1,16 @@
 package home.casita.garage;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
 
 /**
- * Casita's rules for the garage door. See {@link DoorDevice} for what the device does and
+ * Casita's rules for one garage door. There is one of these per door ({@link Garage}), so each door has its
+ * own movement, settle watch, hold and resume, and its own activity entries: Ford and Toyota never block,
+ * hold or check each other. See {@link DoorDevice} for what the device does and
  * doesn't promise. In short: one binary sensor (closed / not closed) and a command that may
  * act like a button press, so the rules live here.
  *
@@ -37,7 +39,8 @@ import org.springframework.stereotype.Service;
  *       leaves the door's position and the command's fate uncertain (an obstruction, an auto-reverse,
  *       a late command). Every command is then refused ({@code HELD}) until someone has checked the
  *       door and calls {@link #resume}; a later sensor reading alone never lifts it.</li>
- *   <li>Closing from the app can be switched off.</li>
+ *   <li>Commands for a door can be switched off ({@link DoorControl#OFF}): every command is then refused
+ *       ({@code DISABLED}) whatever the door reads, and nothing is sent. Closing from the app can be switched off for every door.</li>
  * </ol>
  *
  * <h2>What Casita reports</h2>
@@ -54,7 +57,6 @@ import org.springframework.stereotype.Service;
  * after startup. These rules are tested against a fake door only; how they hold up with the
  * real opener is listed as hardware prerequisites in the design doc.
  */
-@Service
 public class GarageService {
 
     static final String CASITA = "Casita";
@@ -64,12 +66,15 @@ public class GarageService {
     /** A command Casita sent (or may have sent) that hasn't been checked yet. */
     private record Movement(long id, Action action, String who, Instant startedAt, boolean acknowledged) {}
 
+    private final String name;
     private final DoorDevice door;
+    private final DoorControl control;
     private final ActivityLog activity;
     private final Notifier notifier;
     private final DelayedTasks tasks;
     private final Clock clock;
     private final GarageProperties properties;
+    private final Duration travelTime;
 
     // All guarded by this.
     private Movement pending;
@@ -81,14 +86,34 @@ public class GarageService {
     /** The action of the movement that ended stuck or lost, while commands are held; null when not held. */
     private Action heldAfter;
 
-    public GarageService(DoorDevice door, ActivityLog activity, Notifier notifier, DelayedTasks tasks,
-                         Clock clock, GarageProperties properties) {
+    /**
+     * @param name    the door's name (Ford, Toyota), in its activity entries and notifications
+     * @param control how this door's commands are handled; {@link DoorControl#OFF} refuses them all
+     */
+    public GarageService(String name, DoorDevice door, DoorControl control, ActivityLog activity, Notifier notifier,
+                         DelayedTasks tasks, Clock clock, GarageProperties properties) {
+        this.name = name;
         this.door = door;
+        this.control = control;
         this.activity = activity;
         this.notifier = notifier;
         this.tasks = tasks;
         this.clock = clock;
         this.properties = properties;
+        this.travelTime = properties.travelTime(name);
+    }
+
+    public String name() {
+        return name;
+    }
+
+    /** The door in API paths: {@code ford}, {@code toyota}. */
+    public String key() {
+        return DoorRoster.Door.key(name);
+    }
+
+    public DoorControl control() {
+        return control;
     }
 
     public synchronized GarageStatus status() {
@@ -102,7 +127,7 @@ public class GarageService {
         try {
             reading = readSensor();
         } catch (DoorException e) {
-            log.warn("Can't read the garage door: {}", e.getMessage());
+            log.warn("Can't read the {} door: {}", name, e.getMessage());
             return new GarageStatus(DoorState.UNKNOWN, null, false, false, held());
         }
 
@@ -134,7 +159,7 @@ public class GarageService {
             try {
                 readSensor();
             } catch (DoorException e) {
-                log.warn("Won't resume the garage: can't read the door: {}", e.getMessage());
+                log.warn("Won't resume {}: can't read the door: {}", name, e.getMessage());
                 return status();
             }
             record(who, heldAfter, Outcome.RESUMED);
@@ -150,15 +175,23 @@ public class GarageService {
     }
 
     public synchronized CommandResult open(String who) {
+        if (control == DoorControl.OFF) return switchedOff(Action.OPEN, who);
         return move(Action.OPEN, who);
     }
 
     public synchronized CommandResult close(String who) {
+        if (control == DoorControl.OFF) return switchedOff(Action.CLOSE, who);
         if (!properties.allowRemoteClose()) {
             record(who, Action.CLOSE, Outcome.DISABLED);
             return result(Outcome.DISABLED, "Closing from the app is turned off. Please use the wall button.");
         }
         return move(Action.CLOSE, who);
+    }
+
+    /** This door's commands are switched off: refused whatever the door reads, and nothing is sent. */
+    private CommandResult switchedOff(Action action, String who) {
+        record(who, action, Outcome.DISABLED);
+        return result(Outcome.DISABLED, "Moving " + name + " from the app is turned off. Please use the wall button or remote.");
     }
 
     private CommandResult move(Action action, String who) {
@@ -178,7 +211,7 @@ public class GarageService {
         try {
             reading = readSensor();
         } catch (DoorException e) {
-            log.warn("Won't {} the garage: can't read the door: {}", action, e.getMessage());
+            log.warn("Won't {} {}: can't read the door: {}", action, name, e.getMessage());
             record(who, action, Outcome.UNKNOWN);
             return result(Outcome.UNKNOWN, "I can't see the door right now, so I won't touch it.");
         }
@@ -197,21 +230,21 @@ public class GarageService {
         try {
             door.command(wantOpen);
         } catch (DoorCommandRejectedException e) {
-            log.warn("Couldn't {} the garage, nothing was sent: {}", action, e.getMessage());
+            log.warn("Couldn't {} {}, nothing was sent: {}", action, name, e.getMessage());
             record(who, action, Outcome.ERROR);
             return result(Outcome.ERROR, "I couldn't reach the door. Nothing was sent, so nothing moved.");
         } catch (DoorException e) {
-            log.warn("{} command for the garage may or may not have gone through: {}", action, e.getMessage());
+            log.warn("{} command for {} may or may not have gone through: {}", action, name, e.getMessage());
             start(new Movement(id, action, who, clock.instant(), false));
             record(who, action, Outcome.UNCONFIRMED);
-            notifier.send("I'm not sure the garage door got " + who + "'s " + verb(action)
+            notifier.send("I'm not sure the " + name + " door got " + who + "'s " + verb(action)
                     + " command. I'll check in a few seconds.");
             return result(Outcome.UNCONFIRMED, "I'm not sure the door got that. I'll check in a few seconds and let you know.");
         }
 
         start(new Movement(id, action, who, clock.instant(), true));
         record(who, action, Outcome.MOVING);
-        notifier.send((wantOpen ? "Opening the garage for " : "Closing the garage for ") + who);
+        notifier.send((wantOpen ? "Opening the " : "Closing the ") + name + " door for " + who);
         return result(Outcome.MOVING, wantOpen ? "Opening up for you." : "Closing up.");
     }
 
@@ -238,7 +271,7 @@ public class GarageService {
             } catch (DoorException e) {
                 record(CASITA, m.action(), Outcome.LOST);
                 heldAfter = m.action();
-                notifier.send("I lost sight of the garage door after "
+                notifier.send("I lost sight of the " + name + " door after "
                         + (m.acknowledged() ? verbIng(m.action()) : "trying to " + verb(m.action()))
                         + " it. Please check it; I won't move it again until someone tells me it's OK.");
                 return;
@@ -252,9 +285,9 @@ public class GarageService {
             // after an open, "not closed" is all it can say.
             record(CASITA, m.action(), m.action() == Action.CLOSE ? Outcome.CLOSED_CONFIRMED : Outcome.OPEN_INFERRED);
             if (!m.acknowledged()) {
-                notifier.send("It went through after all: the garage is " + (reading.open() ? "not closed." : "closed."));
+                notifier.send("It went through after all: the " + name + " door is " + (reading.open() ? "not closed." : "closed."));
             } else if (m.action() == Action.CLOSE) {
-                notifier.send("The garage is closed. All tucked in.");
+                notifier.send("The " + name + " door is closed. All tucked in.");
             }
             return;
         }
@@ -262,13 +295,13 @@ public class GarageService {
         record(CASITA, m.action(), Outcome.STUCK);
         heldAfter = m.action();
         if (!m.acknowledged()) {
-            notifier.send("The garage door is still " + (reading.open() ? "not closed" : "closed")
+            notifier.send("The " + name + " door is still " + (reading.open() ? "not closed" : "closed")
                     + ". My " + verb(m.action()) + " command may not have reached it. Please check it; I won't move it again until "
                     + "someone tells me it's OK.");
         } else if (m.action() == Action.OPEN) {
-            notifier.send("The garage door didn't open. Please check it; I won't move it again until someone tells me it's OK.");
+            notifier.send("The " + name + " door didn't open. Please check it; I won't move it again until someone tells me it's OK.");
         } else {
-            notifier.send("The garage door didn't close. Something may be in the way. Please check it; I won't move it again "
+            notifier.send("The " + name + " door didn't close. Something may be in the way. Please check it; I won't move it again "
                     + "until someone tells me it's OK.");
         }
     }
@@ -290,11 +323,11 @@ public class GarageService {
 
     /** True once Casita has seen the sensor's current value for at least the travel time. */
     private boolean settled() {
-        return lastSensorChange != null && !clock.instant().isBefore(lastSensorChange.plus(properties.travelTime()));
+        return lastSensorChange != null && !clock.instant().isBefore(lastSensorChange.plus(travelTime));
     }
 
     private Instant dueAt(Movement m) {
-        return m.startedAt().plus(properties.travelTime()).plus(properties.verifyGrace());
+        return m.startedAt().plus(travelTime).plus(properties.verifyGrace());
     }
 
     private boolean isDue(Movement m) {
@@ -306,7 +339,7 @@ public class GarageService {
     }
 
     private void record(String who, Action action, Outcome outcome) {
-        activity.record(new ActivityEvent(clock.instant(), who, action, outcome));
+        activity.record(new ActivityEvent(clock.instant(), name, who, action, outcome));
     }
 
     private CommandResult result(Outcome outcome, String message) {

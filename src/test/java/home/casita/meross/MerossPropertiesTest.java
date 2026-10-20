@@ -93,15 +93,40 @@ class MerossPropertiesTest {
     }
 
     @Test
-    void liveNeedsTheChannelSetAndAllowed() {
+    void withDoorsNamedEachDoorsOwnSwitchDecidesAndChannelIsNotNeeded() {
         Map<Integer, String> doors = Map.of(1, "Ford", 2, "Toyota");
-        assertThat(new MerossProperties("https://iotx-us.meross.com", null, null, null, 1, Duration.ofSeconds(8), CommandMode.LIVE, doors,
-                Set.of(1)).commandMode()).isEqualTo(CommandMode.LIVE);
+        MerossProperties fordOnly = new MerossProperties("https://iotx-us.meross.com", null, null, null, null, Duration.ofSeconds(8),
+                CommandMode.LIVE, doors, Set.of(1));
 
-        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, 2, Duration.ofSeconds(8), CommandMode.LIVE,
-                doors, Set.of(1))).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("command-mode live");
+        assertThat(fordOnly.commandModeFor(1)).isEqualTo(CommandMode.LIVE);
+        assertThat(fordOnly.commandModeFor(2)).isEqualTo(CommandMode.OFF);
+        assertThat(fordOnly.commandModeFor(3)).isEqualTo(CommandMode.OFF);
+        assertThat(fordOnly.commandModeFor(null)).isEqualTo(CommandMode.OFF);
+        // An old CASITA_MEROSS_CHANNEL still starts, and changes nothing about which door is live.
+        assertThat(new MerossProperties("https://iotx-us.meross.com", null, null, null, 2, Duration.ofSeconds(8), CommandMode.LIVE,
+                doors, Set.of(1)).commandModeFor(2)).isEqualTo(CommandMode.OFF);
+    }
+
+    @Test
+    void toyotaIsOffUnlessItsChannelIsSwitchedOnWhateverTheMode() {
+        Map<Integer, String> doors = Map.of(1, "Ford", 2, "Toyota");
+        for (CommandMode mode : CommandMode.values()) {
+            assertThat(new MerossProperties("https://iotx-us.meross.com", null, null, null, null, Duration.ofSeconds(8), mode, doors,
+                    Set.of(1)).commandModeFor(2)).isEqualTo(CommandMode.OFF);
+            assertThat(new MerossProperties("https://iotx-us.meross.com", null, null, null, null, Duration.ofSeconds(8), mode, doors,
+                    Set.of(1, 2)).commandModeFor(2)).isEqualTo(mode);
+        }
+    }
+
+    @Test
+    void withNoDoorsNamedLiveNeedsTheChannelSetAndAllowed() {
+        assertThat(new MerossProperties("https://iotx-us.meross.com", null, null, null, 0, Duration.ofSeconds(8), CommandMode.LIVE, null,
+                Set.of(0)).commandMode()).isEqualTo(CommandMode.LIVE);
+
+        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, 0, Duration.ofSeconds(8), CommandMode.LIVE,
+                null, Set.of())).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("command-mode live");
         assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, null, Duration.ofSeconds(8), CommandMode.LIVE,
-                doors, Set.of(1))).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("command-mode live");
+                null, Set.of(0))).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("command-mode live");
     }
 
     @Test
@@ -112,28 +137,16 @@ class MerossPropertiesTest {
     }
 
     @Test
-    void theRealDoorRefusesToStartWithSeveralDoorsAndNoChannelChosen() {
+    void theRealDoorsStartWithoutAChannelChosenEachDoorOnItsOwn() {
         new ApplicationContextRunner()
                 .withUserConfiguration(MerossConfig.class, BindProperties.class)
                 .withBean(Clock.class, Clock::systemUTC)
                 .withPropertyValues("casita.door=meross", "casita.meross.email=a@example.com", "casita.meross.password=p",
                         "casita.meross.doors.1=Ford", "casita.meross.doors.2=Toyota")
                 .run(context -> {
-                    assertThat(context).hasFailed();
-                    assertThat(context.getStartupFailure()).rootCause()
-                            .hasMessageContaining("Several doors are configured")
-                            .hasMessageContaining("set casita.meross.channel");
+                    assertThat(context).hasNotFailed().hasSingleBean(home.casita.garage.DoorRoster.class);
+                    assertThat(context.getBean(home.casita.garage.DoorRoster.class).doors()).hasSize(2);
                 });
-    }
-
-    @Test
-    void theRealDoorStartsOnceAChannelIsChosen() {
-        new ApplicationContextRunner()
-                .withUserConfiguration(MerossConfig.class, BindProperties.class)
-                .withBean(Clock.class, Clock::systemUTC)
-                .withPropertyValues("casita.door=meross", "casita.meross.email=a@example.com", "casita.meross.password=p",
-                        "casita.meross.doors.1=Ford", "casita.meross.doors.2=Toyota", "casita.meross.channel=1")
-                .run(context -> assertThat(context).hasNotFailed().hasSingleBean(home.casita.garage.DoorDevice.class));
     }
 
     @EnableConfigurationProperties(MerossProperties.class)

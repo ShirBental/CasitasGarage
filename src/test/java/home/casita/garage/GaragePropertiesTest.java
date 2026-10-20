@@ -75,4 +75,20 @@ class GaragePropertiesTest {
         }
         return sb.toString();
     }
+
+    @Test
+    void aDoorCanHaveItsOwnTravelTimeAndOthersKeepTheDefault() {
+        contextRunner.withPropertyValues("casita.garage.travel-time=20s", "casita.garage.travel-times.Toyota=15s").run(context -> {
+            GarageProperties properties = context.getBean(GarageProperties.class);
+            assertThat(properties.travelTime("Toyota")).isEqualTo(Duration.ofSeconds(15));
+            assertThat(properties.travelTime("toyota")).isEqualTo(Duration.ofSeconds(15));
+            assertThat(properties.travelTime("Ford")).isEqualTo(Duration.ofSeconds(20));
+        });
+    }
+
+    @Test
+    void aDoorsOwnTravelTimeMustBePositive() {
+        contextRunner.withPropertyValues("casita.garage.travel-times.Toyota=0s")
+                .run(context -> assertThat(context).hasFailed());
+    }
 }
