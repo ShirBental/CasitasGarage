@@ -13,7 +13,7 @@ on 2026-10-19. Standard: 393 × 852 (iPhone 15/16). Small: 375 × 667 (iPhone SE
 | Account sheet | `standard-6-account.jpg` | `small-6-account.jpg` |
 | Face ID setup, with the approved app icon | `standard-7-face-id-setup.jpg` | |
 
-Watson is the approved illustration (`static/brand/watson-home.webp`), only scaled. Toyota's control
+Watson is the approved character (`static/brand/watson-idle.webp`; `watson-excited.webp` while a door moves), only scaled. The closed and opening shots were retaken on 2026-10-19 with this art. Toyota's control
 is disabled ("Toyota control not set up yet") because the server doesn't command Toyota yet.
 
 The sign-in page shows the same icon once `/icons/*.png` is public (PR #8). On this branch alone it
