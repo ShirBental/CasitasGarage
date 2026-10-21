@@ -1,8 +1,8 @@
-# deploy/watson: the GCP staging server
+# deploy/watson: the GCP server
 
 Everything needed to run Casita as a **simulation-only** staging server called `watson`: one e2-micro
 Compute Engine VM, the project's `(default)` Firestore database, and Tailscale Serve for private HTTPS. Casita
-has no public endpoint. The runbook, costs, gates and checklist are in `docs/WATSON_DEPLOYMENT_READINESS.md`.
+has no public endpoint. Switching watson to the real doors (production) is in `LIVE_DOORS.md`. The runbook, costs, gates and checklist are in `docs/WATSON_DEPLOYMENT_READINESS.md`.
 
 Every script that changes something is a dry run unless it is given `--apply`, and each says what it would do.
 
@@ -18,10 +18,12 @@ Every script that changes something is a dry run unless it is given `--apply`, a
 | `tailscale-serve.sh` | watson, as root | `https://watson.<tailnet>.ts.net` → `http://127.0.0.1:8080`, after checking the names agree |
 | `check-g3.sh` | watson | Gate G3: the service account can read Firestore but can't delete |
 | `check-g6.sh` | watson | Gate G6: real Firestore latency from the VM (read-only), and Casita's own server times |
-| `check-guard.sh` | watson, as root | The staging guard on the VM: each unsafe override must refuse to start (the service isn't touched) |
+| `check-guard.sh` | watson, as root | The guard on the VM (staging or production): each unsafe override must refuse to start (the service isn't touched) |
+| `door-watch.sh` | watson (`casita-door-watch`), as root | Read-only: Ford's and Toyota's readings every 2 s, to measure travel times and sensor lags while someone uses the wall button |
+| `LIVE_DOORS.md` | | Production: the Meross account, both doors, the home-network route, and the supervised first tests |
 | `deploy-release.sh` | your Mac | CI build of a clean commit, then copy and install through IAP |
-| `install-release.sh` | watson (`casita-install-release`) | Checks the jar's SHA-256 and that `casita.env` says staging, simulated, commands off (each exactly once); switches releases; a failed restart or health check rolls back to the earlier release, or on a first deployment stops and disables the service and removes `current` |
+| `install-release.sh` | watson (`casita-install-release`) | Checks the jar's SHA-256 and that `casita.env` says staging (simulated, commands off) or production (meross, with a root-only 0600 `meross.env`), each setting exactly once; switches releases; a failed restart or health check rolls back to the earlier release, or on a first deployment stops and disables the service and removes `current` |
 | `test/install-release.test.sh` | Linux | `install-release.sh` on a scratch filesystem with fake systemctl and health: success, rollback, first-deployment failure, refused settings |
 | `rollback.sh` | watson (`casita-rollback`) | Back to the previous release |
-| `health.sh` | watson (`casita-health`) | Service, `/healthz`, the staging guard's line, Funnel off, memory |
+| `health.sh` | watson (`casita-health`) | Service, `/healthz`, the staging or production guard's line, Funnel off, memory |
 | `casita-access` | watson | `bin/casita-access` as the casita user, with the server's data directory |

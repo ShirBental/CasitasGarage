@@ -215,7 +215,7 @@ class StagingGuardTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"production", "prod", "stage", "Staging", "STAGING", "dev"})
+    @ValueSource(strings = {"prod", "Production", "PRODUCTION", "stage", "Staging", "STAGING", "dev"})
     void anUnknownDeploymentIsRefusedAnywhere(String deployment) {
         assertThat(problems(staging().withProperty("casita.deployment", deployment))).singleElement().asString()
                 .contains("casita.deployment");
@@ -244,5 +244,92 @@ class StagingGuardTest {
                 .hasMessageContaining("Compute Engine").hasMessageContaining("docs/STAGING_GUARD.md");
 
         guard.postProcessEnvironment(staging(), new SpringApplication());
+    }
+
+    /* ---------- production: the real doors, Ford on channel 1 and Toyota on channel 2 ---------- */
+
+    /** Production as deploy/watson/LIVE_DOORS.md sets it up, in the given command mode, without the named settings. */
+    private static MockEnvironment production(String commandMode, String... without) {
+        Map<String, String> s = stagingSettings();
+        s.put("casita.deployment", "production");
+        s.put("casita.door", "meross");
+        s.put("casita.meross.command-mode", commandMode);
+        s.put("casita.meross.doors.1", "Ford");
+        s.put("casita.meross.doors.2", "Toyota");
+        s.put("casita.meross.command-channels", "1,2");
+        s.put("casita.meross.email", "placeholder@example.com");
+        s.put("casita.meross.password", "placeholder");
+        s.put("casita.garage.travel-times.ford", "20s");
+        s.put("casita.garage.sensor-lags.ford", "5s");
+        s.put("casita.garage.travel-times.toyota", "18s");
+        s.put("casita.garage.sensor-lags.toyota", "25s");
+        MockEnvironment env = new MockEnvironment();
+        s.forEach((k, v) -> {
+            if (!List.of(without).contains(k)) env.setProperty(k, v);
+        });
+        return env;
+    }
+
+    private static List<String> onWatson(MockEnvironment env) {
+        return StagingGuard.problems(env, true, false, Map.of());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"off", "dry-run", "live"})
+    void productionWithBothRealDoorsStartsInEachCommandMode(String mode) {
+        assertThat(onWatson(production(mode))).isEmpty();
+        assertThat(onWatson(production(mode).withProperty("casita.meross.transport", "cloud"))).isEmpty();
+        assertThat(onWatson(production(mode).withProperty("casita.meross.transport", "local")
+                .withProperty("casita.meross.local-url", "http://192.168.1.50"))).isEmpty();
+    }
+
+    @Test
+    void productionNeedsTheRealDoorsExactly() {
+        assertThat(onWatson(production("off").withProperty("casita.door", "simulated"))).singleElement().asString().contains("casita.door=meross");
+        assertThat(onWatson(production("off").withProperty("casita.meross.command-mode", "LIVE"))).singleElement().asString().contains("command-mode");
+        assertThat(onWatson(production("off").withProperty("casita.meross.doors.3", "Spare"))).singleElement().asString().contains("channel 3");
+        assertThat(onWatson(production("off").withProperty("casita.meross.doors.2", "Ford"))).singleElement().asString().contains("2: Toyota");
+        assertThat(onWatson(production("off", "casita.meross.doors.2"))).singleElement().asString().contains("2: Toyota");
+        assertThat(onWatson(production("off").withProperty("casita.meross.command-channels", "1,3"))).isNotEmpty()
+                .anySatisfy(p -> assertThat(p).contains("command-channels"));
+    }
+
+    @Test
+    void productionTakesTheAccountOnlyFromItsOwnSettings() {
+        assertThat(onWatson(production("off", "casita.meross.password"))).singleElement().asString().contains("casita.meross.password");
+        assertThat(StagingGuard.problems(production("off"), true, false, Map.of("MEROSS_EMAIL", "x@example.com")))
+                .singleElement().asString().contains("MEROSS_EMAIL");
+        assertThat(StagingGuard.problems(production("off"), true, true, Map.of())).singleElement().asString().contains("meross.local.json");
+    }
+
+    @Test
+    void productionLiveNeedsEachCommandedDoorsMeasuredTimings() {
+        assertThat(onWatson(production("live", "casita.garage.sensor-lags.ford"))).singleElement().asString()
+                .contains("Ford").contains("sensor-lags");
+        assertThat(onWatson(production("live", "casita.garage.travel-times.toyota"))).singleElement().asString()
+                .contains("Toyota").contains("travel-times");
+        // Only the commanded doors: Toyota may stay read-only while Ford is tested.
+        assertThat(onWatson(production("live", "casita.garage.travel-times.toyota")
+                .withProperty("casita.meross.command-channels", "1"))).isEmpty();
+        assertThat(onWatson(production("dry-run", "casita.garage.sensor-lags.ford", "casita.garage.sensor-lags.toyota"))).isEmpty();
+    }
+
+    @Test
+    void productionsLocalTransportReachesOnlyAPrivateAddress() {
+        for (String bad : List.of("https://192.168.1.50", "http://8.8.8.8", "http://opener.lan", "http://192.168.1.50/config")) {
+            assertThat(onWatson(production("off").withProperty("casita.meross.transport", "local")
+                    .withProperty("casita.meross.local-url", bad))).as(bad).singleElement().asString().contains("local-url");
+        }
+        assertThat(onWatson(production("off").withProperty("casita.meross.transport", "local"))).singleElement().asString()
+                .contains("local-url");
+        assertThat(onWatson(production("off").withProperty("casita.meross.transport", "lan"))).singleElement().asString()
+                .contains("cloud or local");
+    }
+
+    @Test
+    void productionKeepsWatsonSignInAndFirestore() {
+        assertThat(onWatson(production("off").withProperty("casita.storage.type", "file"))).isNotEmpty();
+        assertThat(onWatson(production("off").withProperty("casita.security.rp-id", "localhost"))).isNotEmpty()
+                .allSatisfy(p -> assertThat(p).startsWith("Production"));
     }
 }

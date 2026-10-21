@@ -9,7 +9,9 @@
 # release directory is ever deleted.
 #
 # Before anything changes: the jar's SHA-256 must match, and /etc/casita/casita.env must set, each exactly once and
-# exactly so, CASITA_DEPLOYMENT=staging, CASITA_DOOR=simulated and CASITA_MEROSS_COMMANDMODE=off.
+# exactly so, either staging (CASITA_DEPLOYMENT=staging, CASITA_DOOR=simulated, CASITA_MEROSS_COMMANDMODE=off) or
+# production (CASITA_DEPLOYMENT=production, CASITA_DOOR=meross, CASITA_MEROSS_COMMANDMODE=off|dry-run|live, with the
+# Meross account in /etc/casita/meross.env, root-only 0600).
 # Then the release is installed, current is switched, and casita.service restarted. A failed restart counts as a
 # failed health check. On failure:
 #   - with an earlier release to go back to: current points at it again, previous stays as it was, and Casita is
@@ -25,6 +27,7 @@ set -euo pipefail
 root="${CASITA_TEST_ROOT:-}"
 opt="$root/opt/casita"
 env_file="$root/etc/casita/casita.env"
+meross_env="$root/etc/casita/meross.env"
 health="$root/usr/local/sbin/casita-health"
 unit=casita.service
 
@@ -44,19 +47,48 @@ if [ -f "$dest/casita.jar.sha256" ] && [ "$(cut -d' ' -f1 < "$dest/casita.jar.sh
   refuse "release $id is already installed with a different jar; a release is never replaced"
 fi
 
-# The staging settings systemd will pass to Casita: each must appear exactly once, exactly as below (no quotes, spaces,
-# CR or continuation lines, which systemd would read differently). The app's own guard checks them again at start.
-[ -f "$env_file" ] || refuse "$env_file is missing"
-if grep -q $'\r' "$env_file"; then refuse "$env_file has CR line endings"; fi
-if grep -qE '\\[[:space:]]*$' "$env_file"; then refuse "$env_file has continuation lines (a line ending in \\)"; fi
-for want_line in CASITA_DEPLOYMENT=staging CASITA_DOOR=simulated CASITA_MEROSS_COMMANDMODE=off; do
-  key="${want_line%%=*}"
-  # Every non-comment line that sets this key, however it is spaced or prefixed.
-  lines="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$env_file" || true)"
+# The settings systemd will pass to Casita: each must appear exactly once, exactly as below (no quotes, spaces, CR or
+# continuation lines, which systemd would read differently). The app's own guard checks them again, and more, at start.
+#   staging:    CASITA_DEPLOYMENT=staging, CASITA_DOOR=simulated, CASITA_MEROSS_COMMANDMODE=off
+#   production: CASITA_DEPLOYMENT=production, CASITA_DOOR=meross, CASITA_MEROSS_COMMANDMODE=off|dry-run|live, and the
+#               Meross account in /etc/casita/meross.env (root only, 0600: systemd reads it as root)
+plain_file() {  # plain_file FILE: present, no CR, no continuation lines
+  [ -f "$1" ] || refuse "$1 is missing"
+  if grep -q $'\r' "$1"; then refuse "$1 has CR line endings"; fi
+  if grep -qE '\\[[:space:]]*$' "$1"; then refuse "$1 has continuation lines (a line ending in \\)"; fi
+}
+# setting FILE KEY: the one line that sets KEY (refused unless exactly one), however it is spaced or prefixed.
+setting() {
+  local lines count
+  lines="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${2}[[:space:]]*=" "$1" || true)"
   count="$(printf '%s' "$lines" | grep -c . || true)"
-  [ "$count" -eq 1 ] || refuse "$env_file must set $key exactly once (it does $count times)"
-  [ "$lines" = "$want_line" ] || refuse "$env_file must say exactly $want_line (it says: $lines)"
-done
+  [ "$count" -eq 1 ] || refuse "$1 must set $2 exactly once (it does $count times)"
+  printf '%s' "$lines"
+}
+plain_file "$env_file"
+deployment="$(setting "$env_file" CASITA_DEPLOYMENT)" || exit 2
+door="$(setting "$env_file" CASITA_DOOR)" || exit 2
+mode="$(setting "$env_file" CASITA_MEROSS_COMMANDMODE)" || exit 2
+case "$deployment" in
+  CASITA_DEPLOYMENT=staging)
+    [ "$door" = CASITA_DOOR=simulated ] || refuse "$env_file must say exactly CASITA_DOOR=simulated (it says: $door)"
+    [ "$mode" = CASITA_MEROSS_COMMANDMODE=off ] || refuse "$env_file must say exactly CASITA_MEROSS_COMMANDMODE=off (it says: $mode)"
+    ;;
+  CASITA_DEPLOYMENT=production)
+    [ "$door" = CASITA_DOOR=meross ] || refuse "$env_file must say exactly CASITA_DOOR=meross in production (it says: $door)"
+    case "$mode" in CASITA_MEROSS_COMMANDMODE=off|CASITA_MEROSS_COMMANDMODE=dry-run|CASITA_MEROSS_COMMANDMODE=live) ;;
+      *) refuse "$env_file must say exactly CASITA_MEROSS_COMMANDMODE=off, dry-run or live in production (it says: $mode)" ;;
+    esac
+    plain_file "$meross_env"
+    owner_uid=0; [ -n "$root" ] && owner_uid="$(id -u)"
+    [ "$(stat -c '%u %a' "$meross_env")" = "$owner_uid 600" ] || refuse "$meross_env must be owned by root with mode 0600"
+    for k in CASITA_MEROSS_EMAIL CASITA_MEROSS_PASSWORD; do
+      line="$(setting "$meross_env" "$k")" || exit 2
+      case "$line" in "$k="?*) ;; *) refuse "$meross_env must set $k=<value>" ;; esac
+    done
+    ;;
+  *) refuse "$env_file must say exactly CASITA_DEPLOYMENT=staging or CASITA_DEPLOYMENT=production (it says: $deployment)" ;;
+esac
 
 # ---------- install and switch ----------
 install -d -m 0755 "$dest" "$dest/docs"

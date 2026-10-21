@@ -152,7 +152,13 @@ class StagingStartupTest {
 
     @Test
     void anUnknownDeploymentDoesNotStart() {
-        assertThatThrownBy(() -> start(staging("casita.deployment=production")))
+        assertThatThrownBy(() -> start(staging("casita.deployment=prod")))
                 .hasMessageContaining("Staging guard").hasMessageContaining("casita.deployment");
+    }
+
+    @Test
+    void productionWithoutTheMerossAccountDoesNotStart() {
+        assertThatThrownBy(() -> start(staging("casita.deployment=production", "casita.door=meross")))
+                .hasMessageContaining("Staging guard").hasMessageContaining("casita.meross.email");
     }
 }

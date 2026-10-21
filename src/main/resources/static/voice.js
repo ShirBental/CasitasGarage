@@ -40,7 +40,8 @@ const VOICE = (function () {
       if (held) return ["Needs a check", "alert"];
       switch (view.door) {
         case "CLOSED": return ["Closed", "closed"];
-        case "NOT_CLOSED": return ["Not closed", "not-closed"];
+        // The sensor proves only "closed"; a settled "not closed" door is open, however far (it may have stopped partway).
+        case "NOT_CLOSED": return ["Open", "not-closed"];
         case "OPENING": return ["Opening…", "moving"];
         case "CLOSING": return ["Closing…", "moving"];
         case "CHECKING": return ["Checking…", "quiet"];
@@ -69,7 +70,7 @@ const VOICE = (function () {
     watched(door) {
       switch (door) {
         case "CLOSED": return "Closed";
-        case "NOT_CLOSED": return "Not closed";
+        case "NOT_CLOSED": return "Open";
         default: return "Unknown";
       }
     },

@@ -21,6 +21,7 @@ import org.springframework.context.annotation.Primary;
 
 import com.google.api.gax.core.FixedCredentialsProvider;
 import com.google.api.gax.grpc.InstantiatingGrpcChannelProvider;
+import com.google.api.gax.retrying.RetrySettings;
 import com.google.cloud.firestore.Firestore;
 import com.google.cloud.firestore.FirestoreOptions;
 
@@ -61,10 +62,14 @@ public final class FirestoreEmulator {
 
     /** A client for the emulator, through the faulty interceptor, in its own project, with the given timeout. */
     public static Firestore client(String project, FaultyFirestore faults, Duration timeout) {
+        return client(project, faults, StorageConfig.retrySettings(timeout));
+    }
+
+    private static Firestore client(String project, FaultyFirestore faults, RetrySettings retry) {
         return FirestoreOptions.newBuilder()
                 .setProjectId(project)
                 .setDatabaseId(FirestoreCollections.DATABASE_ID)
-                .setRetrySettings(StorageConfig.retrySettings(timeout))
+                .setRetrySettings(retry)
                 .setChannelProvider(InstantiatingGrpcChannelProvider.newBuilder().setEndpoint(host())
                         .setChannelConfigurator(ManagedChannelBuilder::usePlaintext)
                         .setInterceptorProvider(() -> List.of(faults.interceptor()))
@@ -76,10 +81,14 @@ public final class FirestoreEmulator {
     /**
      * What provisioning does once (docs/FIRESTORE.md): the schema marker. Casita itself never writes it. Written through
      * a setup client of its own, with a generous timeout and no faults: the first write to a just-started emulator can
-     * take longer than the short timeouts the tests give their own clients, and setup isn't what they test.
+     * take longer than the short timeouts the tests give their own clients, and setup isn't what they test. One 30 s
+     * attempt: Casita's own settings cap each attempt at 2 s, and a commit isn't retried after a deadline.
      */
     public static void provision(Firestore db) {
-        try (Firestore setup = client(db.getOptions().getProjectId(), new FaultyFirestore(), Duration.ofSeconds(30))) {
+        RetrySettings oneLongAttempt = RetrySettings.newBuilder().setTotalTimeoutDuration(Duration.ofSeconds(30))
+                .setInitialRpcTimeoutDuration(Duration.ofSeconds(30)).setMaxRpcTimeoutDuration(Duration.ofSeconds(30))
+                .setRpcTimeoutMultiplier(1.0).build();
+        try (Firestore setup = client(db.getOptions().getProjectId(), new FaultyFirestore(), oneLongAttempt)) {
             FirestoreCollections.standard().schema(setup).set(Map.of("schemaVersion", FirestoreCollections.SCHEMA_VERSION)).get(30, TimeUnit.SECONDS);
         } catch (Exception e) {
             throw new IllegalStateException("couldn't provision the emulator project", e);

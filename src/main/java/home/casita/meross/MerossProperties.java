@@ -45,6 +45,9 @@ public record MerossProperties(
         Map<Integer, String> doors,
         Set<Integer> commandChannels) {
 
+    /** The MSG200's third channel, disabled on our opener. */
+    static final int DISABLED_CHANNEL = 3;
+
     public MerossProperties {
         if (requestTimeout == null || requestTimeout.isZero() || requestTimeout.isNegative()) {
             throw new IllegalArgumentException("casita.meross.request-timeout must be positive, but was " + requestTimeout);
@@ -52,6 +55,11 @@ public record MerossProperties(
         commandMode = commandMode == null ? CommandMode.OFF : commandMode;
         doors = doors == null ? Map.of() : Map.copyOf(doors);
         commandChannels = commandChannels == null ? Set.of() : Set.copyOf(commandChannels);
+        // Our MSG200's channel 3 is disabled for good: it is never named, read or sent anything.
+        if (doors.containsKey(DISABLED_CHANNEL) || commandChannels.contains(DISABLED_CHANNEL) || Integer.valueOf(DISABLED_CHANNEL).equals(channel)) {
+            throw new IllegalArgumentException("casita.meross channel " + DISABLED_CHANNEL + " is permanently disabled: it can't be a door, "
+                    + "a command channel or the channel");
+        }
         if (channel != null && !doors.isEmpty() && !doors.containsKey(channel)) {
             throw new IllegalArgumentException("casita.meross.channel " + channel + " isn't one of casita.meross.doors " + new TreeMap<>(doors));
         }

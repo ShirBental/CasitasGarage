@@ -193,6 +193,55 @@ fresh; cp "$here/../casita.env.example" "$root/etc/casita/casita.env"; healthy="
 expect_code 0; expect_link current aaaa111
 done_scenario
 
+# production SETTINGS [MEROSS-ENV] [MODE]: casita.env set for the real doors, and a root-only meross.env.
+P='CASITA_DEPLOYMENT=production
+CASITA_DOOR=meross
+CASITA_MEROSS_COMMANDMODE=off
+'
+M='CASITA_MEROSS_EMAIL=placeholder@example.com
+CASITA_MEROSS_PASSWORD=placeholder
+'
+production() {
+  printf '%s' "$1" > "$root/etc/casita/casita.env"
+  if [ "${2-x}" != "<missing>" ]; then printf '%s' "${2-$M}" > "$root/etc/casita/meross.env"; chmod "${3:-600}" "$root/etc/casita/meross.env"; fi
+}
+for mode in off dry-run live; do
+  scenario "production, command mode $mode, account in a root-only meross.env: installed"
+  fresh; healthy="aaaa111"; production "${P/=off/=$mode}"; deploy aaaa111
+  expect_code 0; expect_link current aaaa111
+  done_scenario
+done
+bad_prod() {
+  scenario "production refused: $1"
+  fresh; healthy="aaaa111 bbbb222"; deploy aaaa111
+  production "$3" "${4-$M}" "${5:-600}"; [ "${4-}" = "<missing>" ] && rm -f "$root/etc/casita/meross.env"
+  : > "$log"; deploy bbbb222
+  expect_code 2; expect_out "$2"; expect_out "nothing was changed"; expect_link current aaaa111; expect_no_release bbbb222
+  [ -s "$log" ] && bad "systemctl or health was called"
+  done_scenario
+}
+bad_prod "simulated door" "must say exactly CASITA_DOOR=meross in production" "${P/=meross/=simulated}"
+bad_prod "unknown command mode" "CASITA_MEROSS_COMMANDMODE=off, dry-run or live" "${P/=off/=on}"
+bad_prod "quoted command mode" "CASITA_MEROSS_COMMANDMODE=off, dry-run or live" "${P/=off/=\"live\"}"
+bad_prod "no meross.env" "meross.env is missing" "$P" "<missing>"
+bad_prod "meross.env readable by others" "must be owned by root with mode 0600" "$P" "$M" 644
+bad_prod "meross.env group-readable" "must be owned by root with mode 0600" "$P" "$M" 640
+bad_prod "no password" "must set CASITA_MEROSS_PASSWORD exactly once (it does 0 times)" "$P" "CASITA_MEROSS_EMAIL=a@example.com
+"
+bad_prod "empty password" "must set CASITA_MEROSS_PASSWORD=<value>" "$P" "CASITA_MEROSS_EMAIL=a@example.com
+CASITA_MEROSS_PASSWORD=
+"
+bad_prod "two emails" "must set CASITA_MEROSS_EMAIL exactly once (it does 2 times)" "$P" "${M}CASITA_MEROSS_EMAIL=b@example.com
+"
+bad_prod "staging door settings in production" "must say exactly CASITA_DOOR=meross in production" "CASITA_DEPLOYMENT=production
+CASITA_DOOR=simulated
+CASITA_MEROSS_COMMANDMODE=off
+"
+bad_prod "staging with the real doors" "must say exactly CASITA_DOOR=simulated" "CASITA_DEPLOYMENT=staging
+CASITA_DOOR=meross
+CASITA_MEROSS_COMMANDMODE=live
+"
+
 scenario "SHA-256 mismatch: refused, nothing changed"
 fresh; healthy="aaaa111 bbbb222"; deploy aaaa111; : > "$log"
 deploy bbbb222 0000000000000000000000000000000000000000000000000000000000000000

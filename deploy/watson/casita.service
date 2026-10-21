@@ -1,5 +1,5 @@
 [Unit]
-Description=Casita (Bental's Casita garage app, GCP staging: simulation only)
+Description=Casita (Bental's Casita garage app on watson)
 Documentation=file:///opt/casita/current/docs/WATSON_DEPLOYMENT_READINESS.md
 Wants=network-online.target tailscaled.service
 After=network-online.target tailscaled.service
@@ -11,8 +11,12 @@ StartLimitBurst=5
 Type=simple
 User=casita
 Group=casita
-# The settings, including JAVA_OPTS. StagingGuard refuses to start unless they are a complete, simulated staging.
+# The settings, including JAVA_OPTS. StagingGuard refuses to start unless they are a complete staging (simulated)
+# or production (the real doors; deploy/watson/LIVE_DOORS.md).
 EnvironmentFile=/etc/casita/casita.env
+# Production only: the Meross account (CASITA_MEROSS_EMAIL, CASITA_MEROSS_PASSWORD), root-only 0600. systemd reads it as
+# root before starting Casita; staging has none (the guard refuses credentials there).
+EnvironmentFile=-/etc/casita/meross.env
 # The working directory holds nothing but data: no config/meross.local.json can be picked up from here.
 WorkingDirectory=/var/lib/casita
 ExecStart=/usr/bin/java $JAVA_OPTS -jar /opt/casita/current/casita.jar

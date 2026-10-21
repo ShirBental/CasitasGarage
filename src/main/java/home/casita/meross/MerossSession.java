@@ -291,19 +291,8 @@ class MerossSession implements MerossTransport, DisposableBean {
     private Prepared prepare(Link l, String deviceUuid, String method, String namespace, Map<String, Object> payload) {
         String messageId = MerossCrypto.newMessageId();
         long timestamp = clock.instant().getEpochSecond();
-        Map<String, Object> header = new LinkedHashMap<>();
-        header.put("from", replyTopic(l.creds()));
-        header.put("messageId", messageId);
-        header.put("method", method);
-        header.put("namespace", namespace);
-        header.put("payloadVersion", 1);
-        header.put("sign", MerossCrypto.messageSign(messageId, l.creds().key(), timestamp));
-        header.put("timestamp", timestamp);
-        header.put("triggerSrc", "Casita");
-        header.put("uuid", deviceUuid);
-        Map<String, Object> message = new LinkedHashMap<>();
-        message.put("header", header);
-        message.put("payload", payload);
+        Map<String, Object> message = MerossMessages.message(messageId, timestamp, replyTopic(l.creds()), l.creds().key(), deviceUuid,
+                method, namespace, payload);
         return new Prepared(messageId, "/appliance/" + deviceUuid + "/subscribe", json.writeValueAsBytes(message));
     }
 

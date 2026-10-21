@@ -76,10 +76,13 @@ class BrandTest {
     }
 
     @Test
-    void casitaNeverSaysTheDoorIsOpenOnlyThatItIsntClosed() throws Exception {
+    void theFourDoorStatesAreClosedOpenMovingAndUnknown() throws Exception {
         String voice = new String(new ClassPathResource("static/voice.js").getContentAsByteArray());
-        // "Open" may label the control (the action); it must never be a door's state ([word, tone] in state()).
-        assertThat(voice).doesNotContain("[\"Open\"").doesNotContain("is open").doesNotContain("fully open\"")
-                .doesNotContain("already open");
+        // Closed (the sensor proves it), Open (settled "not closed": open however far), Opening/Closing (moving), Unknown.
+        assertThat(voice).contains("case \"CLOSED\": return [\"Closed\"").contains("case \"NOT_CLOSED\": return [\"Open\"")
+                .contains("case \"OPENING\": return [\"Opening…\", \"moving\"]").contains("case \"CLOSING\": return [\"Closing…\", \"moving\"]")
+                .contains("default: return [\"Unknown\"");
+        // Never more than the sensor knows: no "fully open", no position.
+        assertThat(voice).doesNotContain("fully open").doesNotContain("% open");
     }
 }

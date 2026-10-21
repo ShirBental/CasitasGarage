@@ -34,8 +34,14 @@ class MerossConfig {
                 MerossLocalCredentials.FILE, "CASITA_MEROSS_EMAIL and CASITA_MEROSS_PASSWORD");
     }
 
+    /** Meross's cloud (the default), or the opener itself on the home network (casita.meross.transport=local). */
     @Bean
-    MerossSession merossSession(MerossCloudApi api, MerossProperties properties, MerossLocalCredentials credentials, Clock clock) {
+    MerossTransport merossTransport(MerossCloudApi api, MerossProperties properties, MerossLinkProperties link,
+                                    MerossLocalCredentials credentials, Clock clock) {
+        if (link.transport() == MerossLinkProperties.Transport.LOCAL) {
+            return new MerossLocalTransport(api, credentials.email(), credentials.password(), link.localUrl(),
+                    properties.requestTimeout(), clock);
+        }
         return new MerossSession(api, new HiveMqConnector(), properties.withCredentials(credentials), clock);
     }
 
@@ -46,7 +52,7 @@ class MerossConfig {
      * With no doors named (an MSG100), the one door is {@code channel}, called "Garage".
      */
     @Bean
-    DoorRoster doorRoster(MerossSession session, MerossProperties properties, MerossLocalCredentials credentials,
+    DoorRoster doorRoster(MerossTransport session, MerossProperties properties, MerossLocalCredentials credentials,
                           GarageProperties garage) {
         Map<Integer, String> named = properties.doors().isEmpty()
                 ? Collections.singletonMap(properties.channel(), "Garage")

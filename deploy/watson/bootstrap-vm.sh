@@ -62,6 +62,7 @@ install -m 0755 "$here/casita-access" /usr/local/bin/casita-access
 install -m 0755 "$here/install-release.sh" /usr/local/sbin/casita-install-release
 install -m 0755 "$here/rollback.sh" /usr/local/sbin/casita-rollback
 install -m 0755 "$here/health.sh" /usr/local/sbin/casita-health
+install -m 0755 "$here/door-watch.sh" /usr/local/sbin/casita-door-watch
 systemctl daemon-reload
 systemctl enable casita.service
 

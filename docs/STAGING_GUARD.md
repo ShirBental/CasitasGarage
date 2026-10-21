@@ -13,8 +13,8 @@ exactly what the app would use. Casita refuses to start when:
 
 | Condition | Why |
 |---|---|
-| On a Compute Engine VM, `casita.deployment` isn't `staging` (unset, empty, `local`, …) | The VM is recognised by its hardware: `/sys/class/dmi/id/product_name` reads `Google Compute Engine`. No property or environment variable can change that, so `CASITA_DEPLOYMENT=local` can't make the VM count as a laptop. If the file exists but can't be read, it counts as Compute Engine (fail closed) |
-| `casita.deployment` is anything but empty, `local` or `staging` | No guessing: `production`, `Staging` and `stage` are refused everywhere |
+| On a Compute Engine VM, `casita.deployment` isn't `staging` or `production` (unset, empty, `local`, …) | The VM is recognised by its hardware: `/sys/class/dmi/id/product_name` reads `Google Compute Engine`. No property or environment variable can change that, so `CASITA_DEPLOYMENT=local` can't make the VM count as a laptop. If the file exists but can't be read, it counts as Compute Engine (fail closed) |
+| `casita.deployment` is anything but empty, `local`, `staging` or `production` | No guessing: `prod`, `Production`, `Staging` and `stage` are refused everywhere |
 | In staging, `casita.door` isn't exactly `simulated` | `meross`, `MEROSS`, `Simulated`, padded, empty or missing are all refused. (The door switch itself would accept `Simulated`; the guard is stricter on purpose) |
 | In staging, `casita.meross.command-mode` isn't exactly `off` | `live`, `dry-run`, `OFF`, `false` (YAML's reading of a bare `off`), empty or missing are all refused |
 | In staging, Meross credentials are present anywhere | `casita.meross.email`/`password` (e.g. `CASITA_MEROSS_EMAIL`), `MEROSS_EMAIL`/`MEROSS_PASSWORD` (the live tests' variables), or `config/meross.local.json` in the working directory |
@@ -99,3 +99,27 @@ no Meross account and moves nothing.
    `"live": false`.
 
 Record the date, image and commit with the results.
+
+## Production: the real doors
+
+`casita.deployment=production` is the only way the real doors run on watson. It keeps staging's sign-in and
+storage rules (rp-id, origins, family, Tailscale device identity, Firestore, Secure cookies, no `dev`
+profile) and replaces the simulation rules with these. Casita refuses to start when, in production:
+
+| Condition | Why |
+|---|---|
+| `casita.door` isn't exactly `meross` | Production is the real opener, nothing else |
+| `casita.meross.command-mode` isn't exactly `off`, `dry-run` or `live` | Each phase is a deliberate setting |
+| `casita.meross.doors` isn't exactly `1: Ford, 2: Toyota` | Channel 3 is permanently disabled (MerossProperties refuses it too) |
+| `casita.meross.command-channels` names anything but 1 and 2 | Only Ford and Toyota can be commanded |
+| `casita.meross.transport` isn't `cloud` or `local`, or `local` without a plain `http://<RFC 1918 IPv4>` `local-url` | Commands go to a literal private address, never a name or a public host |
+| `casita.meross.email` or `password` is missing, or `MEROSS_EMAIL`/`MEROSS_PASSWORD` or `config/meross.local.json` is present | The account comes only from `/etc/casita/meross.env` (root-only, 0600) |
+| In `live`, a commanded door lacks `casita.garage.travel-times.<door>` or `sensor-lags.<door>` | H1/H3: a door moves for real only on timings measured on it |
+
+When production passes, the log has one line (checked by `casita-health`):
+
+```
+production guard: ok deployment=production compute_engine=true door=meross command_mode=off command_channels=[1, 2] transport=cloud storage=firestore rp_id=watson.<tailnet>.ts.net
+```
+
+The steps and the first supervised tests are in `deploy/watson/LIVE_DOORS.md`.

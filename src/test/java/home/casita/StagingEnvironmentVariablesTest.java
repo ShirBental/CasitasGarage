@@ -23,6 +23,7 @@ import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 
+import home.casita.garage.GarageProperties;
 import home.casita.meross.CommandMode;
 import home.casita.meross.MerossProperties;
 
@@ -107,6 +108,47 @@ class StagingEnvironmentVariablesTest {
         CommandMode bound = Binder.get(environment(vars)).bind("casita.meross", MerossProperties.class).map(MerossProperties::commandMode)
                 .orElse(CommandMode.OFF);
         if (bound != CommandMode.OFF) assertThat(problems).isNotEmpty();
+    }
+
+    /** Production as LIVE_DOORS.md sets it: casita.env switched to the real doors, the account in meross.env. */
+    static Map<String, String> productionVariables(Path dataDir, String commandMode) throws IOException {
+        Map<String, String> vars = stagingVariables(dataDir);
+        vars.put("CASITA_DEPLOYMENT", "production");
+        vars.put("CASITA_DOOR", "meross");
+        vars.put("CASITA_MEROSS_COMMANDMODE", commandMode);
+        vars.put("CASITA_MEROSS_COMMANDCHANNELS", "1,2");
+        vars.put("CASITA_MEROSS_EMAIL", "placeholder@example.com");
+        vars.put("CASITA_MEROSS_PASSWORD", "placeholder");
+        vars.put("CASITA_GARAGE_TRAVELTIMES_FORD", "20s");
+        vars.put("CASITA_GARAGE_SENSORLAGS_FORD", "5s");
+        vars.put("CASITA_GARAGE_TRAVELTIMES_TOYOTA", "18s");
+        vars.put("CASITA_GARAGE_SENSORLAGS_TOYOTA", "25s");
+        return vars;
+    }
+
+    @Test
+    void productionThroughEnvironmentVariablesBindsBothDoorsAndTheirTimings(@TempDir Path data) throws Exception {
+        StandardEnvironment env = environment(productionVariables(data, "live"));
+        assertThat(StagingGuard.problems(env, true, false, Map.of())).isEmpty();
+        MerossProperties meross = Binder.get(env).bind("casita.meross", MerossProperties.class).get();
+        assertThat(meross.commandMode()).isEqualTo(CommandMode.LIVE);
+        assertThat(meross.commandChannels()).containsExactlyInAnyOrder(1, 2);
+        assertThat(meross.doors()).containsExactlyInAnyOrderEntriesOf(Map.of(1, "Ford", 2, "Toyota"));
+        GarageProperties garage = Binder.get(env).bind("casita.garage", GarageProperties.class).get();
+        assertThat(garage.measured("Ford")).isTrue();
+        assertThat(garage.measured("Toyota")).isTrue();
+        assertThat(garage.travelTime("Ford")).hasSeconds(20);
+        assertThat(garage.sensorLag("Toyota")).hasSeconds(25);
+    }
+
+    @Test
+    void productionLiveWithoutToyotasMeasuredLagIsRefused(@TempDir Path data) throws Exception {
+        Map<String, String> vars = productionVariables(data, "live");
+        vars.remove("CASITA_GARAGE_SENSORLAGS_TOYOTA");
+        assertThat(StagingGuard.problems(environment(vars), true, false, Map.of()))
+                .singleElement().asString().contains("Toyota").contains("sensor-lags");
+        vars.put("CASITA_MEROSS_COMMANDMODE", "off");
+        assertThat(StagingGuard.problems(environment(vars), true, false, Map.of())).as("reading needs no timings").isEmpty();
     }
 
     /* ---------- a real Casita process ---------- */

@@ -89,13 +89,18 @@ casita:
       1: Ford
       2: Toyota
     request-timeout: 8s
+    # How Casita reaches the opener: cloud (Meross's cloud over TLS, the default and the path proven on
+    # Ford) or local (straight to the opener on the home network, POST http://<its private IPv4>/config,
+    # reached from watson through a Tailscale subnet route; deploy/watson/LIVE_DOORS.md).
+    transport: cloud
+    # local-url: http://192.168.1.50   # local only: the opener's DHCP-reserved private address
     # Sending open/close to the real doors: off (every command rejected before anything is built),
     # dry-run (checked and built, never sent) or live. Keep off until the hardware prerequisites in
     # docs/DESIGN.md are checked. It applies only to the doors in command-channels.
     command-mode: "off"     # quoted: YAML reads a bare off as false
     # The per-door switch: the only doors that may be sent a command. A door not listed is off whatever
-    # command-mode says, and /api/doors reports it "live": false. Ford only: Toyota (2) is added only
-    # after its supervised hardware test (docs/MEROSS.md, "Toyota (channel 2)").
+    # command-mode says, and /api/doors reports it "live": false. Production on watson sets
+    # CASITA_MEROSS_COMMANDCHANNELS=1,2 (both doors), each with its measured timings below.
     command-channels: [1]
   garage:
     travel-time: 10s        # how long our doors take to fully open or close

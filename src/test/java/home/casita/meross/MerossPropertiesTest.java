@@ -36,10 +36,20 @@ class MerossPropertiesTest {
         assertThat(bind(Map.of("casita.meross.doors.1", "Ford", "casita.meross.doors.2", "Toyota", "casita.meross.channel", "2")).channel())
                 .isEqualTo(2);
 
-        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, 3, Duration.ofSeconds(8), CommandMode.OFF,
+        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, 4, Duration.ofSeconds(8), CommandMode.OFF,
                 Map.of(1, "Ford", 2, "Toyota"), Set.of()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("casita.meross.channel 3").hasMessageContaining("{1=Ford, 2=Toyota}");
+                .hasMessageContaining("casita.meross.channel 4").hasMessageContaining("{1=Ford, 2=Toyota}");
+    }
+
+    @Test
+    void channel3IsNeverADoorACommandChannelOrTheChannel() {
+        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, 3, Duration.ofSeconds(8), CommandMode.OFF,
+                Map.of(1, "Ford", 2, "Toyota"), Set.of())).hasMessageContaining("channel 3 is permanently disabled");
+        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, null, Duration.ofSeconds(8), CommandMode.OFF,
+                Map.of(1, "Ford", 2, "Toyota", 3, "Spare"), Set.of())).hasMessageContaining("channel 3 is permanently disabled");
+        assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, null, Duration.ofSeconds(8), CommandMode.OFF,
+                null, Set.of(3))).hasMessageContaining("channel 3 is permanently disabled");
     }
 
     @Test
@@ -132,8 +142,8 @@ class MerossPropertiesTest {
     @Test
     void allowedCommandChannelsMustBeNamedDoors() {
         assertThatThrownBy(() -> new MerossProperties("https://iotx-us.meross.com", null, null, null, 1, Duration.ofSeconds(8), CommandMode.OFF,
-                Map.of(1, "Ford", 2, "Toyota"), Set.of(1, 3)))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("command-channels [1, 3]");
+                Map.of(1, "Ford", 2, "Toyota"), Set.of(1, 4)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("command-channels [1, 4]");
     }
 
     @Test
@@ -149,7 +159,7 @@ class MerossPropertiesTest {
                 });
     }
 
-    @EnableConfigurationProperties({MerossProperties.class, home.casita.garage.GarageProperties.class})
+    @EnableConfigurationProperties({MerossProperties.class, MerossLinkProperties.class, home.casita.garage.GarageProperties.class})
     static class BindProperties {
     }
 }

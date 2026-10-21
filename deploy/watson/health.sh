@@ -5,7 +5,7 @@
 #   casita-health --wait 90  # wait up to 90 s for /healthz (used after a restart)
 #
 # Exit 0 only when: the service is active, /healthz answers "ok" on 127.0.0.1:8080, this start's log has the
-# staging guard's "ok" line with door=simulated and command_mode=off, and Funnel is off.
+# staging or production guard's "ok" line, and Funnel is off.
 set -uo pipefail
 wait=0; [ "${1:-}" = "--wait" ] && wait="${2:-90}"
 fail=0
@@ -23,9 +23,11 @@ systemctl is-active --quiet casita.service && ok "casita.service active" || bad 
 
 since="$(systemctl show -p ActiveEnterTimestamp --value casita.service)"
 line="$(journalctl -u casita.service --since "${since:-today}" --no-pager -o cat 2>/dev/null | grep 'staging guard: ok' | tail -1)"
-case "$line" in
+pline="$(journalctl -u casita.service --since "${since:-today}" --no-pager -o cat 2>/dev/null | grep 'production guard: ok' | tail -1)"
+case "$line$pline" in
   *"door=simulated command_mode=off meross_credentials=absent storage=firestore"*) ok "staging guard: ${line##*staging guard: }" ;;
-  *) bad "no 'staging guard: ok' line with door=simulated and command_mode=off since the last start" ;;
+  *"production guard: ok deployment=production"*"door=meross command_mode="*) ok "production guard: ${pline##*production guard: }" ;;
+  *) bad "no 'staging guard: ok' or 'production guard: ok' line since the last start" ;;
 esac
 
 if command -v tailscale >/dev/null; then
