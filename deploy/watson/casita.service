@@ -1,0 +1,54 @@
+[Unit]
+Description=Casita (Bental's Casita garage app, GCP staging: simulation only)
+Documentation=file:///opt/casita/current/docs/WATSON_DEPLOYMENT_READINESS.md
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+# A refused start (the staging guard, a missing Firestore schema) fails the same way each time: stop retrying.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=casita
+Group=casita
+# The settings, including JAVA_OPTS. StagingGuard refuses to start unless they are a complete, simulated staging.
+EnvironmentFile=/etc/casita/casita.env
+# The working directory holds nothing but data: no config/meross.local.json can be picked up from here.
+WorkingDirectory=/var/lib/casita
+ExecStart=/usr/bin/java $JAVA_OPTS -jar /opt/casita/current/casita.jar
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+# Memory: the JVM is capped at 128 MiB of heap (JAVA_OPTS) and measured at about 200 MiB RSS. This is a hard
+# ceiling well below the VM's 1 GiB, so a leak ends in a restart instead of starving tailscaled and sshd.
+MemoryHigh=384M
+MemoryMax=512M
+
+# Hardening: Casita writes only its data directory; it needs the network (Firestore, loopback) and the
+# tailscaled socket (tailscale whois), nothing else.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/casita
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+# AF_NETLINK: the JVM may read network interfaces through it (gRPC and Netty look them up at start).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

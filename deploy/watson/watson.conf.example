@@ -1,0 +1,24 @@
+# Settings for provision-gcp.sh and deploy-release.sh. Copy to watson.conf (git-ignored) and fill in the <...>.
+# Nothing here is secret.
+
+# The GCP project that holds watson (create it, and link billing, in the console first).
+PROJECT_ID="<PROJECT_ID>"
+
+# Always Free e2-micro regions are us-west1, us-central1 and us-east1. us-east1 matches the latency estimate
+# in docs/firestore-benchmark/RESULTS.md (gate G6 measures the real thing).
+REGION=us-east1
+ZONE=us-east1-b
+# Firestore's (default) database, in the same region as the VM. Its location can't be changed later.
+FIRESTORE_LOCATION=us-east1
+
+# The VM and its tailnet name. Permanent: passkeys are bound to watson.<tailnet>.ts.net.
+VM_NAME=watson
+
+# A network of its own: no inbound traffic except SSH through Identity-Aware Proxy (for setup and recovery).
+NETWORK=watson-net
+SUBNET=watson-subnet
+SUBNET_RANGE=10.80.0.0/28
+
+# Casita's runtime identity, and the custom role that lets it read and write Firestore documents but never delete one.
+SERVICE_ACCOUNT=casita-runtime
+ROLE_ID=casitaFirestoreRuntime

@@ -1,0 +1,5 @@
+#!/bin/sh
+# casita-access on watson: bin/casita-access from the running release, as the casita user, with the server's
+# data directory. Usage as bin/casita-access: list, invite <member> "<label>", revoke-device <node id>, ...
+set -eu
+exec sudo -u casita env CASITA_DATA=/var/lib/casita CASITA_URL=http://127.0.0.1:8080 /bin/sh /opt/casita/current/casita-access "$@"
