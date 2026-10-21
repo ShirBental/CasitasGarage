@@ -43,6 +43,10 @@ casita:
     # The same Watson, excited, shown while a door is opening or closing (the server's movement state, never
     # a guess). Same canvas, size and alignment as illustration. Empty: Watson doesn't change.
     illustration-excited: /brand/watson-excited.webp
+  # Where Casita runs: empty or 'local' (a laptop), or 'staging' (the cloud VM). Staging never drives the
+  # real garage: it must have door 'simulated', command-mode 'off' and no Meross credentials, and on a
+  # Compute Engine VM anything but 'staging' refuses to start (StagingGuard, docs/STAGING_GUARD.md).
+  deployment: ""
   # Which door Casita talks to: 'simulated' (pretend door) or 'meross' (the real one).
   door: simulated
   security:
