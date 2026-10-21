@@ -266,3 +266,160 @@ PR #3:
 8. Push CI on `main` green; `main^{tree}` = `e4d597346355`. **Stop and report.**
 
 Steps 2, 4, 5 and 7 are GitHub writes. I'll do them only after you approve batch 1.
+
+---
+
+# Update 2026-10-21: batch 1 done, batch 2 readiness, H2, H1/H3
+
+## Batch 1 (done)
+
+- **#2:** merged as `8c7a6c6`; `main` tree `7467a8daae3d`; push CI green.
+- **#3:** retargeted to `main`. Update branch made `f559dfe` (tree `e4d597346355`, same as `9538640`), and
+  its fresh CI was green. Merged as `8011117`; `main` tree `e4d597346355`; push CI green.
+- **`main` is now `801111713e70c65d876452b6c6593b81fd68c4d0`.**
+
+## PR #1: ready to merge
+
+- **Head `129e3ea`:** the banner says "historical, partly superseded" and has a table that separates the
+  old design from what's current, including the server name **`watson`** (`watson.<tailnet>.ts.net`).
+- **Hardware checklist:** sections 5 and 6 still match the code. Two gaps are covered by the banner, not by
+  section 6 itself: item 6 still says "10 s measured so far", and there's no item for the reading's lag.
+  If you want them in section 6 too, that's a one-paragraph follow-up.
+- **CI and mergeability:** CI on `129e3ea` passed (run after #2 merged), and the PR is `clean`. A trial
+  merge into the current `main` changes only `docs/DESIGN.md`.
+- **Before merging:** use Update branch for a fresh run on the current `main`.
+
+## Batch 2: #4, #5, #6
+
+Remote state is unchanged:
+
+| PR | Head | Base | Draft |
+|---|---|---|---|
+| #4 | `fd69015` | `feat/garage-service` | no |
+| #5 | `cadd33c` | `feat/meross-cloud` | yes |
+| #6 | `9051e97` | `feat/msg200-commands` | yes |
+
+A local trial of merging them in order onto `main` is clean. Each resulting tree equals the validated one
+(`b4db9e541511`, `a978b851a5a8`, `2da9de9690f5`). With #1 merged first, `docs/DESIGN.md` is the only extra.
+
+What each PR changes:
+
+- **#4** (9 commits): the Meross client, read-only. `commands-enabled: false`, and every command is
+  rejected before sending. The POM gets the HiveMQ client only.
+- **#5** (1 commit): `command-mode` off/dry-run/live, default `"off"`, and `command-channels: [1]`.
+  `MerossDoor` re-reads the door before any SET, which goes at QoS 0, once, and is never retried.
+- **#6** (5 commits): a final outcome for every movement, a hold after STUCK/LOST, and the `/api` controller.
+
+None of the three touches security, CI or the POM, apart from #4's dependency. At #6, `SecurityConfig` is
+still the skeleton's: only `/healthz` is public, and there's no sign-in mechanism, so every `/api` call is 401.
+
+How the checks hold at #4–#6:
+
+| Check | At #4–#6 |
+|---|---|
+| Live off by default | `casita.door: simulated` (and `matchIfMissing`); #4 `commands-enabled: false`; #5/#6 `command-mode: "off"` |
+| Allowlist | #5/#6: `command-channels: [1]`; any other channel is rejected in `MerossDoor` before anything is built |
+| No implicit switch to live | Live needs `casita.door=meross`, `command-mode=live`, the channel listed, and credentials |
+| Unknown, stale or stuck | Unreadable sensor gives `UNKNOWN`; send failure gives `UNCONFIRMED` plus a check; STUCK/LOST hold commands (#6). Stale readings can't be detected (`lmTime` 0): see H3 |
+| Concurrent commands | One `GarageService`, `synchronized`, one movement until it's checked |
+| No retries | None in `GarageService` or `MerossSession` |
+| No credentials committed | Verified across all history |
+| No live tests in CI | Live tests need `MEROSS_EMAIL` or `-Dmeross.live=true`; commands also need the dated confirmation. CI sets neither |
+| Security not weakened | No changes to `security/**` |
+
+**Verdicts:**
+- **#4:** ready to merge, after retarget, Update branch and the gates.
+- **#5 and #6:** ready for review; ready to merge once marked ready, then the same steps.
+
+H1 doesn't block these merges while `command-mode` stays off, but it blocks any live use (below).
+
+**Sequence.** For each of #4, #5, #6 in order: mark ready (#5 and #6 only), retarget to `main`, Update
+branch pinned to the recorded head, wait for fresh CI, run gates 1–8, merge with a merge commit pinned to
+the new head, then check push CI on `main` and the tree. Then stop and report.
+
+| PR | Expected tree | Local baseline (minimum) | Allowed skips |
+|---|---|---|---|
+| #4 | `b4db9e541511` | 117 tests | `MerossLiveCheckTest` |
+| #5 | `a978b851a5a8` | 141 tests | `MerossLive*` (3) |
+| #6 | `2da9de9690f5` | 166 tests | `MerossLive*` (4) |
+
+## H2: staging guard (local branch `fix/staging-simulation-guard`, commit `229c577`)
+
+Built on `feat/toyota-commands` (`1ae0aaa`), because the guard covers the final two-door wiring. It can
+merge only after #11 (or be rebased once #11 is on `main`). Details: `docs/STAGING_GUARD.md`.
+
+- **What it is:** `StagingGuard` is an `EnvironmentPostProcessor`. It runs after every property source and
+  before any bean.
+  - On Compute Engine (recognised by the DMI product name, not a setting), only `casita.deployment=staging`
+    starts.
+  - Staging needs `casita.door` to be exactly `simulated` and `command-mode` exactly `off`, and must have no
+    Meross credentials (properties, `MEROSS_*` variables or `config/meross.local.json`).
+  - An unknown deployment is refused anywhere. Local development is unchanged.
+- **Tests:**
+  - `StagingGuardTest` (33) and `StagingStartupTest` (8, real startups) all pass.
+  - The positive startup has Ford and Toyota both `SIMULATED`, and no Meross credentials, session or client beans.
+  - With the guard unregistered, 7 of the 8 startup tests fail: the 7 refusals start normally, wired to the
+    real doors when `casita.door=meross`.
+- **Full suite:** 655 run, 0 failures, 7 skipped (Meross live only), and the skip guard passes. The first
+  full run had 55 errors in `FirestoreAccessFlowTest`: its test setup timed out provisioning the local
+  emulator (gRPC deadline, 1.8 s). That code path doesn't involve the guard, and one re-run was fully green.
+  If it recurs in CI, it needs its own fix; it isn't a flake to ignore.
+
+## H1 and H3: timing and stale readings
+
+Facts, from docs/MEROSS.md; I made no new measurements:
+- `casita.garage.travel-time: 10s` for every door, with `verify-grace: 2s`.
+- Ford was watched for 20 s in the confirmed close test, and that test's default travel time is 20 s.
+- Toyota's `System.All` still reported "closed" at least 25 s after the door was fully open. Ford's lag
+  hasn't been measured; it was under about 24 s in its tests.
+
+**Can the state machine allow a dangerous command? Yes, in live mode, with the 10 s setting.**
+
+1. **Casita opens Ford.** At 12 s the check reads "not closed" and records `OPEN_INFERRED`. `check()` then
+   dates the settle to the command's start time, so `settled()` is true at once. A close requested between
+   12 s and 20 s is sent while Ford is still opening. The opener treats it as a button press, so the door
+   stops or reverses partway. The later check then finds it STUCK and holds commands, but one unintended
+   movement has already happened.
+2. **Casita closes Ford.** At 12 s the sensor still reads "not closed" (the door needs 20 s), so the result
+   is `STUCK` and commands are held. That is safe, but a false alarm.
+3. **Someone opens a door with the remote.** Casita allows a close 10 s after it first sees "not closed".
+   If it saw the change within 10 s of the press, the close goes to a door that is still opening.
+4. **Casita restarts.** The first reading is treated as "just changed", so a close is allowed 10 s after
+   start-up, possibly while the door is moving.
+5. **Someone closes a door with the remote while the reading is stale (H3).** The reading still says "not
+   closed", so Casita, which has watched that for the travel time, may send a close to a door that is
+   already moving. No travel-time setting fixes this; only a fresh reading would.
+6. **A lagging reading after Casita's open.** If the reading still says "closed" at the check, the result
+   is `STUCK` and commands are held. This fails safe.
+
+**Recommended changes** (not made; each is a separate PR, and none enables anything):
+- **H1:** give Ford its own `casita.garage.travel-times.Ford`, at least the measured 20 s plus a margin
+  chosen from repeated measurements. Add a test that the committed `application.yml` gives Ford at least 20 s.
+- **H3:** add a per-door `sensor-lag` setting to both the settle window and the check time. Have
+  `MerossProperties` refuse `live` for any channel without a configured travel time and lag (no default).
+  Add `GarageServiceTest` cases for scenarios 1, 3 and 4 with a door slower than its configured travel time.
+- **Toyota:** keep it out of `command-channels` until H3 is measured and configured. Accept scenario 5
+  explicitly as a known limitation, or wait for a faster sensor reading.
+
+**Physical validation before any live operation:** supervised, someone at the garage, photo eyes and
+auto-reverse checked first.
+- For each door, Ford and Toyota, at least 3 runs in each direction:
+  - travel time by stopwatch;
+  - lag from the physical end of travel to the reading's change, with a 2-second watcher started first and
+    the press times written down.
+- Record the results in docs/MEROSS.md and configure them.
+- Then run a dry run, then one supervised live open and close per door through the existing confirmed live
+  tests.
+
+## M1 integration tree
+
+`qa/casita-m1-integration` @ `4cefe33` isn't on GitHub, and that commit isn't in this environment's clone,
+so the trees couldn't be compared. **Equivalence with `94a029f75834` (the top of the stack) is unverified.**
+To check it on the Mac:
+
+```
+git rev-parse 4cefe33^{tree}
+git diff --stat 4cefe33 origin/feat/toyota-commands
+```
+
+Alternatively, push that branch so it can be compared here.
