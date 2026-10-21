@@ -21,6 +21,9 @@ import home.casita.garage.GarageProperties;
 import home.casita.garage.GarageService;
 import home.casita.garage.GarageStatus;
 import home.casita.security.FilePasskeyStore;
+import home.casita.security.access.AccessSession;
+import home.casita.security.access.AccessStore;
+import jakarta.servlet.http.HttpSession;
 
 /**
  * The API from the design doc (section 8), a thin layer over {@link GarageService}: every safety rule
@@ -40,14 +43,16 @@ class GarageController {
     private final DoorRoster roster;
     private final FilePasskeyStore passkeys;
     private final GarageProperties garageProperties;
+    private final AccessStore access;
 
     GarageController(GarageService garage, ActivityLog activity, DoorRoster roster, FilePasskeyStore passkeys,
-                     GarageProperties garageProperties) {
+                     GarageProperties garageProperties, AccessStore access) {
         this.garage = garage;
         this.activity = activity;
         this.roster = roster;
         this.passkeys = passkeys;
         this.garageProperties = garageProperties;
+        this.access = access;
     }
 
     /** One door as the app shows it. {@code status} for the controlled door; {@code door} and {@code since} for every door. */
@@ -60,7 +65,8 @@ class GarageController {
      */
     record Doors(String control, long travelTimeSeconds, List<DoorView> doors) {}
 
-    record Me(String name, int passkeys) {}
+    /** @param device the label this device was invited as: for showing, not proof of anything */
+    record Me(String name, int passkeys, String device) {}
 
     /** Every door the app shows. Watched doors (Toyota) are only read: closed, not closed, or unknown. */
     @GetMapping("/doors")
@@ -82,8 +88,10 @@ class GarageController {
     }
 
     @GetMapping("/me")
-    Me me(Principal user) {
-        return new Me(user.getName(), passkeys.countFor(user.getName()));
+    Me me(Principal user, HttpSession session) {
+        String device = session.getAttribute(AccessSession.BINDING) instanceof AccessSession.Binding binding
+                ? access.find(user.getName(), binding.nodeId()).map(AccessStore.Device::label).orElse(null) : null;
+        return new Me(user.getName(), passkeys.countFor(user.getName()), device);
     }
 
     @GetMapping("/status")

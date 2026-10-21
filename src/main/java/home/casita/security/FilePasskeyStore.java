@@ -27,6 +27,7 @@ import org.springframework.security.web.webauthn.api.PublicKeyCredentialUserEnti
 import org.springframework.security.web.webauthn.management.PublicKeyCredentialUserEntityRepository;
 import org.springframework.security.web.webauthn.management.UserCredentialRepository;
 
+import home.casita.security.access.CredentialEvents;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -53,6 +54,7 @@ public class FilePasskeyStore implements PublicKeyCredentialUserEntityRepository
     private final JsonMapper json = JsonMapper.builder().build();
     private final Map<String, User> usersById = new LinkedHashMap<>();
     private final Map<String, Passkey> passkeysById = new LinkedHashMap<>();
+    private volatile CredentialEvents events;
 
     public FilePasskeyStore(Path dataDir) {
         this.file = dataDir.resolve("passkeys.json");
@@ -61,6 +63,11 @@ public class FilePasskeyStore implements PublicKeyCredentialUserEntityRepository
             contents.users().forEach(u -> usersById.put(u.id(), u));
             contents.passkeys().forEach(p -> passkeysById.put(p.credentialId(), p));
         }
+    }
+
+    /** Hooks for new passkeys (enrollment) and used ones (sign-in); see CredentialEvents. */
+    public void setEvents(CredentialEvents events) {
+        this.events = events;
     }
 
     /* ---------- users ---------- */
@@ -95,6 +102,13 @@ public class FilePasskeyStore implements PublicKeyCredentialUserEntityRepository
 
     @Override
     public synchronized void save(CredentialRecord r) {
+        boolean isNew = !passkeysById.containsKey(r.getCredentialId().toBase64UrlString());
+        if (events != null) {
+            // A new passkey must come from a live enrollment (refused otherwise: nothing is stored); an existing
+            // one being saved is a sign-in updating its counter.
+            if (isNew) events.beforeNewCredential(r, this);
+            else events.credentialUsed(r);
+        }
         passkeysById.put(r.getCredentialId().toBase64UrlString(), new Passkey(
                 r.getCredentialId().toBase64UrlString(), r.getUserEntityUserId().toBase64UrlString(),
                 new Bytes(r.getPublicKey().getBytes()).toBase64UrlString(), r.getSignatureCount(), r.isUvInitialized(),
@@ -114,6 +128,30 @@ public class FilePasskeyStore implements PublicKeyCredentialUserEntityRepository
     public synchronized List<CredentialRecord> findByUserId(Bytes userId) {
         String id = userId.toBase64UrlString();
         return passkeysById.values().stream().filter(p -> p.userId().equals(id)).map(FilePasskeyStore::toRecord).toList();
+    }
+
+    /** A person's passkeys, for administration. */
+    public synchronized List<CredentialRecord> credentialsFor(String username) {
+        PublicKeyCredentialUserEntity user = findByUsername(username);
+        return user == null ? List.of() : findByUserId(user.getId());
+    }
+
+    /** Everyone who has a WebAuthn user record, for administration. */
+    public synchronized List<String> usernames() {
+        return usersById.values().stream().map(User::name).toList();
+    }
+
+    /** Removes a person's passkeys and their WebAuthn user record. */
+    public synchronized int deleteAllFor(String username) {
+        PublicKeyCredentialUserEntity user = findByUsername(username);
+        if (user == null) return 0;
+        String id = user.getId().toBase64UrlString();
+        int before = passkeysById.size();
+        passkeysById.values().removeIf(p -> p.userId().equals(id));
+        int removed = before - passkeysById.size();
+        usersById.remove(id);
+        write();
+        return removed;
     }
 
     /** How many passkeys a person has (for the app's "set up Face ID" prompt). */

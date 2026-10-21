@@ -5,3 +5,7 @@ server:
     session:
       cookie:
         secure: false
+casita:
+  security:
+    # No tailscale serve locally: a request straight to 127.0.0.1 is "this computer" (rp-id localhost only).
+    device-identity: development
