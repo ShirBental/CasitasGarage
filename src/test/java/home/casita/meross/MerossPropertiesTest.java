@@ -149,7 +149,7 @@ class MerossPropertiesTest {
                 });
     }
 
-    @EnableConfigurationProperties(MerossProperties.class)
+    @EnableConfigurationProperties({MerossProperties.class, home.casita.garage.GarageProperties.class})
     static class BindProperties {
     }
 }

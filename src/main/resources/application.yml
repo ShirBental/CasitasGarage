@@ -101,5 +101,9 @@ casita:
     travel-time: 10s        # how long our doors take to fully open or close
     # travel-times:         # a door's own travel time, where it differs (by name), e.g.
     #   Toyota: 15s
+    # sensor-lags:          # how long a door's reading can trail the door (by name); zero when not given
+    #   Toyota: 30s
+    # A door gets live commands only with both its travel-times and sensor-lags entries, measured on it
+    # (docs/MEROSS.md, "Timings before live commands"). The defaults above are for the practice doors.
     verify-grace: 2s        # extra wait before checking it got there
     allow-remote-close: true

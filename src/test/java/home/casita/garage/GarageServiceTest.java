@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -562,6 +563,87 @@ class GarageServiceTest {
     /* ---------- test doubles ---------- */
 
     /** A door the test moves by hand: the sensor changes only when the test says. */
+    /* ---------- measured timings (H1, H3) ---------- */
+
+    /** Ford with its own travel time and sensor lag, as live mode requires. */
+    private void newGarage(Duration travel, Duration lag) {
+        door = new FakeDoor();
+        activity = new InMemoryActivityLog();
+        pushes = new CopyOnWriteArrayList<>();
+        clock = new MutableClock(Instant.parse("2026-10-15T21:00:00Z"));
+        tasks = new ManualTasks(clock);
+        garage = new GarageService("Ford", door, DoorControl.SIMULATED, activity, pushes::add, tasks, clock,
+                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", travel), Map.of("Ford", lag)));
+    }
+
+    /**
+     * H1, as it stands with the defaults: a door that really takes 20 s, configured as 10 s. The open's check at
+     * 12 s reads "not closed", the door counts as settled, and a close goes to a door that is still opening, where
+     * the opener can take it as a button press and stop or reverse it. This is why live commands need each door's
+     * measured timings (MerossConfig refuses to start without them); the practice doors keep the defaults.
+     */
+    @Test
+    void withATravelTimeShorterThanTheDoorsACloseCanReachADoorStillOpening() {
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(Duration.ofSeconds(12)); // the real door is still opening until 20 s
+
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(door.commands).containsExactly(true, false);
+    }
+
+    @Test
+    void withTheDoorsOwnTravelTimeACloseWaitsUntilItHasFinishedOpening() {
+        newGarage(Duration.ofSeconds(20), Duration.ZERO);
+        garage.open("Shir");
+        door.open = true;
+
+        clock.advance(Duration.ofSeconds(12));
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.BUSY);
+        clock.advance(Duration.ofSeconds(9)); // 21 s: still before the check at 20 + 2
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(door.commands).containsExactly(true);
+
+        clock.advance(Duration.ofSeconds(1)); // 22 s: checked, settled
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(door.commands).containsExactly(true, false);
+    }
+
+    @Test
+    void aLaggingReadingIsWaitedForInsteadOfReportedStuck() {
+        // H3: the reading trails the door. Without the lag, the check at 12 s would read "closed" and hold the door.
+        newGarage(Duration.ofSeconds(10), Duration.ofSeconds(15));
+        garage.open("Shir");
+
+        clock.advance(Duration.ofSeconds(12));
+        assertThat(garage.status().door()).isEqualTo(DoorState.OPENING);
+        clock.advance(Duration.ofSeconds(10)); // 22 s: the reading finally changes
+        door.open = true;
+        clock.advance(Duration.ofSeconds(5)); // 27 s = 10 + 15 + 2: checked
+
+        GarageStatus status = garage.status();
+        assertThat(status.door()).isEqualTo(DoorState.NOT_CLOSED);
+        assertThat(status.held()).isFalse();
+        assertLatest(GarageService.CASITA, Action.OPEN, Outcome.OPEN_INFERRED);
+    }
+
+    @Test
+    void aDoorSeenNotClosedSettlesOnlyAfterTravelTimePlusLag() {
+        // Covers the remote or wall button, and a restart: Casita first sees "not closed" now.
+        newGarage(Duration.ofSeconds(10), Duration.ofSeconds(15));
+        door.open = true;
+        garage.status();
+
+        clock.advance(Duration.ofSeconds(10));
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.BUSY);
+        clock.advance(Duration.ofSeconds(14));
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(door.commands).isEmpty();
+
+        clock.advance(Duration.ofSeconds(1)); // 25 s
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
+    }
+
     static final class FakeDoor implements DoorDevice {
         volatile boolean open;
         volatile boolean readFails;

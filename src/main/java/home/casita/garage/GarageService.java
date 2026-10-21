@@ -20,7 +20,7 @@ import org.slf4j.LoggerFactory;
  *       "close" only when it reports not closed. Never send a command toward the state the
  *       sensor already reports, because the device may treat it as a button press.</li>
  *   <li><b>One movement at a time, until checked.</b> After a command, no other command is
- *       sent until Casita has checked the sensor, at {@code travelTime + verifyGrace} (or
+ *       sent until Casita has checked the sensor, at {@code travelTime + sensorLag + verifyGrace} (or
  *       earlier for a close, once the sensor reports closed). A check that is overdue runs
  *       before any new command, so a failure is never skipped and never mixed up with a
  *       newer movement.</li>
@@ -31,8 +31,8 @@ import org.slf4j.LoggerFactory;
  *   <li><b>Let a "not closed" door settle.</b> A "not closed" reading may mean the door is
  *       moving because of the wall button or remote, or Casita may have just started and not
  *       know. Casita sends "close" only after it has watched the sensor report "not closed"
- *       for at least {@code travelTime}. "Closed" is the only reading that proves the door's
- *       position.</li>
+ *       for at least {@code travelTime + sensorLag} (the door's reading can trail the door by up to
+ *       {@code sensorLag}). "Closed" is the only reading that proves the door's position.</li>
  *   <li><b>Say what happened.</b> Every command and check is recorded; failed or unconfirmed
  *       movements are pushed to the family.</li>
  *   <li><b>After a failure, wait for a person.</b> A movement that ended {@code STUCK} or {@code LOST}
@@ -75,6 +75,8 @@ public class GarageService {
     private final Clock clock;
     private final GarageProperties properties;
     private final Duration travelTime;
+    /** Travel time plus how long the reading can trail the door: what settling and checks wait for. */
+    private final Duration settleTime;
 
     // All guarded by this.
     private Movement pending;
@@ -101,6 +103,7 @@ public class GarageService {
         this.clock = clock;
         this.properties = properties;
         this.travelTime = properties.travelTime(name);
+        this.settleTime = travelTime.plus(properties.sensorLag(name));
     }
 
     public String name() {
@@ -323,11 +326,11 @@ public class GarageService {
 
     /** True once Casita has seen the sensor's current value for at least the travel time. */
     private boolean settled() {
-        return lastSensorChange != null && !clock.instant().isBefore(lastSensorChange.plus(travelTime));
+        return lastSensorChange != null && !clock.instant().isBefore(lastSensorChange.plus(settleTime));
     }
 
     private Instant dueAt(Movement m) {
-        return m.startedAt().plus(travelTime).plus(properties.verifyGrace());
+        return m.startedAt().plus(settleTime).plus(properties.verifyGrace());
     }
 
     private boolean isDue(Movement m) {

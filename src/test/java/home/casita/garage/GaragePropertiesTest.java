@@ -91,4 +91,27 @@ class GaragePropertiesTest {
         contextRunner.withPropertyValues("casita.garage.travel-times.Toyota=0s")
                 .run(context -> assertThat(context).hasFailed());
     }
+
+    @Test
+    void sensorLagsAreZeroOrMoreAndKeyedByDoor() {
+        GarageProperties p = new GarageProperties(Duration.ofSeconds(10), Duration.ofSeconds(2), true,
+                java.util.Map.of("Ford", Duration.ofSeconds(20)), java.util.Map.of("Ford", Duration.ofSeconds(5), "Toyota", Duration.ZERO));
+        assertThat(p.sensorLag("Ford")).isEqualTo(Duration.ofSeconds(5));
+        assertThat(p.sensorLag("ford")).isEqualTo(Duration.ofSeconds(5));
+        assertThat(p.sensorLag("Toyota")).isEqualTo(Duration.ZERO);
+        assertThat(p.sensorLag("Garage")).as("not given: zero").isEqualTo(Duration.ZERO);
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new GarageProperties(Duration.ofSeconds(10), Duration.ofSeconds(2), true,
+                        java.util.Map.of(), java.util.Map.of("Ford", Duration.ofSeconds(-1))))
+                .withMessageContaining("casita.garage.sensor-lags.Ford");
+    }
+
+    @Test
+    void aDoorIsMeasuredOnlyWithItsOwnTravelTimeAndLag() {
+        GarageProperties p = new GarageProperties(Duration.ofSeconds(10), Duration.ofSeconds(2), true,
+                java.util.Map.of("Ford", Duration.ofSeconds(20), "Toyota", Duration.ofSeconds(25)), java.util.Map.of("Ford", Duration.ZERO));
+        assertThat(p.measured("Ford")).isTrue();
+        assertThat(p.measured("Toyota")).as("travel time only").isFalse();
+        assertThat(new GarageProperties(Duration.ofSeconds(10), Duration.ofSeconds(2), true).measured("Ford")).as("defaults").isFalse();
+    }
 }
