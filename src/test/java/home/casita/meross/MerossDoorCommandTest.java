@@ -264,6 +264,10 @@ class MerossDoorCommandTest {
         rig.runDueChecks(); // Ford still reports closed after the travel time
         assertThat(rig.outcomes()).containsExactly(Outcome.MOVING, Outcome.STUCK);
         assertThat(transport.sets()).isOne(); // never retried
+
+        // Asking again doesn't send a second SET: held until someone checks Ford and resumes.
+        assertThat(rig.service.open("Shir").outcome()).isEqualTo(Outcome.HELD);
+        assertThat(transport.sets()).isOne();
     }
 
     @Test
@@ -276,7 +280,7 @@ class MerossDoorCommandTest {
         doors(1, 0); // the sensor changes
         rig.runDueChecks();
 
-        assertThat(rig.outcomes()).containsExactly(Outcome.MOVING);
+        assertThat(rig.outcomes()).containsExactly(Outcome.MOVING, Outcome.OPEN_INFERRED); // judged by the sensor, recorded
         assertThat(rig.notifications).anyMatch(n -> n.startsWith("Opening the garage"));
         assertThat(rig.notifications).noneMatch(n -> n.contains("didn't open"));
     }
