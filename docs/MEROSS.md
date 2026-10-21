@@ -344,3 +344,35 @@ Credentials move to Parameter Store later; this file is for local use only.
 9. meross_lan: namespace payloads (`merossclient/protocol/namespaces/__init__.py`, GET payload `{key: {}}`)
    and a recorded MSG200 trace (`emulator_traces/U0123456789012345678901234567891C-Kpippo-msg200.json.txt`):
    https://github.com/krahabb/meross_lan
+
+## Timings before live commands (H1, H3)
+
+`GarageService` decides when a "not closed" door has settled, and when to check a movement, from the door's
+travel time plus its **sensor lag** (how long the reading can trail the door): settle after
+`travel + lag`, check at `travel + lag + grace`.
+
+- **H1:** `casita.garage.travel-time` is 10 s for every door, but Ford was watched for 20 s in its confirmed
+  close. With 10 s, the open's check at 12 s already counts the door as settled, and a close requested
+  between 12 and 20 s would reach a door that is still opening. The opener can take that as a button press
+  and stop or reverse the door. `GarageServiceTest#withATravelTimeShorterThanTheDoorsACloseCanReachADoorStillOpening`
+  shows it.
+- **H3:** Toyota's reading was seen to lag the door by at least 25 s. The lag of Ford's reading hasn't been
+  measured.
+
+**A door gets live commands only with its own measured timings.** With `command-mode: live`, Casita
+refuses to start unless every door in `command-channels` has both `casita.garage.travel-times.<door>` and
+`casita.garage.sensor-lags.<door>`. The defaults are never used for a real door. Off and dry run need
+nothing; the practice doors keep the defaults.
+
+What the values must come from (supervised, someone at the garage, photo eyes and auto-reverse checked
+first; at least three runs each way per door):
+
+1. **Travel time:** stopwatch from the press to the end of travel, opening and closing. Take the longer, plus
+   a margin.
+2. **Sensor lag:** with the 2-second watcher (`MerossLiveCheckTest`) started first, the time from the physical
+   end of travel to the reading's change, opening and closing. Take the longest seen, plus a margin.
+
+Record the runs here, then set both values. Not fixed by any setting: a door moved by the remote while its
+reading is stale (see "What it shows" above). A close can then reach a door that is already closing. Keep
+that in mind before Toyota is added to `command-channels`.
+

@@ -38,6 +38,9 @@ import home.casita.security.access.TestTailnet;
         "casita.meross.password=placeholder",
         "casita.meross.command-mode=live",
         "casita.meross.command-channels=1",
+        // Live needs Ford's own timings. Test values, not measurements: this test never moves a door.
+        "casita.garage.travel-times.Ford=30s",
+        "casita.garage.sensor-lags.Ford=5s",
         "casita.security.family=shir"})
 @Import(TestTailnet.Config.class)
 class MerossDoorsApiTest {

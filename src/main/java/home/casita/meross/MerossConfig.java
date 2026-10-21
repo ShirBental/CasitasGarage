@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Configuration;
 
 import home.casita.garage.DoorControl;
 import home.casita.garage.DoorRoster;
+import home.casita.garage.GarageProperties;
 
 /** Wires the Meross doors in when {@code casita.door=meross}. Commands stay off unless command-mode and
  *  command-channels both say otherwise, per door. */
@@ -45,13 +46,21 @@ class MerossConfig {
      * With no doors named (an MSG100), the one door is {@code channel}, called "Garage".
      */
     @Bean
-    DoorRoster doorRoster(MerossSession session, MerossProperties properties, MerossLocalCredentials credentials) {
+    DoorRoster doorRoster(MerossSession session, MerossProperties properties, MerossLocalCredentials credentials,
+                          GarageProperties garage) {
         Map<Integer, String> named = properties.doors().isEmpty()
                 ? Collections.singletonMap(properties.channel(), "Garage")
                 : new TreeMap<>(properties.doors());
         List<DoorRoster.Door> doors = new ArrayList<>();
         named.forEach((channel, name) -> {
             CommandMode mode = properties.commandModeFor(channel);
+            if (mode == CommandMode.LIVE && !garage.measured(name)) {
+                // H1/H3: the defaults (one travel time for every door, no sensor lag) are for practice doors. A real
+                // door moves only on timings measured on it, so a close can't reach a door that is still moving.
+                throw new IllegalStateException("Live commands to " + name + " need its measured timings, "
+                        + "casita.garage.travel-times." + name + " and casita.garage.sensor-lags." + name
+                        + " (docs/MEROSS.md); Casita won't drive a real door on the defaults");
+            }
             MerossDoor door = mode == CommandMode.OFF
                     ? MerossDoor.readOnly(session, credentials.deviceUuid(), channel)
                     : new MerossDoor(session, credentials.deviceUuid(), channel, mode, properties.commandChannels());
