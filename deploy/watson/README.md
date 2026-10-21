@@ -20,7 +20,8 @@ Every script that changes something is a dry run unless it is given `--apply`, a
 | `check-g6.sh` | watson | Gate G6: real Firestore latency from the VM (read-only), and Casita's own server times |
 | `check-guard.sh` | watson, as root | The staging guard on the VM: each unsafe override must refuse to start (the service isn't touched) |
 | `deploy-release.sh` | your Mac | CI build of a clean commit, then copy and install through IAP |
-| `install-release.sh` | watson (`casita-install-release`) | Checks the jar's SHA-256, switches releases, rolls back by itself if unhealthy |
+| `install-release.sh` | watson (`casita-install-release`) | Checks the jar's SHA-256 and that `casita.env` says staging, simulated, commands off (each exactly once); switches releases; a failed restart or health check rolls back to the earlier release, or on a first deployment stops and disables the service and removes `current` |
+| `test/install-release.test.sh` | Linux | `install-release.sh` on a scratch filesystem with fake systemctl and health: success, rollback, first-deployment failure, refused settings |
 | `rollback.sh` | watson (`casita-rollback`) | Back to the previous release |
 | `health.sh` | watson (`casita-health`) | Service, `/healthz`, the staging guard's line, Funnel off, memory |
 | `casita-access` | watson | `bin/casita-access` as the casita user, with the server's data directory |

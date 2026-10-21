@@ -69,5 +69,5 @@ echo
 echo "Bootstrap done. Next, deliberately:"
 echo "  1. sudo tailscale up --hostname=$(hostname -s)    # sign in; then in the admin console disable key expiry for this node"
 echo "  2. fill in /etc/casita/casita.env (tailnet name, family, project id)"
-echo "  3. install a release: casita-install-release <casita.jar> <sha256>"
+echo "  3. install a release: from the Mac, deploy-release.sh (it runs casita-install-release <release dir> <sha256> here)"
 echo "  4. bash tailscale-serve.sh --apply"

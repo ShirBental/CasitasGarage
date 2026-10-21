@@ -319,14 +319,18 @@ back by itself.
 
 | Situation | Action |
 |---|---|
-| A new release is unhealthy | `install-release.sh` rolls back by itself, to `/opt/casita/previous` |
+| A new release is unhealthy, or `systemctl restart` fails | `install-release.sh` goes back by itself to the release that was running, and leaves `/opt/casita/previous` as it was |
 | Go back by hand | `sudo casita-rollback`. Only the jar changes; the data and Firestore stay |
 | Stop staging, keep everything | `sudo systemctl disable --now casita`, then `sudo tailscale serve reset` |
 | Stop paying for the VM | `gcloud compute instances stop watson --zone=us-east1-b`. A stopped VM releases its ephemeral IP; the disk stays, and is free within 30 GB |
 | Remove everything | Only with your explicit approval: delete the VM, network and firewall rule, and the IAM binding and role. Firestore has delete protection; turn it off deliberately first |
 
-The first release has no previous one. If it fails, `casita-health` and `journalctl -u casita` say why, and
-the fix is a new release.
+The first release has no previous one. If it fails, `install-release.sh` stops and disables `casita.service` (so it
+doesn't start at boot) and removes `/opt/casita/current`; the release files and `/var/lib/casita` are kept.
+`casita-health` and `journalctl -u casita` say why. The fix is a new release: once one comes up healthy, the
+service is enabled again. Before any of this, `install-release.sh` refuses (exit 2, nothing changed) unless
+`/etc/casita/casita.env` sets `CASITA_DEPLOYMENT=staging`, `CASITA_DOOR=simulated` and
+`CASITA_MEROSS_COMMANDMODE=off`, each exactly once and exactly so.
 
 ## 13. Blockers and open items
 
