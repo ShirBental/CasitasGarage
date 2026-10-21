@@ -132,15 +132,28 @@ class MerossSession implements MerossTransport, DisposableBean {
     @Override
     public Map<String, Object> setOnce(String deviceUuid, String namespace, Map<String, Object> payload)
             throws DoorException {
-        Link l;
-        synchronized (this) {
-            l = link;
-            if (l == null || !l.connection().isConnected()) {
-                log.warn("meross event=command outcome=rejected reason=not_connected");
-                throw new DoorCommandRejectedException("Not connected to Meross right now; nothing was sent");
-            }
+        return exchange(connectedForCommand(), deviceUuid, "SET", namespace, payload, true);
+    }
+
+    @Override
+    public String dryRunSet(String deviceUuid, String namespace, Map<String, Object> payload) throws DoorException {
+        Link l = connectedForCommand();
+        Prepared m = prepare(l, deviceUuid, "SET", namespace, payload);
+        String description = "SET " + namespace + " to " + MerossDeviceInfo.masked(deviceUuid) + ", payload keys "
+                + new TreeSet<>(payload.keySet()) + ", " + m.bytes().length + " bytes, signed";
+        log.info("meross event=command outcome=dry_run namespace={} mid={} bytes={} (built and signed, not published)",
+                namespace, shortId(m.messageId()), m.bytes().length);
+        return description;
+    }
+
+    /** Commands go only on an already-connected session: never after signing in on the spot. */
+    private synchronized Link connectedForCommand() throws DoorCommandRejectedException {
+        Link l = link;
+        if (l == null || !l.connection().isConnected()) {
+            log.warn("meross event=command outcome=rejected reason=not_connected");
+            throw new DoorCommandRejectedException("Not connected to Meross right now; nothing was sent");
         }
-        return exchange(l, deviceUuid, "SET", namespace, payload, true);
+        return l;
     }
 
     /* ---------- sign-in and connection ---------- */
@@ -272,8 +285,10 @@ class MerossSession implements MerossTransport, DisposableBean {
 
     /* ---------- messages ---------- */
 
-    private Map<String, Object> exchange(Link l, String deviceUuid, String method, String namespace,
-                                         Map<String, Object> payload, boolean command) throws DoorException {
+    /** A signed message, ready to publish. */
+    private record Prepared(String messageId, String topic, byte[] bytes) {}
+
+    private Prepared prepare(Link l, String deviceUuid, String method, String namespace, Map<String, Object> payload) {
         String messageId = MerossCrypto.newMessageId();
         long timestamp = clock.instant().getEpochSecond();
         Map<String, Object> header = new LinkedHashMap<>();
@@ -289,8 +304,15 @@ class MerossSession implements MerossTransport, DisposableBean {
         Map<String, Object> message = new LinkedHashMap<>();
         message.put("header", header);
         message.put("payload", payload);
-        byte[] bytes = json.writeValueAsBytes(message);
-        String topic = "/appliance/" + deviceUuid + "/subscribe";
+        return new Prepared(messageId, "/appliance/" + deviceUuid + "/subscribe", json.writeValueAsBytes(message));
+    }
+
+    private Map<String, Object> exchange(Link l, String deviceUuid, String method, String namespace,
+                                         Map<String, Object> payload, boolean command) throws DoorException {
+        Prepared prepared = prepare(l, deviceUuid, method, namespace, payload);
+        String messageId = prepared.messageId();
+        byte[] bytes = prepared.bytes();
+        String topic = prepared.topic();
 
         long started = System.nanoTime();
         long deadline = started + timeout.toNanos();

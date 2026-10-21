@@ -77,8 +77,7 @@ How each is read:
 
 In both, a door the opener reports as disabled (`doorEnable: 0`) is refused rather than read: a
 disabled MSG200 channel reports `open: 1`. A channel the opener doesn't report fails with the
-channels it did report. Commands to an MSG200 are refused even if commands are enabled: its
-write path is unverified.
+channels it did report. Commands are covered in "Commands" below.
 
 Our doors, in `application.yml`:
 
@@ -104,17 +103,65 @@ so one instance reads one of these; driving both from one instance is a separate
 | The MSG200 handles up to three garage doors | Confirmed (Meross product page) [8] |
 | Community code reads opener state from `System.All`'s `digest.garageDoor` | Confirmed (source) [6], (trace) [9] |
 | meross_lan sends `GET Appliance.GarageDoor.State` with `{"state": {}}` and a recorded MSG200 answers it | Confirmed (source) [9]. Ours doesn't; firmware or cloud-vs-local routing may differ |
-| How an MSG200 takes a command (`SET`) | **Unknown**. Not tried; commands to an MSG200 are refused |
+| How an MSG200 takes a command (`SET`) | See "Commands": sourced, **not yet tried on ours** |
 
 ## What this PR implements
 
 - Sign-in, session lifecycle and backoff, MQTT connection and reconnection, subscriptions.
 - **Read-only** door status (`GET`): an MSG200 through `System.All`, an MSG100 through `GarageDoor.State` (see above).
 - Local credentials from the environment or a git-ignored file (see "Local credentials").
-- The command path exists but is **off by default** (`casita.meross.commands-enabled: false`):
-  every command is rejected before anything is sent. When it's turned on (only after the
-  hardware checklist), commands are QoS 0, sent once, only while connected, and any failure
-  after the publish starts is an unknown outcome.
+- The command path is **off by default** (`casita.meross.command-mode: "off"`); see "Commands".
+
+## Commands
+
+**No command has been sent to our MSG200 yet.** The first physical test waits for review.
+
+| Fact | Status |
+|---|---|
+| Command: `SET Appliance.GarageDoor.State`, payload `{"state": {"channel": c, "open": 1 or 0, "uuid": u}}` over the cloud | Confirmed (source) [6]: MerossIot's `_async_operate`, the same namespace and payload for every opener |
+| Over local HTTP, meross_lan sends the same without `uuid` | Confirmed (source) [9] |
+| The reply is `SETACK` with `state` (an object or a one-item list) carrying `channel`, `open`, `lmTime` and `execute` | Confirmed (source) [9], from real devices' traces in meross_lan |
+| `execute: 1`: the opener acted. `execute: 0`: it didn't (seen when the door was already in that position) | Confirmed (source) [9]. meross_lan says it has rarely seen 0 |
+| The `open` in a SETACK is the state *before* moving; the door changes after its travel time (15 s by default in `Appliance.GarageDoor.MultipleConfig`) | Confirmed (source) [9], emulator and traces |
+| Our MSG200 answers this SET over the cloud | **Unknown.** It never answered a *GET* on this namespace over the cloud. A SET that gets no reply is an unknown outcome, and the sensor decides |
+
+How Casita sends one (`MerossDoor.command`), in order; anything failing before the send means
+nothing was sent:
+
+1. `casita.meross.command-mode` is `dry-run` or `live`. The default is `"off"`.
+2. The opener is found and the channel is configured and listed in `casita.meross.command-channels`
+   (`[1]`: Ford only). Toyota (2) and the disabled channel 3 can't be sent anything.
+3. The door is read again, right then: it must be enabled and report the opposite of the target.
+4. **Dry run:** the signed SET is built, the connection is checked, nothing is published, and the
+   command is rejected ("nothing was sent"). **Live:** the SET is sent once, QoS 0, never retried.
+5. A SETACK is not proof of movement. One that says `execute: 0` or names another channel is an
+   unknown outcome. `GarageService` then checks the sensor after the travel time and says whether
+   the door moved (stuck, or confirmed).
+
+`GarageService`'s own rules stay in front of all this: read first, only toward the opposite of a
+settled reading, one movement at a time, unknown outcomes are not failures, no automatic retries.
+
+Settings:
+
+```yaml
+casita:
+  meross:
+    command-mode: "off"     # "off" | dry-run | live; quote "off" (YAML reads a bare off as false)
+    command-channels: [1]   # Ford only
+    channel: 1              # live needs the channel set and listed in command-channels
+```
+
+Live tests (`MerossLiveCommandTest`, Ford only):
+
+```bash
+# Dry run: GETs only; checks on the MQTT connection that no SET was published.
+mvn test -Dtest=MerossLiveCommandTest#dryRunForFordBuildsTheCommandAndPublishesNoSet -Dmeross.live=true
+
+# One real command to Ford, after review, with someone watching the door. The confirmation names
+# the action, Ford, channel 1 and today's date.
+mvn test -Dtest=MerossLiveCommandTest#oneConfirmedCommandToFord -Dmeross.live=true \
+    -Dmeross.command.confirm=open-ford-channel-1-YYYY-MM-DD
+```
 
 ## Local credentials
 

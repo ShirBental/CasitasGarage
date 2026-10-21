@@ -11,8 +11,8 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import home.casita.garage.DoorCommandRejectedException;
 import home.casita.garage.DoorDevice;
+import home.casita.garage.DoorException;
 import home.casita.meross.MerossException.Kind;
 
 class MerossDoorTest {
@@ -28,7 +28,7 @@ class MerossDoorTest {
     void msg100ReadsStateReportedAsAList() throws Exception {
         transport.replies.put(MerossDoor.NS_GARAGE_DOOR, Map.of("state", List.of(Map.of("channel", 0, "open", 1, "lmTime", 1760572800))));
 
-        DoorDevice.Reading reading = new MerossDoor(transport, MSG100_UUID, 0, false).read();
+        DoorDevice.Reading reading = MerossDoor.readOnly(transport, MSG100_UUID, 0).read();
 
         assertThat(reading.open()).isTrue();
         assertThat(reading.changedAt()).isEqualTo(Instant.ofEpochSecond(1760572800));
@@ -39,7 +39,7 @@ class MerossDoorTest {
     void msg100ReadsStateReportedAsASingleObject() throws Exception {
         transport.replies.put(MerossDoor.NS_GARAGE_DOOR, Map.of("state", Map.of("channel", 0, "open", 0)));
 
-        DoorDevice.Reading reading = new MerossDoor(transport, MSG100_UUID, 0, false).read();
+        DoorDevice.Reading reading = MerossDoor.readOnly(transport, MSG100_UUID, 0).read();
 
         assertThat(reading.open()).isFalse();
         assertThat(reading.changedAt()).isNull();
@@ -49,14 +49,14 @@ class MerossDoorTest {
     void msg100WithoutAChannelSettingUsesChannel0() throws Exception {
         transport.replies.put(MerossDoor.NS_GARAGE_DOOR, Map.of("state", List.of(Map.of("channel", 0, "open", 1), Map.of("channel", 1, "open", 0))));
 
-        assertThat(new MerossDoor(transport, MSG100_UUID, null, false).read().open()).isTrue();
+        assertThat(MerossDoor.readOnly(transport, MSG100_UUID, null).read().open()).isTrue();
     }
 
     @Test
     void msg100PicksTheConfiguredChannel() throws Exception {
         transport.replies.put(MerossDoor.NS_GARAGE_DOOR, Map.of("state", List.of(Map.of("channel", 0, "open", 0), Map.of("channel", 1, "open", 1))));
 
-        assertThat(new MerossDoor(transport, MSG100_UUID, 1, false).read().open()).isTrue();
+        assertThat(MerossDoor.readOnly(transport, MSG100_UUID, 1).read().open()).isTrue();
     }
 
     @Test
@@ -66,20 +66,8 @@ class MerossDoorTest {
                 Map.of("state", List.of(Map.of("channel", 0, "open", 7))),
                 Map.of())) {
             transport.replies.put(MerossDoor.NS_GARAGE_DOOR, reply);
-            assertKind(() -> new MerossDoor(transport, MSG100_UUID, 0, false).read(), Kind.PROTOCOL);
+            assertKind(() -> MerossDoor.readOnly(transport, MSG100_UUID, 0).read(), Kind.PROTOCOL);
         }
-    }
-
-    @Test
-    void msg100WhenEnabledOpenAndCloseAreSentOnceEach() throws Exception {
-        MerossDoor door = new MerossDoor(transport, MSG100_UUID, 0, true);
-
-        door.command(true);
-        door.command(false);
-
-        assertThat(transport.sent).containsExactly(
-                "SET uuid-1 Appliance.GarageDoor.State {state={channel=0, open=1, uuid=uuid-1}}",
-                "SET uuid-1 Appliance.GarageDoor.State {state={channel=0, open=0, uuid=uuid-1}}");
     }
 
     /* ---------- MSG200: Appliance.System.All, digest.garageDoor ---------- */
@@ -97,7 +85,7 @@ class MerossDoorTest {
     void msg200ReadsChannel1FromSystemAllAndNeverAsksForGarageDoorState() throws Exception {
         msg200(0, 1);
 
-        DoorDevice.Reading ford = new MerossDoor(transport, null, 1, false).read();
+        DoorDevice.Reading ford = MerossDoor.readOnly(transport, null, 1).read();
 
         assertThat(ford.open()).isFalse();
         assertThat(ford.changedAt()).isEqualTo(Instant.ofEpochSecond(1760572800));
@@ -107,9 +95,9 @@ class MerossDoorTest {
     @Test
     void msg200ReadsBothDoorStatesOnChannel2() throws Exception {
         msg200(0, 1);
-        DoorDevice.Reading toyotaOpen = new MerossDoor(transport, null, 2, false).read();
+        DoorDevice.Reading toyotaOpen = MerossDoor.readOnly(transport, null, 2).read();
         msg200(0, 0);
-        DoorDevice.Reading toyotaClosed = new MerossDoor(transport, null, 2, false).read();
+        DoorDevice.Reading toyotaClosed = MerossDoor.readOnly(transport, null, 2).read();
 
         assertThat(toyotaOpen.open()).isTrue();
         assertThat(toyotaOpen.changedAt()).isNull(); // lmTime 0
@@ -120,7 +108,7 @@ class MerossDoorTest {
     void msg200RefusesADisabledChannelInsteadOfReportingItOpen() {
         msg200(0, 0);
 
-        assertThatThrownBy(() -> new MerossDoor(transport, null, 3, false).read())
+        assertThatThrownBy(() -> MerossDoor.readOnly(transport, null, 3).read())
                 .isInstanceOfSatisfying(MerossException.class, e -> assertThat(e.kind()).isEqualTo(Kind.CONFIG))
                 .hasMessageContaining("Door channel 3 is disabled");
     }
@@ -129,7 +117,7 @@ class MerossDoorTest {
     void msg200WithoutAChannelSettingRefusesToGuess() {
         msg200(0, 0);
 
-        assertThatThrownBy(() -> new MerossDoor(transport, null, null, false).read())
+        assertThatThrownBy(() -> MerossDoor.readOnly(transport, null, null).read())
                 .isInstanceOfSatisfying(MerossException.class, e -> assertThat(e.kind()).isEqualTo(Kind.CONFIG))
                 .hasMessageContaining("set casita.meross.channel").hasMessageContaining("[1, 2, 3]");
     }
@@ -139,7 +127,7 @@ class MerossDoorTest {
         msg200(0, 0);
 
         for (int missing : new int[] {0, 4}) {
-            assertThatThrownBy(() -> new MerossDoor(transport, null, missing, false).read())
+            assertThatThrownBy(() -> MerossDoor.readOnly(transport, null, missing).read())
                     .isInstanceOfSatisfying(MerossException.class, e -> assertThat(e.kind()).isEqualTo(Kind.PROTOCOL))
                     .hasMessageContaining("door channel " + missing).hasMessageContaining("reported channels [1, 2, 3]");
         }
@@ -159,43 +147,12 @@ class MerossDoorTest {
                 digest(Map.of("doorEnable", 1, "open", 0)));                                     // entry without a channel
         for (Map<String, Object> reply : replies) {
             transport.replies.put(MerossDoor.NS_SYSTEM_ALL, reply);
-            assertKind(() -> new MerossDoor(transport, null, 1, false).read(), Kind.PROTOCOL);
+            assertKind(() -> MerossDoor.readOnly(transport, null, 1).read(), Kind.PROTOCOL);
         }
     }
 
     private static Map<String, Object> digest(Map<String, Object> entry) {
         return Map.of("all", Map.of("digest", Map.of("garageDoor", List.of(entry))));
-    }
-
-    @Test
-    void msg200CommandsAreRefusedEvenWhenEnabledAndNothingIsSent() {
-        msg200(0, 0);
-
-        assertThatThrownBy(() -> new MerossDoor(transport, null, 1, true).command(true))
-                .isInstanceOf(DoorCommandRejectedException.class).hasMessageContaining("MSG200");
-        assertThatThrownBy(() -> new MerossDoor(transport, null, 1, false).command(false))
-                .isInstanceOf(DoorCommandRejectedException.class);
-        assertThat(transport.sent).isEmpty();
-    }
-
-    /* ---------- commands off by default ---------- */
-
-    @Test
-    void commandsAreOffByDefaultAndNothingIsSent() {
-        MerossDoor door = new MerossDoor(transport, MSG100_UUID, 0, false);
-
-        assertThatThrownBy(() -> door.command(true)).isInstanceOf(DoorCommandRejectedException.class);
-        assertThatThrownBy(() -> door.command(false)).isInstanceOf(DoorCommandRejectedException.class);
-        assertThat(transport.sent).isEmpty();
-    }
-
-    @Test
-    void aCommandWhoseOpenerCantBeFoundIsRejectedNotUnknown() {
-        transport.devices = List.of(new MerossDeviceInfo("plug-1", "Lamp", "mss310", true));
-
-        assertThatThrownBy(() -> new MerossDoor(transport, null, 0, true).command(true))
-                .isInstanceOf(DoorCommandRejectedException.class);
-        assertThat(transport.sent).isEmpty();
     }
 
     /* ---------- discovery ---------- */
@@ -207,7 +164,7 @@ class MerossDoorTest {
                 new MerossDeviceInfo("door-1", "Garage", "msg100", true));
         transport.replies.put(MerossDoor.NS_GARAGE_DOOR, Map.of("state", List.of(Map.of("channel", 0, "open", 0))));
 
-        new MerossDoor(transport, null, 0, false).read();
+        MerossDoor.readOnly(transport, null, 0).read();
 
         assertThat(transport.sent).containsExactly("GET door-1 Appliance.GarageDoor.State");
     }
@@ -219,7 +176,7 @@ class MerossDoorTest {
                 new MerossDeviceInfo("plug-1", "Lamp", "mss310", true),
                 new MerossDeviceInfo(MSG200_UUID, "Garage", "MSG200", true));
 
-        new MerossDoor(transport, null, 1, false).read();
+        MerossDoor.readOnly(transport, null, 1).read();
 
         assertThat(transport.sent).containsExactly("GET door-200 Appliance.System.All");
     }
@@ -231,7 +188,7 @@ class MerossDoorTest {
                 new MerossDeviceInfo("1912089283245425180234298f1a0002", "Back", "MSG200", true),
                 new MerossDeviceInfo("plug-1", "Lamp", "mss310", true));
 
-        assertThatThrownBy(() -> new MerossDoor(transport, "", 1, false).read())
+        assertThatThrownBy(() -> MerossDoor.readOnly(transport, "", 1).read())
                 .isInstanceOfSatisfying(MerossException.class, e -> assertThat(e.kind()).isEqualTo(Kind.NOT_FOUND))
                 .hasMessageContaining("casita.meross.device-uuid")
                 .hasMessageContaining("Front").hasMessageContaining("Back").hasMessageNotContaining("Lamp")
@@ -246,7 +203,7 @@ class MerossDoorTest {
                 new MerossDeviceInfo("door-1", "Front", "msg100", true),
                 new MerossDeviceInfo(MSG200_UUID, "Garage", "msg200", true));
 
-        assertThat(new MerossDoor(transport, MSG200_UUID, 2, false).read().open()).isTrue();
+        assertThat(MerossDoor.readOnly(transport, MSG200_UUID, 2).read().open()).isTrue();
         assertThat(transport.sent).containsExactly("GET door-200 Appliance.System.All");
     }
 
@@ -255,7 +212,7 @@ class MerossDoorTest {
         String plug = "1912089283245425180234298f1a9999";
         transport.devices = List.of(new MerossDeviceInfo(plug, "Lamp", "mss310", true));
 
-        assertThatThrownBy(() -> new MerossDoor(transport, plug, 1, false).read())
+        assertThatThrownBy(() -> MerossDoor.readOnly(transport, plug, 1).read())
                 .isInstanceOfSatisfying(MerossException.class, e -> assertThat(e.kind()).isEqualTo(Kind.NOT_FOUND))
                 .hasMessageContaining("…9999").hasMessageNotContaining("1912089283245425180234298f1a");
         assertThat(transport.sent).isEmpty();
@@ -264,7 +221,7 @@ class MerossDoorTest {
     @Test
     void theDeviceListIsReadOnceThenTheOpenerIsRemembered() throws Exception {
         msg200(0, 0);
-        MerossDoor door = new MerossDoor(transport, null, 1, false);
+        MerossDoor door = MerossDoor.readOnly(transport, null, 1);
 
         door.read();
         door.read();
@@ -276,7 +233,7 @@ class MerossDoorTest {
     void failsWhenThereIsNoOpener() {
         transport.devices = List.of(new MerossDeviceInfo("plug-1", "Lamp", "mss310", true));
 
-        assertKind(() -> new MerossDoor(transport, null, 0, false).read(), Kind.NOT_FOUND);
+        assertKind(() -> MerossDoor.readOnly(transport, null, 0).read(), Kind.NOT_FOUND);
     }
 
     @Test
@@ -296,6 +253,10 @@ class MerossDoorTest {
         final Map<String, Map<String, Object>> replies = new HashMap<>();
         final List<String> sent = new ArrayList<>();
         int deviceListReads;
+        /** What a SET returns, or throws (an unknown outcome, or a rejection). */
+        Map<String, Object> ack = Map.of();
+        DoorException setFailure;
+        DoorException dryRunFailure;
 
         @Override
         public List<MerossDeviceInfo> devices() {
@@ -310,9 +271,21 @@ class MerossDoorTest {
         }
 
         @Override
-        public Map<String, Object> setOnce(String deviceUuid, String namespace, Map<String, Object> payload) {
+        public Map<String, Object> setOnce(String deviceUuid, String namespace, Map<String, Object> payload) throws DoorException {
             sent.add("SET " + deviceUuid + " " + namespace + " " + payload);
-            return Map.of();
+            if (setFailure != null) throw setFailure;
+            return ack;
+        }
+
+        @Override
+        public String dryRunSet(String deviceUuid, String namespace, Map<String, Object> payload) throws DoorException {
+            if (dryRunFailure != null) throw dryRunFailure;
+            sent.add("DRYRUN " + deviceUuid + " " + namespace + " " + payload);
+            return "SET " + namespace + ", payload keys " + payload.keySet() + ", signed";
+        }
+
+        long sets() {
+            return sent.stream().filter(m -> m.startsWith("SET ")).count();
         }
     }
 }
