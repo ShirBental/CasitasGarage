@@ -1,0 +1,8 @@
+op,n,p50_ms,p95_ms,p99_ms,max_ms
+"createInvitation (batch: doc + event)",300,0.70,2.23,3.13,3.89
+"consume (CAS batch)",300,0.77,2.34,3.68,5.04
+"enroll (CAS batch: 4 reads, 5 writes)",300,1.05,3.31,5.11,8.28
+"accessView (1 BatchGet, 3 docs)",300,0.43,1.22,1.88,3.80
+"recordUse (sign-in CAS batch)",300,0.80,2.58,3.49,4.77
+"member (1 get)",300,0.31,0.92,1.41,1.69
+"revokeDevice (CAS batch)",300,0.72,2.21,3.10,4.60
