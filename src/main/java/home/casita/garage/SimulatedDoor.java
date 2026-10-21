@@ -1,41 +1,35 @@
 package home.casita.garage;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
-
-import org.springframework.beans.factory.DisposableBean;
-
 /**
- * A pretend garage door for local runs and until the Meross client lands
- * ({@code casita.door=simulated}, the default for now). Like a real MSG100, the sensor
- * reads "open" almost as soon as the door starts rising, but only reads "closed" once
- * the door is all the way down.
+ * A pretend garage door for local runs ({@code casita.door=simulated}, the default); one per door, made by
+ * {@code SimulatedRosterConfig}. Like a real opener, the sensor reads "open" almost as soon as the door
+ * starts rising, but only reads "closed" once the door is all the way down.
  */
-@Component
-@ConditionalOnProperty(name = "casita.door", havingValue = "simulated", matchIfMissing = true)
-public class SimulatedDoor implements DoorDevice, DisposableBean {
+public class SimulatedDoor implements DoorDevice {
 
     private final Clock clock;
     private final long travelMillis;
-    private final ScheduledExecutorService motor = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "casita-simulated-door");
-        t.setDaemon(true);
-        return t;
-    });
+    private final ScheduledExecutorService motor;
 
     private volatile boolean open;
     private volatile Instant changedAt;
 
-    public SimulatedDoor(Clock clock, GarageProperties properties) {
+    public SimulatedDoor(String name, Clock clock, Duration travelTime) {
         this.clock = clock;
-        this.travelMillis = properties.travelTime().toMillis();
+        this.travelMillis = travelTime.toMillis();
         this.changedAt = clock.instant();
+        this.motor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "casita-simulated-" + name);
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     @Override
@@ -53,7 +47,6 @@ public class SimulatedDoor implements DoorDevice, DisposableBean {
         }, delay, TimeUnit.MILLISECONDS);
     }
 
-    @Override
     public void destroy() {
         motor.shutdownNow();
     }

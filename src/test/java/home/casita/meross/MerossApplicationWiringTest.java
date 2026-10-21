@@ -6,51 +6,51 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
-import home.casita.garage.DoorDevice;
+import home.casita.garage.DoorControl;
 import home.casita.garage.DoorRoster;
-import home.casita.garage.GarageService;
+import home.casita.garage.Garage;
+import home.casita.garage.Outcome;
 
 /**
- * The whole app with the real door selected for Ford: the Meross door sits behind GarageService, with
- * commands off and only Ford allowed, as committed. Nothing connects at startup (the session signs in on
- * the first read), so this runs offline. Placeholder credentials keep it independent of local files.
+ * The whole app with the real doors selected, as committed: Ford and Toyota each behind their own
+ * GarageService, with commands off for both. Nothing connects at startup (the session signs in on the first
+ * read), and nothing here reads a door, so this runs offline. Placeholder credentials keep it independent of
+ * local files.
  */
 @SpringBootTest(properties = {
         "casita.door=meross",
-        "casita.meross.channel=1",
         "casita.meross.email=placeholder@example.com",
         "casita.meross.password=placeholder",
         "casita.security.data-dir=target/test-data/wiring"})
 class MerossApplicationWiringTest {
 
     @Autowired
-    private DoorDevice door;
-    @Autowired
-    private GarageService garage;
+    private Garage garage;
     @Autowired
     private MerossProperties properties;
     @Autowired
     private DoorRoster roster;
 
     @Test
-    void garageServiceDrivesTheMerossDoorForFordWithCommandsOff() {
-        assertThat(door).isInstanceOf(MerossDoor.class);
-        assertThat(garage).isNotNull();
-        assertThat(properties.channel()).isEqualTo(1);
-        assertThat(properties.doors()).containsEntry(1, "Ford");
+    void asCommittedCommandsAreOffAndOnlyFordIsSwitchedOn() {
+        assertThat(properties.doors()).containsEntry(1, "Ford").containsEntry(2, "Toyota");
         assertThat(properties.commandMode()).isEqualTo(CommandMode.OFF);
         assertThat(properties.commandChannels()).containsExactly(1);
     }
 
     @Test
-    void theAppShowsFordControlledAndToyotaReadOnlyAndNeverChannel3() throws Exception {
-        assertThat(roster.controlled()).isEqualTo("Ford");
-        assertThat(roster.control()).isEqualTo("off");
-        assertThat(roster.watched()).extracting(DoorRoster.Watched::name).containsExactly("Toyota");
-        DoorDevice toyota = roster.watched().get(0).door();
-        assertThat(toyota).isInstanceOf(MerossDoor.class);
-        // Read-only whatever the command mode: refused before it even looks for the opener.
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> toyota.command(true))
-                .isInstanceOf(home.casita.garage.DoorCommandRejectedException.class).hasMessageContaining("command-mode");
+    void bothDoorsAreDrivenSeparatelyEachOnItsOwnChannelAndNeverChannel3() {
+        assertThat(roster.doors()).extracting(DoorRoster.Door::name).containsExactly("Ford", "Toyota");
+        assertThat(roster.doors()).allMatch(d -> d.device() instanceof MerossDoor);
+        assertThat(roster.doors()).extracting(DoorRoster.Door::control).containsExactly(DoorControl.OFF, DoorControl.OFF);
+        assertThat(garage.doors()).extracting(g -> g.name()).containsExactly("Ford", "Toyota");
+    }
+
+    @Test
+    void commandsToEitherDoorAreRefusedBeforeAnythingIsReadOrSent() {
+        // OFF is refused before the door is read, so this needs no network.
+        assertThat(garage.door("ford").orElseThrow().open("Shir").outcome()).isEqualTo(Outcome.DISABLED);
+        assertThat(garage.door("toyota").orElseThrow().open("Shir").outcome()).isEqualTo(Outcome.DISABLED);
+        assertThat(garage.door("toyota").orElseThrow().close("Shir").outcome()).isEqualTo(Outcome.DISABLED);
     }
 }

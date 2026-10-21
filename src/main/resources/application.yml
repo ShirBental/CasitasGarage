@@ -78,20 +78,24 @@ casita:
     # or locally from the git-ignored config/meross.local.json (docs/MEROSS.md); the environment wins.
     # They move to Parameter Store next. Never put them in this file.
     # device-uuid: only needed if the account has more than one garage opener.
-    # The opener's doors, by channel. Our MSG200 reports channels 1-3; channel 3 is disabled.
+    # The opener's doors, by channel. Our MSG200 reports channels 1-3; channel 3 is disabled, so it isn't
+    # listed and is never shown or driven. Each listed door has its own GarageService: its own movement,
+    # hold and activity. (channel is only for an opener with no doors listed, e.g. an MSG100.)
     doors:
       1: Ford
       2: Toyota
-    # channel: which of those doors this Casita reads (1 = Ford, 2 = Toyota). Required with the real
-    # door: there is no default, and an MSG200 has no channel 0. Set it with CASITA_MEROSS_CHANNEL.
     request-timeout: 8s
-    # Sending open/close to the real door: off (every command rejected before anything is built),
+    # Sending open/close to the real doors: off (every command rejected before anything is built),
     # dry-run (checked and built, never sent) or live. Keep off until the hardware prerequisites in
-    # docs/DESIGN.md are checked. Live also needs 'channel' set and listed in command-channels.
+    # docs/DESIGN.md are checked. It applies only to the doors in command-channels.
     command-mode: "off"     # quoted: YAML reads a bare off as false
-    # The only doors that may be sent a command. Ford first; Toyota and channel 3 are not operated yet.
+    # The per-door switch: the only doors that may be sent a command. A door not listed is off whatever
+    # command-mode says, and /api/doors reports it "live": false. Ford only: Toyota (2) is added only
+    # after its supervised hardware test (docs/MEROSS.md, "Toyota (channel 2)").
     command-channels: [1]
   garage:
-    travel-time: 10s        # how long our door takes to fully open or close
+    travel-time: 10s        # how long our doors take to fully open or close
+    # travel-times:         # a door's own travel time, where it differs (by name), e.g.
+    #   Toyota: 15s
     verify-grace: 2s        # extra wait before checking it got there
     allow-remote-close: true

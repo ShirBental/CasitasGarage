@@ -48,7 +48,7 @@ class GarageServiceTest {
         pushes = new CopyOnWriteArrayList<>();
         clock = new MutableClock(Instant.parse("2026-10-15T21:00:00Z"));
         tasks = new ManualTasks(clock);
-        garage = new GarageService(door, activity, pushes::add, tasks, clock,
+        garage = new GarageService("Ford", door, DoorControl.SIMULATED, activity, pushes::add, tasks, clock,
                 new GarageProperties(TRAVEL, GRACE, allowRemoteClose));
     }
 
@@ -68,7 +68,7 @@ class GarageServiceTest {
         assertThat(result.outcome()).isEqualTo(Outcome.MOVING);
         assertThat(door.commands).containsExactly(true);
         assertThat(garage.status().door()).isEqualTo(DoorState.OPENING);
-        assertThat(pushes).containsExactly("Opening the garage for Shir");
+        assertThat(pushes).containsExactly("Opening the Ford door for Shir");
         assertLatest("Shir", Action.OPEN, Outcome.MOVING);
     }
 
@@ -98,7 +98,7 @@ class GarageServiceTest {
         GarageStatus status = garage.status();
         assertThat(status.door()).isEqualTo(DoorState.CLOSED);
         assertThat(status.canOpen()).isTrue();
-        assertThat(pushes).containsExactly("Closing the garage for Shir", "The garage is closed. All tucked in.");
+        assertThat(pushes).containsExactly("Closing the Ford door for Shir", "The Ford door is closed. All tucked in.");
     }
 
     @Test
@@ -424,7 +424,7 @@ class GarageServiceTest {
         tasks.runDue();
 
         assertThat(outcomes()).containsExactly(Outcome.UNCONFIRMED, Outcome.CLOSED_CONFIRMED);
-        assertThat(lastPush()).isEqualTo("It went through after all: the garage is closed.");
+        assertThat(lastPush()).isEqualTo("It went through after all: the Ford door is closed.");
     }
 
     @Test
@@ -552,7 +552,7 @@ class GarageServiceTest {
 
     private void assertLatest(String who, Action action, Outcome outcome) {
         ActivityEvent latest = activity.recent(1).get(0);
-        assertThat(List.<Object>of(latest.who(), latest.action(), latest.outcome())).containsExactly(who, action, outcome);
+        assertThat(List.<Object>of(latest.door(), latest.who(), latest.action(), latest.outcome())).containsExactly("Ford", who, action, outcome);
     }
 
     private String lastPush() {

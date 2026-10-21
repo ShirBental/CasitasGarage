@@ -35,9 +35,21 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev \
 
 ## API
 
-`GET /api/status`, `POST /api/open`, `POST /api/close`, `GET /api/activity` (design doc, section 8),
-over `GarageService` and its safety rules, plus `POST /api/resume`: after a movement ends stuck or lost,
-every command is held until someone has checked the door and resumes. Every call needs a signed-in
-family member (passkey sign-in, docs/APP.md). With the real door (`casita.door=meross`), commands still
-reach it only when `casita.meross.command-mode` allows, and only for Ford (channel 1).
-See [docs/MEROSS.md](docs/MEROSS.md).
+Each door (Ford, Toyota) has its own `GarageService` and its own safety rules: its own movement, hold
+and resume, and its own activity entries. One door moving, stuck or held never blocks the other.
+
+| | |
+|---|---|
+| `GET /api/doors` | every door: `key`, `name`, `door` (state), `status`, `control` (`simulated`, `off`, `dry-run` or `live`) and `live` |
+| `GET /api/doors/{door}` | one door (`ford`, `toyota`) |
+| `POST /api/doors/{door}/open`, `/close` | one explicit command to one door; never a toggle |
+| `POST /api/doors/{door}/resume` | after that door's movement ended stuck or lost: someone has checked it (sends nothing) |
+| `GET /api/activity` | newest first, every door; `?door=toyota` for one |
+| `GET /api/status`, `POST /api/open`, `/close`, `/resume` | the older single-door calls: Ford only |
+
+Every call needs a signed-in family member (passkey sign-in, docs/APP.md), and every POST the CSRF token.
+`live` is true only when a command moves the real door; the app must never suggest real control of a door
+whose `live` is false. On the practice door (the default) both doors are simulated. With the real doors
+(`casita.door=meross`), a door is sent commands only when `casita.meross.command-mode` allows and its channel
+is in `casita.meross.command-channels`, the per-door switch: `[1]`, Ford only. Toyota (channel 2) stays off
+until its supervised hardware test; see [docs/MEROSS.md](docs/MEROSS.md#toyota-channel-2).
