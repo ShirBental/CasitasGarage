@@ -9,7 +9,9 @@ Every script that changes something is a dry run unless it is given `--apply`, a
 | File | Where it runs | What it does |
 |---|---|---|
 | `watson.conf.example` | your Mac | Project, region, names. Copy to `watson.conf` (git-ignored) |
-| `provision-gcp.sh` | your Mac (gcloud as owner) | APIs, the service account and its no-delete role, Firestore and its schema marker, the private network, the VM |
+| `provision-gcp.sh` | your Mac (gcloud as owner) | APIs, the service account and its no-delete role, Firestore and its schema marker, the private network, the VM. The dry run is read-only; both modes stop on any drift from `watson.conf` before changing anything, and nothing that exists is ever changed |
+| `provision_check.py` | (used by `provision-gcp.sh`) | The checks: what was read, against what watson needs |
+| `test/provision-gcp.test.sh` | anywhere | `provision-gcp.sh` against a fake gcloud and curl: plans, duplicate VMs, drift, no token printed |
 | `bootstrap-vm.sh` | watson, as root | Java 21, Tailscale, the casita user and directories, swap, journald, `casita.service` (enabled, not started) |
 | `casita.env.example` | watson: `/etc/casita/casita.env` | Casita's settings. Staging refuses to start until its placeholders are filled in |
 | `casita.service` | watson | The systemd unit: sandboxed, memory-capped, restarts on failure |

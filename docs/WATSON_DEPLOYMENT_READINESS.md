@@ -255,9 +255,16 @@ with Tailscale, Adoptium and Debian mirrors here, so it isn't recommended for th
 4. `gcloud auth login && gcloud config set project <PROJECT_ID>`.
 
 **B. Provision:**
-5. `deploy/watson/provision-gcp.sh deploy/watson/watson.conf` (dry run: read every command).
-6. `deploy/watson/provision-gcp.sh deploy/watson/watson.conf --apply`. If a flag is rejected by your gcloud
-   version, stop and fix it there.
+5. `deploy/watson/provision-gcp.sh deploy/watson/watson.conf`. This is the dry run, and it is read-only:
+   - It reads what exists, but only through APIs that are already enabled.
+   - It checks every resource against `watson.conf`, and prints OK, CREATE, PROBLEM or NOTE for each.
+   - It ends with the commands `--apply` would run.
+
+   Any PROBLEM, such as a VM named watson in another zone, extra roles on the service account, or a
+   widened firewall rule, means exit 1 and nothing would change. Fix it deliberately first.
+6. `deploy/watson/provision-gcp.sh deploy/watson/watson.conf --apply`. It enables only the missing APIs, checks
+   everything again, and creates only what is missing; it never changes or deletes what exists. If a flag is
+   rejected by your gcloud version, stop and fix it there. Then run step 5 again: every line should be OK.
 7. Console → Billing → Budgets: a $5/month alert on the project.
 
 **C. Bootstrap watson:**

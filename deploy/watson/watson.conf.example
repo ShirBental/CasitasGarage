@@ -6,6 +6,7 @@ PROJECT_ID="<PROJECT_ID>"
 
 # Always Free e2-micro regions are us-west1, us-central1 and us-east1. us-east1 matches the latency estimate
 # in docs/firestore-benchmark/RESULTS.md (gate G6 measures the real thing).
+# Any of the three works; ZONE must be in REGION.
 REGION=us-east1
 ZONE=us-east1-b
 # Firestore's (default) database, in the same region as the VM. Its location can't be changed later.
