@@ -3,7 +3,25 @@
 Casita is our home's helper. This first piece lets the family see and move the garage door
 from their iPhones, safely, from anywhere.
 
-Status: **draft for review**. Decisions marked *Open* still need an answer.
+Status: **historical, partly superseded** (2026-10-21). This is the original design from 2026-10-15.
+Sections 5 (garage safety rules) and 6 (Meross cloud and its *hardware prerequisites*) still hold, and
+are the checklist to complete before any live door command. Much of the rest has been replaced by what
+was built; where the two differ, the code and the docs next to it win.
+
+| This doc says | Now | Where |
+|---|---|---|
+| EC2 `t4g.micro`, AWS IAM and KMS | A GCP Compute Engine e2-micro, planned (staging first) | M2, not merged |
+| Server `casita.<tailnet>.ts.net` | Server **`watson`**: passkeys bind to `watson.<tailnet>.ts.net` (set before anyone enrolls; a rename means re-enrolling) | `casita.security.rp-id` |
+| Parameter Store for passkeys, users and secrets | One `SecurityStore` for members, passkeys, devices and invitations: file (default), DynamoDB or Firestore. Meross credentials from the environment or a git-ignored local file | `docs/PERSISTENCE.md`, `docs/FIRESTORE.md` |
+| Remember-me cookie, fixed 6 months, `SameSite=Strict` | Not built: an in-memory session, 7 days idle, `SameSite=Lax` | `application.yml` |
+| Invite: a 10-minute one-time token, any device | One invite per device, 5 minutes, an enrollment-only session | `docs/ACCESS.md` |
+| A passkey alone signs you in | A passkey **and** an authorized Tailscale node, checked again on every request | `docs/ACCESS.md` |
+| Shortcut status tokens | Not built | |
+| One MSG100, one door | An MSG200: Ford (channel 1) and Toyota (channel 2); channel 3 is disabled and never addressed. Commands are off by default and Ford-only when enabled | `docs/MEROSS.md` |
+| Travel time 10 s | Ford measured at 20 s, and the MSG200's reading can lag the door; both must be reflected in the configuration before any live command | `docs/MEROSS.md` |
+| Open: Java version, MQTT client | Java 21, HiveMQ | |
+| Open: activity log, push notifications | Still open: an in-memory log and a log-only notifier | |
+| Build order (section 10) | Replaced by the PR stack (#2–#11) | |
 
 ## 1. Architecture
 
