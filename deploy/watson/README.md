@@ -16,6 +16,7 @@ Every script that changes something is a dry run unless it is given `--apply`, a
 | `tailscale-serve.sh` | watson, as root | `https://watson.<tailnet>.ts.net` → `http://127.0.0.1:8080`, after checking the names agree |
 | `check-g3.sh` | watson | Gate G3: the service account can read Firestore but can't delete |
 | `check-g6.sh` | watson | Gate G6: real Firestore latency from the VM (read-only), and Casita's own server times |
+| `check-guard.sh` | watson, as root | The staging guard on the VM: each unsafe override must refuse to start (the service isn't touched) |
 | `deploy-release.sh` | your Mac | CI build of a clean commit, then copy and install through IAP |
 | `install-release.sh` | watson (`casita-install-release`) | Checks the jar's SHA-256, switches releases, rolls back by itself if unhealthy |
 | `rollback.sh` | watson (`casita-rollback`) | Back to the previous release |
