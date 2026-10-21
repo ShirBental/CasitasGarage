@@ -1,0 +1,7 @@
+# Local development: mvn spring-boot:run -Dspring-boot.run.profiles=dev
+# Plain http://localhost, so the session cookie can't be Secure. Never use this profile behind Tailscale.
+server:
+  servlet:
+    session:
+      cookie:
+        secure: false
