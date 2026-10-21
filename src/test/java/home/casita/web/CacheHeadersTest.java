@@ -31,7 +31,7 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
-import home.casita.security.access.Invites;
+import home.casita.security.access.Invitations;
 import home.casita.security.access.LocalAdmin;
 import home.casita.security.access.TestTailnet;
 
@@ -69,7 +69,7 @@ class CacheHeadersTest {
     @Autowired
     private WebApplicationContext context;
     @Autowired
-    private Invites invitations;
+    private Invitations invitations;
     @Autowired
     private TestTailnet.FakeWhois whois;
 

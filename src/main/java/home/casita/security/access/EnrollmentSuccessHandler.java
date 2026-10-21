@@ -7,10 +7,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 
+import home.casita.security.store.SecurityStore.EnrollmentClaim;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
-/** After an invite is redeemed: remember the enrollment (with the device verified beforehand) and go set up Face ID. */
+/** After an invitation is redeemed: keep the enrollment claim in the session (server-side) and go set up Face ID. */
 public class EnrollmentSuccessHandler implements AuthenticationSuccessHandler {
 
     private static final Logger log = LoggerFactory.getLogger(EnrollmentSuccessHandler.class);
@@ -18,11 +19,9 @@ public class EnrollmentSuccessHandler implements AuthenticationSuccessHandler {
     @Override
     public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response, Authentication authentication)
             throws IOException {
-        Invites.Invite invite = (Invites.Invite) authentication.getDetails();
-        DeviceIdentity device = (DeviceIdentity) request.getAttribute(AccessSession.REDEEMING_DEVICE);
-        request.getSession().setAttribute(AccessSession.ENROLLMENT,
-                new AccessSession.Enrollment(invite.id(), invite.member(), invite.label(), device.nodeId(), device.nodeName()));
-        log.info("Invite {} for {} redeemed on node {}; enrollment started", invite.id(), invite.member(), device.nodeName());
+        EnrollmentClaim claim = (EnrollmentClaim) authentication.getDetails();
+        request.getSession().setAttribute(AccessSession.ENROLLMENT, claim);
+        log.info("Invite {} for {} redeemed on node {}; enrollment started", claim.inviteId(), claim.memberId(), claim.nodeName());
         response.sendRedirect("/passkey");
     }
 }

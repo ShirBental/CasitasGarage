@@ -19,7 +19,6 @@ import home.casita.security.access.TestTailnet;
 
 /** The family's words come from configuration, reach only signed-in family, and stay out of the pages' code. */
 @SpringBootTest(properties = {
-        "casita.security.data-dir=target/test-data/brand",
         "casita.security.family=shir",
         "casita.brand.household=test household",
         "casita.brand.companion=Rex",
@@ -27,6 +26,23 @@ import home.casita.security.access.TestTailnet;
 @Import(TestTailnet.Config.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class BrandTest {
+
+    /** A fresh data directory for every run (and, below, every context): enrolled phones from before would refuse re-enrollment. */
+    private static final java.nio.file.Path DATA;
+
+    static {
+        try {
+            DATA = java.nio.file.Files.createTempDirectory("casita-brand");
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @org.springframework.test.context.DynamicPropertySource
+    static void dataDir(org.springframework.test.context.DynamicPropertyRegistry registry) {
+        registry.add("casita.security.data-dir", DATA::toString);
+    }
+
 
     @Autowired
     private WebApplicationContext context;

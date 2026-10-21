@@ -43,9 +43,13 @@ build still needs only a JDK and Maven (no Node).
   to the app icon is rewritten too (its hash covers the icon, so a new icon changes the stylesheet's URL).
   A deploy that changes any file, new Watson artwork included, changes its URL; an old hash answers 404,
   never a stale file.
-- Who may fetch what is unchanged: the sign-in page's files are public by their hashed names too, and only
-  those files; everything else still needs a signed-in family member. All security headers are unchanged.
-- Tests: `CacheHeadersTest` (every category above, 304 revalidation, stale hash, public versus signed-in).
+- Who may fetch what is unchanged: the files that are public by their plain names (the sign-in and passkey
+  pages' scripts and stylesheet, Watson's sign-in drawing, the app icons) are public by their hashed names
+  too, and only those files; everything else still needs a signed-in family member. All security headers are
+  unchanged.
+- Tests: `CacheHeadersTest` (every category above, 304 revalidation, stale hash, public versus signed-in);
+  `PublicFilesTest` (a signed-out and an enrolling phone load everything the passkey page links, Add to
+  Home Screen icons load without a session, and no other file, door or API path does).
 
 ## Measured traffic
 
