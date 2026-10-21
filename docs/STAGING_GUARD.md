@@ -39,6 +39,15 @@ Toyota are two separate simulated doors (`DoorControl.SIMULATED`).
 `casita.deployment` empty or `local`, the guard does nothing: the practice door, `casita.door=meross`,
 dry runs and the opt-in live tests all work as before. That includes the iPhone preview.
 
+## Environment variables
+
+Spring binds `casita.meross.command-mode` from `CASITA_MEROSS_COMMANDMODE` (dots become underscores, dashes
+are dropped); `deploy/watson/casita.env.example` lists every name staging uses. The guard reads each setting
+both the way `@ConditionalOnProperty` reads it and the way `@ConfigurationProperties` binds it, and refuses a
+setting the two would read differently. `StagingEnvironmentVariablesTest` starts Casita in its own JVM with
+the template's variables and one unsafe override at a time, including `SPRING_APPLICATION_JSON` and
+`JAVA_TOOL_OPTIONS=-D…`. Each is refused, and the template as filled in starts past the guard.
+
 ## What it doesn't do
 
 - It doesn't protect a non-GCP machine that is deliberately set to `local`. That is a laptop by definition.
@@ -68,6 +77,7 @@ dry runs and the opt-in live tests all work as before. That includes the iPhone 
     (the localhost defaults), with a file store or an emulator, with the `dev` profile, or with an unknown
     deployment.
   - With the guard unregistered, all seven refusals start instead; checked by hand on 2026-10-21.
+- **`StagingEnvironmentVariablesTest`:** see "Environment variables" above.
 
 ## Verifying it on the GCP VM
 
@@ -75,13 +85,14 @@ Do this before the first real start of staging, and after any change to the unit
 no Meross account and moves nothing.
 
 1. `cat /sys/class/dmi/id/product_name` prints `Google Compute Engine`.
-2. The systemd unit sets `CASITA_DEPLOYMENT=staging` and `CASITA_DOOR=simulated`. It sets no `CASITA_MEROSS_*`
-   or `MEROSS_*` variables, and there is no `config/meross.local.json` in the working directory.
+2. `/etc/casita/casita.env` is `deploy/watson/casita.env.example` with its placeholders filled in: it sets
+   `CASITA_DEPLOYMENT=staging`, `CASITA_DOOR=simulated` and `CASITA_MEROSS_COMMANDMODE=off`, and no Meross
+   credentials or `MEROSS_*` variables. There is no `config/meross.local.json` under `/var/lib/casita`.
 3. **Negative checks.** Start each once by hand and confirm it exits with "Staging guard: Casita won't start":
    - `CASITA_DEPLOYMENT=` (unset)
    - `CASITA_DEPLOYMENT=local`
    - `CASITA_DOOR=meross`
-   - `CASITA_MEROSS_COMMAND_MODE=live`
+   - `CASITA_MEROSS_COMMANDMODE=live`
    - `CASITA_MEROSS_EMAIL=placeholder@example.com`
 4. Start normally and find the `staging guard: ok …` line in `journalctl`.
 5. Signed in on the staging site, `/api/doors` lists Ford and Toyota, both with `"control": "simulated"` and

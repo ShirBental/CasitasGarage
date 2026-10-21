@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -67,7 +68,7 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
             throw new IllegalStateException("Staging guard: Casita won't start. " + String.join(" ", problems)
                     + " See docs/STAGING_GUARD.md.");
         }
-        if ("staging".equals(deployment(environment))) {
+        if ("staging".equals(environment.getProperty("casita.deployment", "").trim())) {
             log.info("staging guard: ok deployment=staging compute_engine=" + computeEngine
                     + " door=simulated command_mode=off meross_credentials=absent storage=firestore rp_id="
                     + environment.getProperty("casita.security.rp-id"));
@@ -84,7 +85,8 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
     static List<String> problems(ConfigurableEnvironment env, boolean computeEngine, boolean merossLocalFileExists,
                                  Map<String, String> processEnv) {
         List<String> problems = new ArrayList<>();
-        String deployment = deployment(env);
+        Settings settings = new Settings(env, problems);
+        String deployment = deployment(settings);
         if (!deployment.isEmpty() && !deployment.equals("local") && !deployment.equals("staging")) {
             problems.add("casita.deployment is '" + deployment + "'; it must be empty, 'local' or 'staging'.");
             return problems;
@@ -96,16 +98,16 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
         }
         if (!deployment.equals("staging")) return problems;
 
-        String door = env.getProperty("casita.door");
+        String door = settings.get("casita.door");
         if (!"simulated".equals(door)) {
             problems.add("Staging needs casita.door=simulated exactly, but it is " + shown(door) + ".");
         }
-        String commandMode = env.getProperty("casita.meross.command-mode");
+        String commandMode = settings.get("casita.meross.command-mode");
         if (!"off".equals(commandMode)) {
             problems.add("Staging needs casita.meross.command-mode=off exactly, but it is " + shown(commandMode) + ".");
         }
         for (String key : List.of("casita.meross.email", "casita.meross.password")) {
-            if (present(env.getProperty(key))) problems.add("Staging must have no Meross credentials, but " + key + " is set.");
+            if (present(settings.get(key))) problems.add("Staging must have no Meross credentials, but " + key + " is set.");
         }
         for (String name : List.of("MEROSS_EMAIL", "MEROSS_PASSWORD")) {
             if (present(processEnv.get(name))) problems.add("Staging must have no Meross credentials, but " + name + " is set.");
@@ -113,14 +115,15 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
         if (merossLocalFileExists) {
             problems.add("Staging must have no Meross credentials, but " + MEROSS_LOCAL_FILE + " exists.");
         }
-        signInAndStorage(env, processEnv, problems);
+        signInAndStorage(env, settings, processEnv, problems);
         return problems;
     }
 
     /** Staging is reached only through tailscale serve at https://watson.<tailnet>.ts.net, and keeps its security store in Firestore. */
-    private static void signInAndStorage(ConfigurableEnvironment env, Map<String, String> processEnv, List<String> problems) {
+    private static void signInAndStorage(ConfigurableEnvironment env, Settings settings, Map<String, String> processEnv,
+                                         List<String> problems) {
         Binder binder = Binder.get(env);
-        String rpId = env.getProperty("casita.security.rp-id");
+        String rpId = settings.get("casita.security.rp-id");
         if (rpId == null || !WATSON_RP_ID.matcher(rpId).matches()) {
             problems.add("Staging needs casita.security.rp-id=watson.<tailnet>.ts.net with the real tailnet name, but it is "
                     + shown(rpId) + ".");
@@ -133,26 +136,58 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
         if (family.stream().noneMatch(StagingGuard::present)) {
             problems.add("Staging needs casita.security.family (who may sign in), but it is empty.");
         }
-        String identity = env.getProperty("casita.security.device-identity");
+        String identity = settings.get("casita.security.device-identity");
         if (identity == null || !identity.equalsIgnoreCase("tailscale")) {
             problems.add("Staging needs casita.security.device-identity=tailscale, but it is " + shown(identity) + ".");
         }
-        String dataDir = env.getProperty("casita.security.data-dir");
-        if (dataDir == null || !Path.of(dataDir).isAbsolute()) {
+        String dataDir = settings.get("casita.security.data-dir");
+        if (dataDir == null || dataDir.equals(Settings.AMBIGUOUS) || !Path.of(dataDir).isAbsolute()) {
             problems.add("Staging needs an absolute casita.security.data-dir, but it is " + shown(dataDir) + ".");
         }
-        String storage = env.getProperty("casita.storage.type");
+        String storage = settings.get("casita.storage.type");
         if (!"firestore".equals(storage)) {
             problems.add("Staging needs casita.storage.type=firestore exactly, but it is " + shown(storage) + ".");
         }
-        if (present(env.getProperty("casita.storage.firestore.emulator-host")) || present(processEnv.get("FIRESTORE_EMULATOR_HOST"))) {
+        if (present(settings.get("casita.storage.firestore.emulator-host")) || present(processEnv.get("FIRESTORE_EMULATOR_HOST"))) {
             problems.add("Staging must use the real Firestore, but an emulator is configured.");
         }
-        if (!"true".equals(env.getProperty("server.servlet.session.cookie.secure"))) {
+        if (!"true".equals(settings.get("server.servlet.session.cookie.secure"))) {
             problems.add("Staging needs Secure session cookies (server.servlet.session.cookie.secure=true).");
         }
         if (Arrays.asList(env.getActiveProfiles()).contains("dev")) {
             problems.add("Staging must not run with the dev profile.");
+        }
+    }
+
+    /**
+     * Each setting read the two ways Casita itself reads settings: as {@code @ConditionalOnProperty} does (the
+     * environment) and as {@code @ConfigurationProperties} does (the binder, with its own mapping of environment
+     * variable names). If the two disagree, a setting could look safe here and be bound unsafe there, so it is refused.
+     */
+    private static final class Settings {
+        static final String AMBIGUOUS = "<ambiguous>";
+
+        private final ConfigurableEnvironment env;
+        private final Binder binder;
+        private final List<String> problems;
+
+        Settings(ConfigurableEnvironment env, List<String> problems) {
+            this.env = env;
+            this.binder = Binder.get(env);
+            this.problems = problems;
+        }
+
+        String get(String key) {
+            String direct = blankToNull(env.getProperty(key));
+            String bound = blankToNull(binder.bind(key, Bindable.of(String.class)).orElse(null));
+            if (Objects.equals(direct, bound)) return env.getProperty(key);
+            problems.add("Staging guard can't tell what " + key + " is: it reads " + shown(direct) + " one way and "
+                    + shown(bound) + " the other; set it once, by its documented name.");
+            return AMBIGUOUS;
+        }
+
+        private static String blankToNull(String value) {
+            return value == null || value.isBlank() ? null : value;
         }
     }
 
@@ -166,8 +201,8 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
         }
     }
 
-    private static String deployment(ConfigurableEnvironment env) {
-        String value = env.getProperty("casita.deployment");
+    private static String deployment(Settings settings) {
+        String value = settings.get("casita.deployment");
         return value == null ? "" : value.trim();
     }
 
