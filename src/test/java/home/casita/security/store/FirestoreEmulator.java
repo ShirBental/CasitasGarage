@@ -73,10 +73,14 @@ public final class FirestoreEmulator {
                 .build().getService();
     }
 
-    /** What provisioning does once (docs/FIRESTORE.md): the schema marker. Casita itself never writes it. */
+    /**
+     * What provisioning does once (docs/FIRESTORE.md): the schema marker. Casita itself never writes it. Written through
+     * a setup client of its own, with a generous timeout and no faults: the first write to a just-started emulator can
+     * take longer than the short timeouts the tests give their own clients, and setup isn't what they test.
+     */
     public static void provision(Firestore db) {
-        try {
-            FirestoreCollections.standard().schema(db).set(Map.of("schemaVersion", FirestoreCollections.SCHEMA_VERSION)).get(10, TimeUnit.SECONDS);
+        try (Firestore setup = client(db.getOptions().getProjectId(), new FaultyFirestore(), Duration.ofSeconds(30))) {
+            FirestoreCollections.standard().schema(setup).set(Map.of("schemaVersion", FirestoreCollections.SCHEMA_VERSION)).get(30, TimeUnit.SECONDS);
         } catch (Exception e) {
             throw new IllegalStateException("couldn't provision the emulator project", e);
         }
