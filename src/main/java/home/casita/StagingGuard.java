@@ -4,16 +4,20 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 import org.apache.commons.logging.Log;
 import org.springframework.boot.EnvironmentPostProcessor;
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.logging.DeferredLogFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.env.ConfigurableEnvironment;
-import org.springframework.core.env.PropertyResolver;
 
 /**
  * Staging never drives the real garage (docs/STAGING_GUARD.md). Runs before any bean is created, after every
@@ -25,7 +29,10 @@ import org.springframework.core.env.PropertyResolver;
  *   <li>{@code casita.deployment} is anything but empty, {@code local} or {@code staging};</li>
  *   <li>in staging: {@code casita.door} isn't exactly {@code simulated}, {@code casita.meross.command-mode}
  *       isn't exactly {@code off}, or Meross credentials are present anywhere Casita or its live tests would
- *       read them (properties, {@code MEROSS_EMAIL}/{@code MEROSS_PASSWORD}, {@code config/meross.local.json}).</li>
+ *       read them (properties, {@code MEROSS_EMAIL}/{@code MEROSS_PASSWORD}, {@code config/meross.local.json});</li>
+ *   <li>in staging, sign-in or storage isn't set up for the server: passkeys bound to
+ *       {@code watson.<tailnet>.ts.net} with that one https origin, Tailscale device identity, a family, an absolute
+ *       data directory, Firestore (never an emulator), Secure session cookies, and not the {@code dev} profile.</li>
  * </ul>
  * Local development (no {@code casita.deployment}, not on Compute Engine) is unchanged.
  */
@@ -34,6 +41,8 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
     static final String GCE_PRODUCT_NAME = "Google Compute Engine";
     static final Path DMI_PRODUCT_NAME = Path.of("/sys/class/dmi/id/product_name");
     static final Path MEROSS_LOCAL_FILE = Path.of("config", "meross.local.json");
+    /** The server's permanent name on the tailnet: watson.<tailnet>.ts.net, with the real tailnet, no placeholder. */
+    static final Pattern WATSON_RP_ID = Pattern.compile("watson\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?\\.ts\\.net");
 
     private final Log log;
     private final Path dmiProductName;
@@ -60,7 +69,8 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
         }
         if ("staging".equals(deployment(environment))) {
             log.info("staging guard: ok deployment=staging compute_engine=" + computeEngine
-                    + " door=simulated command_mode=off meross_credentials=absent");
+                    + " door=simulated command_mode=off meross_credentials=absent storage=firestore rp_id="
+                    + environment.getProperty("casita.security.rp-id"));
         }
     }
 
@@ -71,7 +81,7 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
     }
 
     /** Everything wrong with this configuration, or nothing. */
-    static List<String> problems(PropertyResolver env, boolean computeEngine, boolean merossLocalFileExists,
+    static List<String> problems(ConfigurableEnvironment env, boolean computeEngine, boolean merossLocalFileExists,
                                  Map<String, String> processEnv) {
         List<String> problems = new ArrayList<>();
         String deployment = deployment(env);
@@ -103,7 +113,47 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
         if (merossLocalFileExists) {
             problems.add("Staging must have no Meross credentials, but " + MEROSS_LOCAL_FILE + " exists.");
         }
+        signInAndStorage(env, processEnv, problems);
         return problems;
+    }
+
+    /** Staging is reached only through tailscale serve at https://watson.<tailnet>.ts.net, and keeps its security store in Firestore. */
+    private static void signInAndStorage(ConfigurableEnvironment env, Map<String, String> processEnv, List<String> problems) {
+        Binder binder = Binder.get(env);
+        String rpId = env.getProperty("casita.security.rp-id");
+        if (rpId == null || !WATSON_RP_ID.matcher(rpId).matches()) {
+            problems.add("Staging needs casita.security.rp-id=watson.<tailnet>.ts.net with the real tailnet name, but it is "
+                    + shown(rpId) + ".");
+        }
+        Set<String> origins = binder.bind("casita.security.allowed-origins", Bindable.setOf(String.class)).orElse(Set.of());
+        if (rpId == null || !origins.equals(Set.of("https://" + rpId))) {
+            problems.add("Staging needs casita.security.allowed-origins to be exactly https://<rp-id>, but it is " + origins + ".");
+        }
+        List<String> family = binder.bind("casita.security.family", Bindable.listOf(String.class)).orElse(List.of());
+        if (family.stream().noneMatch(StagingGuard::present)) {
+            problems.add("Staging needs casita.security.family (who may sign in), but it is empty.");
+        }
+        String identity = env.getProperty("casita.security.device-identity");
+        if (identity == null || !identity.equalsIgnoreCase("tailscale")) {
+            problems.add("Staging needs casita.security.device-identity=tailscale, but it is " + shown(identity) + ".");
+        }
+        String dataDir = env.getProperty("casita.security.data-dir");
+        if (dataDir == null || !Path.of(dataDir).isAbsolute()) {
+            problems.add("Staging needs an absolute casita.security.data-dir, but it is " + shown(dataDir) + ".");
+        }
+        String storage = env.getProperty("casita.storage.type");
+        if (!"firestore".equals(storage)) {
+            problems.add("Staging needs casita.storage.type=firestore exactly, but it is " + shown(storage) + ".");
+        }
+        if (present(env.getProperty("casita.storage.firestore.emulator-host")) || present(processEnv.get("FIRESTORE_EMULATOR_HOST"))) {
+            problems.add("Staging must use the real Firestore, but an emulator is configured.");
+        }
+        if (!"true".equals(env.getProperty("server.servlet.session.cookie.secure"))) {
+            problems.add("Staging needs Secure session cookies (server.servlet.session.cookie.secure=true).");
+        }
+        if (Arrays.asList(env.getActiveProfiles()).contains("dev")) {
+            problems.add("Staging must not run with the dev profile.");
+        }
     }
 
     /** True on a Compute Engine VM. A product name that exists but can't be read counts as one: fail closed. */
@@ -116,7 +166,7 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
         }
     }
 
-    private static String deployment(PropertyResolver env) {
+    private static String deployment(ConfigurableEnvironment env) {
         String value = env.getProperty("casita.deployment");
         return value == null ? "" : value.trim();
     }
