@@ -13,7 +13,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * Sign-in settings. See docs/APP.md.
  *
  * @param rpId           the passkey relying-party id: the host name passkeys are bound to. In production the
- *                       Tailscale name, e.g. {@code casita.example-tailnet.ts.net}; if it changes, everyone
+ *                       Tailscale name of the server, {@code watson.<tailnet>.ts.net}; if it changes, everyone
  *                       enrolls again. {@code localhost} for local development.
  * @param allowedOrigins the exact origins the web app is served from (scheme, host, port)
  * @param family         who may sign in, by short name (e.g. shir, hubby). Nobody else can, even with an invite.

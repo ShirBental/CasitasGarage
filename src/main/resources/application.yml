@@ -51,7 +51,7 @@ casita:
   door: simulated
   security:
     # Passkeys are bound to this host name. Production: the Tailscale name, e.g.
-    # casita.<tailnet>.ts.net, with allowed-origins https://casita.<tailnet>.ts.net.
+    # watson.<tailnet>.ts.net, with allowed-origins https://watson.<tailnet>.ts.net (deploy/watson/casita.env.example).
     rp-id: localhost
     allowed-origins: [http://localhost:8080]
     # Who may sign in, by short name. Nobody else can, even with an invite link.

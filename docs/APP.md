@@ -72,8 +72,8 @@ Out of scope here: a compromised server or tailnet admin account, and the opener
 ```yaml
 casita:
   security:
-    rp-id: casita.<tailnet>.ts.net
-    allowed-origins: [https://casita.<tailnet>.ts.net]
+    rp-id: watson.<tailnet>.ts.net
+    allowed-origins: [https://watson.<tailnet>.ts.net]
     family: [shir, hubby]
 ```
 
