@@ -65,7 +65,7 @@ public final class FirestoreEmulator {
         return client(project, faults, StorageConfig.retrySettings(timeout));
     }
 
-    private static Firestore client(String project, FaultyFirestore faults, RetrySettings retry) {
+    static Firestore client(String project, FaultyFirestore faults, RetrySettings retry) {
         return FirestoreOptions.newBuilder()
                 .setProjectId(project)
                 .setDatabaseId(FirestoreCollections.DATABASE_ID)

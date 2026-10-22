@@ -70,9 +70,14 @@ public record FirestoreCollections(String members, String userHandles, String pa
 
     /** At start-up in Firestore mode: {@code meta/schema} must be readable and this version, or Casita doesn't start. */
     public void verify(Firestore db) {
+        verify(db, java.time.Duration.ofSeconds(10));
+    }
+
+    /** As {@link #verify(Firestore)}, waiting up to {@code wait} for the read (the client's own deadlines still apply). */
+    public void verify(Firestore db, java.time.Duration wait) {
         DocumentSnapshot schema;
         try {
-            schema = schema(db).get().get(10, TimeUnit.SECONDS);
+            schema = schema(db).get().get(wait.toMillis(), TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             throw new IllegalStateException("Firestore isn't reachable at start-up; Casita doesn't start without its store", e);
         }

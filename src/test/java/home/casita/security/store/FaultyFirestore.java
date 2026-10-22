@@ -50,6 +50,16 @@ public final class FaultyFirestore {
     }
 
     private final Map<String, Hold> holds = new ConcurrentHashMap<>();
+    private volatile long connectionReadyAtNanos;
+
+    /**
+     * A slow first connection, as on an e2-micro busy starting the JVM: every call made in the next {@code delay} waits
+     * until then before it is sent. Its deadline, already set by the client library, keeps running meanwhile, so each
+     * attempt shorter than the wait runs out, and so do the retries made during it.
+     */
+    public void connectionReadyAfter(java.time.Duration delay) {
+        connectionReadyAtNanos = System.nanoTime() + delay.toNanos();
+    }
 
     /** Holds the next call of the RPC until released, so a test can change Firestore between a decision and its write. */
     public Hold holdNext(String rpc) {
@@ -64,6 +74,14 @@ public final class FaultyFirestore {
             public <Q, R> ClientCall<Q, R> interceptCall(MethodDescriptor<Q, R> method, CallOptions options, Channel next) {
                 String op = method.getBareMethodName();
                 calls.computeIfAbsent(op, k -> new AtomicInteger()).incrementAndGet();
+                long wait = connectionReadyAtNanos - System.nanoTime();
+                if (wait > 0) {
+                    try {
+                        java.util.concurrent.TimeUnit.NANOSECONDS.sleep(wait);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
                 Hold hold = holds.remove(op);
                 if (hold != null) {
                     hold.arrived.countDown();
@@ -171,6 +189,7 @@ public final class FaultyFirestore {
         downAfterLoss.clear();
         holds.values().forEach(Hold::release);
         holds.clear();
+        connectionReadyAtNanos = 0;
         calls.clear();
         down.set(false);
     }
