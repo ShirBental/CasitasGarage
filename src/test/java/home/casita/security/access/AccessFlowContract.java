@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -23,6 +24,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.AfterEach;
+import org.slf4j.LoggerFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +41,9 @@ import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import home.casita.garage.ActivityLog;
 import home.casita.security.StorePasskeys;
 import home.casita.security.store.SecurityStore;
@@ -178,7 +183,7 @@ abstract class AccessFlowContract {
         redeem(invite[1], SHIR_PHONE);
 
         mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE)))
-                .andExpect(status().isFound()).andExpect(redirectedUrl("/login?error"));
+                .andExpect(status().isFound()).andExpect(redirectedUrl("/login?invite-failed"));
         assertThat(invitation(invite[0])).satisfies(i -> {
             assertThat(i.status()).isEqualTo(SecurityStore.InvitationStatus.CONSUMED);
             assertThat(i.nodeId()).isEqualTo(SHIR_PHONE.nodeId());
@@ -398,7 +403,7 @@ abstract class AccessFlowContract {
                 .andExpect(jsonPath("$.devices").value(1)).andExpect(jsonPath("$.credentials").value(1)).andExpect(jsonPath("$.invites").value(1));
 
         expectGarage(session, SHIR_PHONE, 401);
-        mvc.perform(post("/login/ott").param("token", pendingToken).with(csrf()).with(from(SHIR_IPAD))).andExpect(redirectedUrl("/login?error"));
+        mvc.perform(post("/login/ott").param("token", pendingToken).with(csrf()).with(from(SHIR_IPAD))).andExpect(redirectedUrl("/login?invite-failed"));
         mvc.perform(post("/admin/invites").param("member", "shir").param("label", "again").header(LocalAdmin.HEADER, adminSecret()))
                 .andExpect(status().isBadRequest());
         expectGarage(hubby, HUBBY_PHONE, 200); // nobody else is affected
@@ -421,7 +426,7 @@ abstract class AccessFlowContract {
         mvc.perform(delete("/admin/invites/" + invite[0]).header(LocalAdmin.HEADER, adminSecret())).andExpect(jsonPath("$.revoked").value(true));
 
         assertThat(DATA.resolve("invites").resolve(invite[0] + ".txt")).doesNotExist();
-        mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE))).andExpect(redirectedUrl("/login?error"));
+        mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE))).andExpect(redirectedUrl("/login?invite-failed"));
         assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.REVOKED);
     }
 
@@ -626,7 +631,7 @@ abstract class AccessFlowContract {
 
         assertThat(DATA.resolve("invites").resolve(invite[0] + ".txt")).doesNotExist();
         assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.REVOKED);
-        mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE))).andExpect(redirectedUrl("/login?error"));
+        mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE))).andExpect(redirectedUrl("/login?invite-failed"));
     }
 
     @Test
@@ -733,7 +738,7 @@ abstract class AccessFlowContract {
         String[] invite = invite("shir", "Shir's iPhone");
         store.revokeMember("shir"); // the member record only, as if cleanup hadn't run
 
-        mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE))).andExpect(redirectedUrl("/login?error"));
+        mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE))).andExpect(redirectedUrl("/login?invite-failed"));
 
         assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.PENDING);
     }
@@ -742,6 +747,54 @@ abstract class AccessFlowContract {
     void theSignInPageExplainsEachDeviceRefusal() throws Exception {
         String script = mvc.perform(get("/login.js")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         assertThat(script).contains("\"device-unverified\"", "\"device-already-set-up\"", "\"device-not-available\"");
+    }
+
+    /* ---------- an invite that can't be redeemed (Shahar's first try on watson) ---------- */
+
+    @Test
+    void aFailedInviteAsksForANewOneAndNeverLogsItsToken() throws Exception {
+        Logger logger = (Logger) LoggerFactory.getLogger(InviteFailureHandler.class);
+        ListAppender<ILoggingEvent> logged = new ListAppender<>();
+        logged.start();
+        logger.addAppender(logged);
+        String[] invite = invite("hubby", "Hubby's iPhone");
+        try {
+            redeem(invite[1], HUBBY_PHONE);
+            // Used already (or expired, revoked, unknown): not "Try Face ID again", but "ask for a new invite".
+            mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(HUBBY_PHONE)))
+                    .andExpect(status().isFound()).andExpect(redirectedUrl("/login?invite-failed"));
+            mvc.perform(post("/login/ott").param("token", "not-a-token").with(csrf()).with(from(HUBBY_PHONE)))
+                    .andExpect(redirectedUrl("/login?invite-failed"));
+        } finally {
+            logger.detachAppender(logged);
+        }
+        assertThat(logged.list).extracting(ILoggingEvent::getFormattedMessage)
+                .hasSize(2).allSatisfy(m -> assertThat(m).startsWith("Invite not redeemed: ").doesNotContain(invite[1]));
+        String script = mvc.perform(get("/login.js")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(script).contains("\"invite-failed\"", "Ask for a new one", "don't sign in with Face ID on this phone");
+    }
+
+    @Test
+    void anInviteLastsFifteenMinutes() throws Exception {
+        Invitation i = invitation(invite("hubby", "Hubby's iPhone")[0]);
+        assertThat(Duration.between(i.createdAt(), i.expiresAt())).isEqualTo(Duration.ofMinutes(15)).isEqualTo(Invitations.LIFETIME);
+    }
+
+    @Test
+    void someoneElsesSyncedPasskeyDuringAnEnrollmentIsRefusedAndChangesNothing() throws Exception {
+        // Shir is set up; her passkey syncs to the other phone too (shared iCloud Keychain).
+        MockHttpSession shir = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession enrolling = redeem(invite("hubby", "Hubby's iPhone")[1], HUBBY_PHONE);
+
+        // On that phone, Face ID offers Shir's passkey: "Passkey sign-in refused for shir: device not authorized".
+        assertThat(TestTailnet.signIn(context, enrolling, "shir", "c2hpcnMta2V5", HUBBY_PHONE)).isEqualTo("device not authorized");
+        assertThat(store.device(HUBBY_PHONE.nodeId())).isEmpty();
+        assertThat(store.passkeysOf("hubby")).isEmpty();
+        expectGarage(enrolling, HUBBY_PHONE, 401);
+        // Shir's own device, passkey and session are untouched.
+        assertThat(store.device(SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
+        assertThat(store.passkeysOf("shir")).hasSize(1);
+        expectGarage(shir, SHIR_PHONE, 200);
     }
 
     /* ---------- administration: on the server only ---------- */

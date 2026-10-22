@@ -136,7 +136,7 @@ class SignInTest {
     @Test
     void aWrongInviteTokenSignsNobodyIn() throws Exception {
         mvc.perform(post("/login/ott").param("token", "not-a-token").with(csrf()).with(TestTailnet.from(TestTailnet.SHIR_PHONE)))
-                .andExpect(status().isFound()).andExpect(redirectedUrl("/login?error"));
+                .andExpect(status().isFound()).andExpect(redirectedUrl("/login?invite-failed"));
         // From a device Casita can't identify, it isn't even tried.
         mvc.perform(post("/login/ott").param("token", "not-a-token").with(csrf()))
                 .andExpect(status().isFound()).andExpect(redirectedUrl("/login?device-unverified"));

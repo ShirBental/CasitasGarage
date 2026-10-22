@@ -6,7 +6,7 @@ member, on every request. Code: `home.casita.security.access`, wired in `Securit
 ## The rules
 
 - **One invite = one device.** An invite is for one member and carries the intended device label
-  ("Shir's iPhone"). It is single use, lasts **5 minutes**, can be revoked, and only a SHA-256 of its
+  ("Shir's iPhone"). It is single use, lasts **15 minutes**, can be revoked, and only a SHA-256 of its
   token is stored (in the security store: `docs/PERSISTENCE.md`). The token is never logged, and the
   admin's answer never contains it.
 - **One node, one member.** A tailnet node is authorized for at most one member. An authorized node
@@ -76,7 +76,7 @@ scope (as in `APP.md`).
 
 ```bash
 bin/casita-access invite hubby "Hubby's iPhone"
-cat data/invites/i-1a2b3c4d.txt          # the link; send it privately; good for 5 minutes, once
+cat data/invites/i-1a2b3c4d.txt          # the link; send it privately; good for 15 minutes, once
 ```
 
 On the phone (Tailscale on): open the link → *Sign in* → *Set up Face ID*. Or, if the phone already

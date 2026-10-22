@@ -67,7 +67,7 @@ public class RedemptionGuardFilter extends OncePerRequestFilter {
                 : store.invitation(Invitations.hash(token));
         if (invitation.isEmpty()) return null; // unknown token: redemption fails the ordinary way
         String member = invitation.get().memberId();
-        if (store.member(member).filter(SecurityStore.Member::active).isEmpty()) return "/login?error";
+        if (store.member(member).filter(SecurityStore.Member::active).isEmpty()) return "/login?invite-failed";
         boolean tiedToSomeoneElse = authorization.filter(d -> d.status() == SecurityStore.Status.REVOKED && !d.memberId().equals(member))
                 .isPresent();
         return tiedToSomeoneElse ? "/login?device-not-available" : null;

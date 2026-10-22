@@ -44,6 +44,7 @@ import home.casita.security.access.DeviceIdentityResolver;
 import home.casita.security.access.EnrollmentAuthenticationProvider;
 import home.casita.security.access.EnrollmentGuardFilter;
 import home.casita.security.access.EnrollmentSuccessHandler;
+import home.casita.security.access.InviteFailureHandler;
 import home.casita.security.access.Invitations;
 import home.casita.security.access.LocalAdmin;
 import home.casita.security.access.PasskeySignInSuccessHandler;
@@ -225,7 +226,10 @@ class SecurityConfig {
                         .generateRequestResolver(request -> null)
                         .tokenGenerationSuccessHandler((request, response, token) -> response.sendError(HttpServletResponse.SC_NOT_FOUND))
                         .authenticationProvider(new EnrollmentAuthenticationProvider(invitations, properties.family()))
-                        .authenticationSuccessHandler(new EnrollmentSuccessHandler()))
+                        .authenticationSuccessHandler(new EnrollmentSuccessHandler())
+                        // Not Spring's /login?error ("Try Face ID again?"): on a phone that isn't set up, Face ID can only
+                        // offer someone else's synced passkey. Say the invite didn't work, and log why (never the token).
+                        .failureHandler(new InviteFailureHandler()))
                 // Spring's passkey script for the sign-in and passkey pages, served from here (no CDN).
                 .addFilterBefore(DefaultResourcesFilter.webauthn(), CsrfFilter.class)
                 .csrf(csrf -> csrf.spa().ignoringRequestMatchers(path.matcher("/admin/**")))

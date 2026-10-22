@@ -4,6 +4,10 @@
   const message = document.getElementById("message");
   if (query.has("error")) message.textContent = "Hmm, that didn't work. Try Face ID again?";
   if (query.has("signed-out")) message.textContent = "You're signed out. See you soon!";
+  if (query.has("invite-failed")) {
+    message.textContent = "That invite didn't work. It may have expired (invites last 15 minutes) or already been used. "
+        + "Ask for a new one, and don't sign in with Face ID on this phone until it's set up.";
+  }
   if (query.has("device-unverified")) {
     message.textContent = "I can't tell which device this is. Open Casita through Tailscale on this phone and try again; your invite still works.";
   }

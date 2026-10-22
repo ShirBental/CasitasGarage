@@ -29,7 +29,7 @@ import home.casita.security.store.SecurityStore.InvitationStatus;
  */
 public class Invitations implements OneTimeTokenService {
 
-    public static final Duration LIFETIME = Duration.ofMinutes(5);
+    public static final Duration LIFETIME = Duration.ofMinutes(15);
 
     /** A freshly created invitation and its token: the token goes to the invitee and nowhere else. */
     public record Created(Invitation invitation, String token) {
