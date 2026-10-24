@@ -50,14 +50,19 @@ jobs:
           CADDY_VERSION: 2.10.2
           CADDY_SHA512: 747df7ee74de188485157a383633a1a963fd9233b71fbb4a69ddcbcc589ce4e2cc82dacf5dbbe136cb51d17e14c59daeb5d9bc92487610b0f3b93680b2646546
         run: |
-          bash deploy/watson/test/install-release.test.sh
-          bash deploy/watson/test/provision-gcp.test.sh
-          bash deploy/watson/test/public-scripts.test.sh
-          mkdir -p ~/caddy && cd ~/caddy
-          curl -fsSL -o caddy.tgz "https://github.com/caddyserver/caddy/releases/download/v$CADDY_VERSION/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
-          echo "$CADDY_SHA512  caddy.tgz" | sha512sum -c -
-          tar -xzf caddy.tgz caddy
-          cd "$GITHUB_WORKSPACE" && CADDY=~/caddy/caddy bash deploy/watson/test/caddy.test.sh
+          mkdir -p ~/caddy
+          curl -fsSL -o ~/caddy/caddy.tgz "https://github.com/caddyserver/caddy/releases/download/v$CADDY_VERSION/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+          echo "$CADDY_SHA512  $HOME/caddy/caddy.tgz" | sha512sum -c -
+          tar -xzf ~/caddy/caddy.tgz -C ~/caddy caddy
+          status=0
+          for t in install-release provision-gcp public-scripts caddy; do
+            if ! CADDY=~/caddy/caddy bash "deploy/watson/test/$t.test.sh" > "$t.log" 2>&1; then
+              status=1
+              grep -E 'FAIL|SKIP' "$t.log" | head -20 | sed "s/^/::error::$t: /"
+            fi
+            tail -1 "$t.log"
+          done
+          exit $status
       - name: No unexpected skips
         if: always()
         run: python3 scripts/ci/check-test-report.py target/surefire-reports
