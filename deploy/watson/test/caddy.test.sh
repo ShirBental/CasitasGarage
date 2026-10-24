@@ -52,7 +52,7 @@ hdr() { python3 -I -c 'import json,sys; d=json.load(sys.stdin)["headers"]; print
 
 echo "Caddyfile, through a real Caddy ($("$caddy" version | cut -d' ' -f1))"
 r="$(get "https://localhost:$H/healthz" -H 'X-Forwarded-For: 1.2.3.4' -H 'X-Forwarded-Host: evil.example' -H 'X-Forwarded-Proto: http')"
-check "a client's X-Forwarded-For is replaced with its real address" '[ "$(hdr X-Forwarded-For <<<"$r")" = 127.0.0.1 ]'
+check "a client's X-Forwarded-For is replaced with its real address" 'case "$(hdr X-Forwarded-For <<<"$r")" in 127.0.0.1|::1) true ;; *) false ;; esac'
 check "a client's X-Forwarded-Host is replaced with the site's own (host:port as requested)" '[ "$(hdr X-Forwarded-Host <<<"$r")" = "localhost:$H" ]'
 check "a client's X-Forwarded-Proto is replaced with https" '[ "$(hdr X-Forwarded-Proto <<<"$r")" = https ]'
 
