@@ -40,13 +40,13 @@ if [ "$resolved" != "$ext_ip" ]; then
   exit 1
 fi
 
-# The Casita upstream must be listening on loopback only.
+# The Casita upstream must be listening on loopback only (Java reports a 127.0.0.1 bind as [::ffff:127.0.0.1]).
 port="${upstream##*:}"
 listeners="$(ss -ltnH "sport = :$port" | awk '{print $4}' | sort -u | tr '\n' ' ')"
 echo "Listening on port $port:  ${listeners:-nothing}"
 case "$listeners" in
   "") echo "note: nothing listens on $upstream yet; Caddy will answer 502 until Casita is up there" ;;
-  *) for l in $listeners; do case "$l" in 127.0.0.1:"$port"|"[::1]:$port") ;; *) echo "REFUSED: port $port is open on $l, not loopback only" >&2; exit 1 ;; esac; done ;;
+  *) for l in $listeners; do case "$l" in 127.0.0.1:"$port"|"[::1]:$port"|"[::ffff:127.0.0.1]:$port") ;; *) echo "REFUSED: port $port is open on $l, not loopback only" >&2; exit 1 ;; esac; done ;;
 esac
 
 rendered="$(mktemp)"; trap 'rm -f "$rendered"' EXIT

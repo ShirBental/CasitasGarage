@@ -36,7 +36,7 @@ listeners="$(ss -ltnH 'sport = :8080' 2>/dev/null | awk '{print $4}' | sort -u |
 case "$listeners" in
   "") ;;  # not up: already reported above
   *) only_loopback=yes
-     for l in $listeners; do case "$l" in 127.0.0.1:8080|"[::1]:8080") ;; *) only_loopback=no ;; esac; done
+     for l in $listeners; do case "$l" in 127.0.0.1:8080|"[::1]:8080"|"[::ffff:127.0.0.1]:8080") ;; *) only_loopback=no ;; esac; done
      [ "$only_loopback" = yes ] && ok "port 8080 on loopback only" || bad "port 8080 is open on $listeners, not loopback only" ;;
 esac
 if systemctl list-unit-files caddy.service >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
