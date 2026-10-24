@@ -13,16 +13,17 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * Sign-in settings. See docs/APP.md.
  *
  * @param rpId           the passkey relying-party id: the host name passkeys are bound to. In production the
- *                       Tailscale name of the server, {@code watson.<tailnet>.ts.net}; if it changes, everyone
- *                       enrolls again. {@code localhost} for local development.
+ *                       server's public name (deploy/watson: {@code watsonbental.duckdns.org}); if it changes,
+ *                       everyone enrolls again. {@code localhost} for local development.
  * @param allowedOrigins the exact origins the web app is served from (scheme, host, port)
  * @param family         who may sign in, by short name (e.g. shir, hubby). Nobody else can, even with an invite.
  * @param dataDir        where passkeys, device authorizations, invite links and the admin secret are kept:
  *                       outside git, readable by Casita's user only
- * @param deviceIdentity how a request's device is verified: {@code tailscale} (the default: the tailnet node,
- *                       via tailscale serve and the local tailscaled), or {@code development} (only with rp-id
- *                       localhost: direct requests to 127.0.0.1 are "this computer")
- * @param tailscaleCli   the {@code tailscale} command, for {@code tailscale whois}
+ * @param deviceIdentity how a request's device is verified: {@code browser} (the default: the browser key an invite
+ *                       gave that browser, docs/ACCESS.md), or {@code development} (only with rp-id localhost:
+ *                       direct requests to 127.0.0.1 are "this computer")
+ * @param deviceKeyFile  the server secret browser keys are signed with; empty: {@code <data-dir>/device.key}.
+ *                       Losing or replacing it means every browser enrolls again.
  */
 @ConfigurationProperties("casita.security")
 public record CasitaSecurityProperties(
@@ -30,10 +31,15 @@ public record CasitaSecurityProperties(
         @DefaultValue("http://localhost:8080") Set<String> allowedOrigins,
         List<String> family,
         @DefaultValue("data") Path dataDir,
-        @DefaultValue("tailscale") DeviceIdentityMode deviceIdentity,
-        @DefaultValue("tailscale") String tailscaleCli) {
+        @DefaultValue("browser") DeviceIdentityMode deviceIdentity,
+        Path deviceKeyFile) {
 
-    public enum DeviceIdentityMode { TAILSCALE, DEVELOPMENT }
+    public enum DeviceIdentityMode { BROWSER, DEVELOPMENT }
+
+    /** Where the browser-key secret is kept. */
+    public Path deviceKey() {
+        return deviceKeyFile != null ? deviceKeyFile : dataDir.resolve("device.key");
+    }
 
     private static final Pattern NAME = Pattern.compile("[a-z][a-z0-9-]{0,31}");
 

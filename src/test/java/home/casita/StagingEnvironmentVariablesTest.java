@@ -36,13 +36,13 @@ class StagingEnvironmentVariablesTest {
 
     static final Path ENV_EXAMPLE = Path.of("deploy/watson/casita.env.example");
 
-    /** The template's settings, placeholders filled in as a real tailnet, family and project would be. */
+    /** The template's settings, placeholders filled in as a real public host, family and project would be. */
     static Map<String, String> stagingVariables(Path dataDir) throws IOException {
         Map<String, String> vars = new LinkedHashMap<>();
         for (String line : Files.readAllLines(ENV_EXAMPLE)) {
             if (line.isBlank() || line.startsWith("#")) continue;
             String[] kv = line.split("=", 2);
-            String value = kv[1].replace("<TAILNET>", "example-tailnet").replace("<MEMBERS>", "shir,hubby")
+            String value = kv[1].replace("<PUBLIC_HOST>", "casita.example.org").replace("<MEMBERS>", "shir,hubby")
                     .replace("<PROJECT_ID>", "casita-staging-test");
             vars.put(kv[0], value);
         }
@@ -199,14 +199,14 @@ class StagingEnvironmentVariablesTest {
         Run run = run(stagingVariables(data));
         assertThat(run.passed()).as(run.output()).isTrue();
         assertThat(run.refused()).isFalse();
-        assertThat(run.output()).contains("door=simulated command_mode=off", "rp_id=watson.example-tailnet.ts.net");
+        assertThat(run.output()).contains("door=simulated command_mode=off", "rp_id=casita.example.org");
     }
 
     @Test
     void theTemplateWithItsPlaceholdersDoesNotStart(@TempDir Path data) throws Exception {
         Map<String, String> vars = stagingVariables(data);
-        vars.put("CASITA_SECURITY_RPID", "watson.<TAILNET>.ts.net");
-        vars.put("CASITA_SECURITY_ALLOWEDORIGINS", "https://watson.<TAILNET>.ts.net");
+        vars.put("CASITA_SECURITY_RPID", "<PUBLIC_HOST>");
+        vars.put("CASITA_SECURITY_ALLOWEDORIGINS", "https://<PUBLIC_HOST>");
         Run run = run(vars);
         assertThat(run.refused()).as(run.output()).isTrue();
         assertThat(run.output()).contains("rp-id");
@@ -224,6 +224,8 @@ class StagingEnvironmentVariablesTest {
             "CASITA_STORAGE_FIRESTORE_EMULATORHOST=127.0.0.1:18085",
             "FIRESTORE_EMULATOR_HOST=127.0.0.1:18085",
             "CASITA_SECURITY_DEVICEIDENTITY=development",
+            "CASITA_SECURITY_DEVICEIDENTITY=tailscale",
+            "SERVER_ADDRESS=0.0.0.0",
             "SERVER_SERVLET_SESSION_COOKIE_SECURE=false",
             "SPRING_PROFILES_ACTIVE=dev",
             "CASITA_DEPLOYMENT=production",

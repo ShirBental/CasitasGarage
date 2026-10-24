@@ -40,7 +40,7 @@ public interface SecurityStore {
         }
     }
 
-    /** A tailnet node's authorization: one per node, for at most one member. */
+    /** A device's authorization, by its device id (a browser key, b-...; older records: a tailnet node): one per device, for at most one member. */
     record Device(String nodeId, String memberId, String label, String nodeName, String credentialId, String inviteId,
                   Status status, Instant authorizedAt, Instant revokedAt) {
         public boolean activeFor(String member) {

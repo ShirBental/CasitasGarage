@@ -22,7 +22,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 import home.casita.garage.ActivityLog;
 import home.casita.garage.Outcome;
-import home.casita.security.access.TestTailnet;
+import home.casita.security.access.TestBrowsers;
 
 /**
  * The API with the real doors, Ford switched on live and Toyota not: the app is told, per door, that only Ford
@@ -42,7 +42,7 @@ import home.casita.security.access.TestTailnet;
         "casita.garage.travel-times.Ford=30s",
         "casita.garage.sensor-lags.Ford=5s",
         "casita.security.family=shir"})
-@Import(TestTailnet.Config.class)
+@Import(TestBrowsers.Config.class)
 class MerossDoorsApiTest {
 
     /** A fresh data directory for every run: an enrolled phone from before would refuse re-enrollment. */
@@ -74,10 +74,10 @@ class MerossDoorsApiTest {
     @Test
     void onlyTheSwitchedOnDoorIsReportedLiveAndToyotaIsRefused() throws Exception {
         MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestTailnet.SHIR_PHONE);
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestBrowsers.SHIR_PHONE);
         org.springframework.test.web.servlet.request.RequestPostProcessor family = request -> {
             request.setSession(session);
-            return TestTailnet.from(TestTailnet.SHIR_PHONE).postProcessRequest(request);
+            return TestBrowsers.from(TestBrowsers.SHIR_PHONE).postProcessRequest(request);
         };
 
         mvc.perform(get("/api/doors").with(family))

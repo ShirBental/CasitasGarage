@@ -1,16 +1,14 @@
 package home.casita.security.access;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -26,75 +24,105 @@ import org.springframework.security.web.webauthn.api.PublicKeyCredentialType;
 import org.springframework.security.web.webauthn.api.PublicKeyCredentialUserEntity;
 import org.springframework.security.web.webauthn.authentication.WebAuthnAuthentication;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import org.springframework.web.context.WebApplicationContext;
+import org.springframework.web.context.support.WebApplicationContextUtils;
 
 import home.casita.security.store.SecurityStore;
 import home.casita.security.store.SecurityStore.EnrollmentClaim;
+import jakarta.servlet.ServletContext;
+import jakarta.servlet.http.Cookie;
 
 /**
- * A pretend tailnet for tests: a fake tailscaled behind the real {@link TailscaleDeviceIdentity}, requests as
- * tailscale serve delivers them, and enrollment and sign-in through the real store and success handler (only
- * the WebAuthn cryptography is skipped: tests hand over a passkey as if Spring had just verified it).
- * Import {@link Config}.
+ * Enrolled browsers for tests: phones whose browsers hold a browser key ({@link DeviceKeys}) signed with the
+ * application's own device key, requests as the reverse proxy delivers them (HTTPS), and enrollment and sign-in
+ * through the real store and success handler (only the WebAuthn cryptography is skipped: tests hand over a
+ * passkey as if Spring had just verified it). Import {@link Config}.
  */
-public final class TestTailnet {
+public final class TestBrowsers {
 
-    private TestTailnet() {}
+    private TestBrowsers() {}
 
-    /** A phone on the tailnet: its address, its stable node id and its Tailscale user. */
-    public record Phone(String address, String nodeId, String name, String login) {
+    /** A phone's browser, holding the browser key for {@code nodeId} (a valid browser-key device id). */
+    public record Phone(String nodeId, String name) {
         public DeviceIdentity identity() {
-            return new DeviceIdentity(nodeId, name, login);
+            return new DeviceIdentity(nodeId, "browser " + nodeId.substring(0, 10));
         }
     }
 
-    public static final Phone SHIR_PHONE = new Phone("100.64.0.11", "nShirPhoneCNTRL", "shirs-iphone", "shir@example.com");
-    public static final Phone SHIR_IPAD = new Phone("100.64.0.12", "nShirIpadCNTRL", "shirs-ipad", "shir@example.com");
-    public static final Phone HUBBY_PHONE = new Phone("100.64.0.21", "nHubbyPhoneCNTRL", "hubbys-iphone", "hubby@example.com");
+    public static final Phone SHIR_PHONE = new Phone("b-5a17000000000000000000000000000a", "shirs-iphone");
+    public static final Phone SHIR_IPAD = new Phone("b-5a17000000000000000000000000000b", "shirs-ipad");
+    public static final Phone HUBBY_PHONE = new Phone("b-4b0b000000000000000000000000000c", "hubbys-iphone");
 
-    /** tailscaled, as far as the tests are concerned. */
-    public static final class FakeWhois implements TailscaleWhois {
-        private final Map<String, Node> nodes = new ConcurrentHashMap<>();
-
-        public FakeWhois() {
-            reset();
-        }
+    /** Which phones have lost their browser key (cleared website data, a private tab): their requests carry none. */
+    public static final class Browsers {
+        private final Set<Phone> forgotten = ConcurrentHashMap.newKeySet();
 
         public void reset() {
-            nodes.clear();
-            for (Phone p : List.of(SHIR_PHONE, SHIR_IPAD, HUBBY_PHONE)) nodes.put(p.address(), new Node(p.nodeId(), p.name(), p.login(), false));
+            forgotten.clear();
         }
 
-        public void put(String address, Node node) {
-            nodes.put(address, node);
+        public void forget(Phone phone) {
+            forgotten.add(phone);
         }
 
-        public void forget(String address) {
-            nodes.remove(address);
-        }
-
-        @Override
-        public Optional<Node> whois(String address) {
-            return Optional.ofNullable(nodes.get(address));
+        boolean forgot(Phone phone) {
+            return forgotten.contains(phone);
         }
     }
 
     @TestConfiguration
     public static class Config {
         @Bean
-        @Primary
-        FakeWhois fakeWhois() {
-            return new FakeWhois();
+        Browsers browsers() {
+            return new Browsers();
         }
     }
 
-    /** A request from the phone through tailscale serve (Tomcat has already applied X-Forwarded-For). */
+    /**
+     * A request from the phone's browser through the reverse proxy (Tomcat has already applied X-Forwarded-*):
+     * HTTPS, from the phone's address, with its browser key cookie. Needs the request's servlet context to be the
+     * application's (MockMvc's is; see {@link #request}).
+     */
     public static RequestPostProcessor from(Phone phone) {
         return request -> {
-            request.setRemoteAddr(phone.address());
-            request.addHeader(TailscaleDeviceIdentity.USER_HEADER, phone.login());
-            request.addHeader("X-Forwarded-Proto", "https");
+            WebApplicationContext context = applicationOf(request.getServletContext());
+            request.setSecure(true);
+            request.setScheme("https");
+            request.setRemoteAddr("203.0.113.10");
+            if (!context.getBean(Browsers.class).forgot(phone)) {
+                Cookie key = new Cookie(DeviceKeys.COOKIE, cookieValue(context, phone));
+                Cookie[] existing = request.getCookies();
+                if (existing == null) {
+                    request.setCookies(key);
+                } else {
+                    Cookie[] all = Arrays.copyOf(existing, existing.length + 1);
+                    all[existing.length] = key;
+                    request.setCookies(all);
+                }
+            }
             return request;
         };
+    }
+
+    /** The application a (mock) servlet context belongs to. */
+    private static WebApplicationContext applicationOf(ServletContext servletContext) {
+        WebApplicationContext context = WebApplicationContextUtils.getWebApplicationContext(servletContext);
+        if (context != null) return context;
+        for (String name : java.util.Collections.list(servletContext.getAttributeNames())) {
+            if (servletContext.getAttribute(name) instanceof WebApplicationContext found) return found;
+        }
+        throw new IllegalStateException("TestBrowsers.from needs a request in the application's servlet context: "
+                + "use MockMvc, or TestBrowsers.request(context, ...)");
+    }
+
+    /** The phone's browser key cookie value, as the application's device key signs it. */
+    public static String cookieValue(ApplicationContext context, Phone phone) {
+        return context.getBean(DeviceKeys.class).cookieValueFor(phone.nodeId());
+    }
+
+    /** A request built by hand (not through MockMvc) that {@link #from} can still be applied to. */
+    public static MockHttpServletRequest request(ApplicationContext context, String method, String uri) {
+        return new MockHttpServletRequest(((WebApplicationContext) context).getServletContext(), method, uri);
     }
 
     /** The member's WebAuthn user handle, given to them the first time (as Spring does at passkey setup). */
@@ -152,7 +180,7 @@ public final class TestTailnet {
         SecurityStore store = context.getBean(SecurityStore.class);
         WebAuthnAuthentication auth = new WebAuthnAuthentication(user(store, member), List.of(new SimpleGrantedAuthority("ROLE_FAMILY")));
         session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, new SecurityContextImpl(auth));
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/login/webauthn");
+        MockHttpServletRequest request = request(context, "POST", "/login/webauthn");
         request.setSession(session);
         request.setAttribute(AccessSession.SIGNED_IN_CREDENTIAL, credentialId); // as CredentialEvents does, during verification
         from(phone).postProcessRequest(request);

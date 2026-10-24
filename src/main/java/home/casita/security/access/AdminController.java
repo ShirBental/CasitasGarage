@@ -36,7 +36,8 @@ import home.casita.security.store.StoreUnavailableException;
 /**
  * Access administration, for the server only ({@link LocalAdmin}); the {@code casita-access} script calls it.
  * Every change is a conditional write in the security store, done before this answers; each takes effect on
- * the affected sessions' next request. Devices are addressed by their tailnet node id.
+ * the affected sessions' next request. Devices are addressed by their device id (a browser key, {@code b-...}; older
+ * records may hold a tailnet node id).
  */
 @RestController
 @RequestMapping("/admin")

@@ -30,11 +30,11 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
-import home.casita.security.access.TestTailnet;
+import home.casita.security.access.TestBrowsers;
 
 /** Sign-in through the real filter chain: public pages, passkey options, CSRF, CSP. Invites and devices: AccessFlowTest. */
 @SpringBootTest
-@Import(TestTailnet.Config.class)
+@Import(TestBrowsers.Config.class)
 @DirtiesContext
 class SignInTest {
 
@@ -74,8 +74,8 @@ class SignInTest {
     }
 
     @Test
-    void theRedirectToSignInIsRelativeSoItSurvivesTheTailscaleProxy() throws Exception {
-        // tailscale serve forwards to http://127.0.0.1:8080; an absolute redirect would send the phone there.
+    void theRedirectToSignInIsRelativeSoItSurvivesTheReverseProxy() throws Exception {
+        // The reverse proxy forwards to http://127.0.0.1:8080; an absolute redirect would send the phone there.
         mvc.perform(get("/").header("Host", "127.0.0.1:8080")).andExpect(status().isFound()).andExpect(redirectedUrl("/login"));
     }
 
@@ -126,7 +126,7 @@ class SignInTest {
     @Test
     void settingUpAPasskeyNeedsAnEnrollmentNotJustASignIn() throws Exception {
         mvc.perform(post("/webauthn/register/options").with(csrf())).andExpect(status().isForbidden());
-        mvc.perform(post("/webauthn/register/options").with(csrf()).with(user("shir").roles("FAMILY")).with(TestTailnet.from(TestTailnet.SHIR_PHONE)))
+        mvc.perform(post("/webauthn/register/options").with(csrf()).with(user("shir").roles("FAMILY")).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE)))
                 .andExpect(status().isForbidden());
         // The enrollment itself is covered in AccessFlowTest.
     }
@@ -135,7 +135,7 @@ class SignInTest {
 
     @Test
     void aWrongInviteTokenSignsNobodyIn() throws Exception {
-        mvc.perform(post("/login/ott").param("token", "not-a-token").with(csrf()).with(TestTailnet.from(TestTailnet.SHIR_PHONE)))
+        mvc.perform(post("/login/ott").param("token", "not-a-token").with(csrf()).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE)))
                 .andExpect(status().isFound()).andExpect(redirectedUrl("/login?invite-failed"));
         // From a device Casita can't identify, it isn't even tried.
         mvc.perform(post("/login/ott").param("token", "not-a-token").with(csrf()))

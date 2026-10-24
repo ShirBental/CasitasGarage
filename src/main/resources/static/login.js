@@ -9,7 +9,7 @@
         + "Ask for a new one, and don't sign in with Face ID on this phone until it's set up.";
   }
   if (query.has("device-unverified")) {
-    message.textContent = "I can't tell which device this is. Open Casita through Tailscale on this phone and try again; your invite still works.";
+    message.textContent = "I can't set up this browser. Open the invite link in Safari (https only, cookies on) and try again; your invite still works.";
   }
   if (query.has("device-already-set-up")) {
     message.textContent = "This device is already set up. Sign in with Face ID; your invite still works for another device.";

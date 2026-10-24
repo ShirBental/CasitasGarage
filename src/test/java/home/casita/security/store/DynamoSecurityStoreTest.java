@@ -15,7 +15,7 @@ import com.amazonaws.services.dynamodbv2.local.monitoring.Telemetry;
 import com.amazonaws.services.dynamodbv2.local.monitoring.TelemetryUtil;
 import com.amazonaws.services.dynamodbv2.local.shared.access.AmazonDynamoDBLocal;
 
-import home.casita.security.access.TestTailnet;
+import home.casita.security.access.TestBrowsers;
 import home.casita.security.store.SecurityStore.EnrollmentClaim;
 import home.casita.security.store.SecurityStore.Invitation;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -72,14 +72,14 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
         Invitation i = invite("shir");
         dynamo.loseResponse("updateItem", 1);
 
-        Optional<Invitation> consumed = store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1");
+        Optional<Invitation> consumed = store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1");
 
         assertThat(consumed).get().satisfies(c -> {
             assertThat(c.enrollmentId()).isEqualTo("eid-1");
             assertThat(c.expiresAt()).isEqualTo(i.expiresAt());
         });
         // And still single use for anyone else.
-        assertThat(store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-2", "eid-2")).isEmpty();
+        assertThat(store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid-2", "eid-2")).isEmpty();
     }
 
     @Test
@@ -87,7 +87,7 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
         Invitation i = invite("shir");
         dynamo.failBefore("updateItem", 2);
 
-        assertThatThrownBy(() -> store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid", "eid"))
+        assertThatThrownBy(() -> store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid", "eid"))
                 .isInstanceOf(StoreUnavailableException.class);
         assertThat(store.invitationById(i.inviteId())).get().extracting(Invitation::status).isEqualTo(SecurityStore.InvitationStatus.PENDING);
     }
@@ -96,7 +96,7 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void aLostTransactionResponseIsSettledByReadingWhatIsStored() {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         dynamo.loseResponse("transactWriteItems", 1);
 
         assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isTrue();
@@ -107,26 +107,26 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void aTransactionThatNeverRanIsAFailureWithNothingWritten() {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         dynamo.failBefore("transactWriteItems", 1);
 
         assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isFalse();
 
-        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).isEmpty();
         assertThat(store.passkey(Bytes.fromBase64("c2hpcnMta2V5"))).isEmpty();
         assertThat(store.invitationById(claim.inviteId())).get().satisfies(i -> assertThat(i.enrolledAt()).isNull());
     }
 
     @Test
     void ifTheRecoveryReadFailsTooItIsRefusedButStoredStateIsWhole() {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         dynamo.loseResponse("transactWriteItems", 1);
         dynamo.failBefore("transactGetItems", 1);
 
         assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isFalse(); // fail closed
 
         // It did happen, entirely: the next sign-in on that phone will find device and passkey both.
-        assertThat(store.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestTailnet.SHIR_PHONE.nodeId())).satisfies(v -> {
+        assertThat(store.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestBrowsers.SHIR_PHONE.nodeId())).satisfies(v -> {
             assertThat(v.device()).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
             assertThat(v.passkey()).get().satisfies(p -> assertThat(p.activeFor("shir")).isTrue());
         });
@@ -134,7 +134,7 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void aResendInsideTheIdempotencyWindowIsAcknowledgedWithoutRunningAgain() {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isTrue();
 
         assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isTrue(); // same token: DynamoDB answers success
@@ -150,7 +150,7 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
         // makes DynamoDB Local do the same now (its own window hasn't passed in real time).
         DynamoSecurityStore dynamoStore = (DynamoSecurityStore) store;
         Invitation invitation = invite("shir");
-        EnrollmentClaim claim = consume(invitation, TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invitation, TestBrowsers.SHIR_PHONE);
         var record = passkey("shir", "c2hpcnMta2V5");
         assertThat(dynamoStore.enroll(claim, record, null)).isTrue();
 
@@ -171,12 +171,12 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
     @Test
     void aResendAfterTheWindowForAnEnrollmentThatNeverHappenedStillCantSucceedLate() {
         DynamoSecurityStore dynamoStore = (DynamoSecurityStore) store;
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         var record = passkey("shir", "c2hpcnMta2V5");
         clock.advance(java.time.Duration.ofMinutes(11));
 
         assertThat(dynamoStore.enroll(claim, record, "c2hpcnMta2V5", "late-resend")).isFalse();
-        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).isEmpty();
         assertThat(store.passkey(record.getCredentialId())).isEmpty();
     }
 
@@ -225,12 +225,12 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
         assertThatThrownBy(() -> store.revokeInvitation(i.tokenHash(), i.inviteId())).isInstanceOf(StoreUnavailableException.class);
 
         assertThat(store.revokeInvitation(i.tokenHash(), i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.ALREADY_REVOKED);
-        assertThat(store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "r", "e")).isEmpty();
+        assertThat(store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "r", "e")).isEmpty();
     }
 
     @Test
     void theRefusedRevocationsReasonIsReadFromTheBaseTableEvenWhileIndexesLag() {
-        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
         Invitation used = store.invitationsOf("shir").getFirst();
         dynamo.indexesLag(true);
 
@@ -251,7 +251,7 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void theIdempotencyTokenIsPerEnrollmentAndPasskey() {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         assertThat(DynamoSecurityStore.requestToken(claim, "YQ")).hasSize(36).isNotEqualTo(DynamoSecurityStore.requestToken(claim, "Yg"));
     }
 
@@ -259,16 +259,16 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void duringAnOutageEveryReadAndWriteIsUnavailable() {
-        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
         Invitation i = invite("shir");
         dynamo.down(true);
 
         for (Runnable call : List.<Runnable>of(
-                () -> store.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestTailnet.SHIR_PHONE.nodeId()),
+                () -> store.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestBrowsers.SHIR_PHONE.nodeId()),
                 () -> store.enrollmentView(i.tokenHash(), "shir"),
                 () -> store.member("shir"),
-                () -> store.consume(i.tokenHash(), TestTailnet.SHIR_IPAD.nodeId(), "ipad", "r", "e"),
-                () -> store.revokeDevice(TestTailnet.SHIR_PHONE.nodeId()))) {
+                () -> store.consume(i.tokenHash(), TestBrowsers.SHIR_IPAD.nodeId(), "ipad", "r", "e"),
+                () -> store.revokeDevice(TestBrowsers.SHIR_PHONE.nodeId()))) {
             assertThatThrownBy(call::run).isInstanceOf(StoreUnavailableException.class);
         }
         dynamo.down(false);
@@ -278,7 +278,7 @@ class DynamoSecurityStoreTest extends SecurityStoreContract {
     void anIndexThatHasntCaughtUpCanOnlyHideThingsNeverAllowThem() {
         // Indexes only find keys; every answer is read again from the base table. A record the index still
         // lists but the base table has changed is judged by the base table.
-        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
         dynamo.real().updateItem(b -> b.tableName(tables.passkeys()).key(Map.of("credentialId", AttributeValue.fromS("c2hpcnMta2V5")))
                 .updateExpression("SET #st = :r").expressionAttributeNames(Map.of("#st", "status"))
                 .expressionAttributeValues(Map.of(":r", AttributeValue.fromS("REVOKED"))));

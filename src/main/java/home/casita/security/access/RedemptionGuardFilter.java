@@ -15,7 +15,8 @@ import jakarta.servlet.http.HttpServletResponse;
 /**
  * Before an invitation is redeemed (POST /login/ott), with consistent reads and without consuming anything:
  * <ul>
- *   <li>the device must be verifiable;</li>
+ *   <li>the device must be verifiable: a browser that has no browser key yet (or a broken one) is given a new one
+ *       here, over HTTPS only; one that can't hold one gets nothing;</li>
  *   <li>it must not be authorized already, and not tied to another member (revoked for them and not released);</li>
  *   <li>the invitation's member must not be revoked.</li>
  * </ul>
@@ -40,7 +41,7 @@ public class RedemptionGuardFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        Optional<DeviceIdentity> device = devices.resolve(request);
+        Optional<DeviceIdentity> device = devices.resolveOrIssue(request, response);
         if (device.isEmpty()) {
             response.sendRedirect("/login?device-unverified");
             return;

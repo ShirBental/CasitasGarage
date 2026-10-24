@@ -32,7 +32,7 @@ import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.resource.ResourceUrlProvider;
 
 import home.casita.security.access.Invitations;
-import home.casita.security.access.TestTailnet;
+import home.casita.security.access.TestBrowsers;
 
 /**
  * The passkey page links its files by content-hashed URLs (PagesConfig). A phone setting up its passkey has no
@@ -41,7 +41,7 @@ import home.casita.security.access.TestTailnet;
  * end to end, is in PR #9's PublicFilesTest, where the security store exists.)
  */
 @SpringBootTest(properties = "casita.security.family=shir,hubby")
-@Import(TestTailnet.Config.class)
+@Import(TestBrowsers.Config.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class EnrollmentPageFilesTest {
 
@@ -69,7 +69,7 @@ class EnrollmentPageFilesTest {
     @Autowired
     private ResourceUrlProvider urls;
     @Autowired
-    private TestTailnet.FakeWhois whois;
+    private TestBrowsers.Browsers browsers;
 
     private MockMvc mvc;
 
@@ -80,17 +80,17 @@ class EnrollmentPageFilesTest {
 
     @AfterEach
     void forget() {
-        whois.reset();
+        browsers.reset();
     }
 
     private MockHttpServletResponse fetch(String url, RequestPostProcessor who) throws Exception {
         return mvc.perform(get(url).with(who)).andReturn().getResponse();
     }
 
-    private static RequestPostProcessor in(MockHttpSession session, TestTailnet.Phone phone) {
+    private static RequestPostProcessor in(MockHttpSession session, TestBrowsers.Phone phone) {
         return request -> {
             request.setSession(session);
-            return TestTailnet.from(phone).postProcessRequest(request);
+            return TestBrowsers.from(phone).postProcessRequest(request);
         };
     }
 
@@ -118,10 +118,10 @@ class EnrollmentPageFilesTest {
     @Test
     void anEnrollingPhoneLoadsThePasskeyPagesFilesAndNothingElse() throws Exception {
         String token = invites.create("hubby", "Hubby's iPhone").token();
-        var redeemed = mvc.perform(post("/login/ott").param("token", token).with(csrf()).with(TestTailnet.from(TestTailnet.HUBBY_PHONE)))
+        var redeemed = mvc.perform(post("/login/ott").param("token", token).with(csrf()).with(TestBrowsers.from(TestBrowsers.HUBBY_PHONE)))
                 .andReturn();
         assertThat(redeemed.getResponse().getRedirectedUrl()).isEqualTo("/passkey");
-        RequestPostProcessor phone = in((MockHttpSession) redeemed.getRequest().getSession(), TestTailnet.HUBBY_PHONE);
+        RequestPostProcessor phone = in((MockHttpSession) redeemed.getRequest().getSession(), TestBrowsers.HUBBY_PHONE);
 
         List<String> links = links("/passkey", phone);
         assertThat(links).anyMatch(l -> l.matches("/passkey-[0-9a-f]{32}\\.js"));
