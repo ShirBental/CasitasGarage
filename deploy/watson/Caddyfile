@@ -1,5 +1,6 @@
 # Caddy on watson: public HTTPS for Casita (docs/PUBLIC_HTTPS.md). public-https.sh renders this to /etc/caddy/Caddyfile,
-# replacing {{HOST}} (the public name, e.g. watsonbental.duckdns.org) and {{UPSTREAM}} (127.0.0.1:<Casita's port>).
+# replacing {{HOST}} (the public name, e.g. watsonbental.duckdns.org), {{UPSTREAM}} (127.0.0.1:<Casita's port>) and
+# {{BIND}} (the VM's internal address and 127.0.0.1).
 #
 # - Caddy gets a publicly trusted certificate for {{HOST}} (Let's Encrypt, or ZeroSSL as fallback) and renews it by
 #   itself. Port 80 serves the ACME HTTP-01 challenge and redirects everything else to HTTPS.
@@ -8,6 +9,9 @@
 #   trusted_proxies), so the client address Casita sees is the real one.
 # - Administration is never reachable from here: /admin answers 404 at Caddy (and Casita refuses forwarded admin
 #   requests anyway). casita-access talks to 127.0.0.1 directly, through IAP SSH.
+# - Caddy listens on the VM's internal address (where Google forwards the external one) and on 127.0.0.1, never on
+#   every address: Tailscale Serve holds 443 on the tailnet address until remove-tailscale.sh, and Linux refuses a
+#   wildcard :443 next to it.
 {
 	servers {
 		timeouts {
@@ -16,6 +20,7 @@
 			idle 2m
 		}
 	}
+	default_bind {{BIND}}
 }
 
 {{HOST}} {

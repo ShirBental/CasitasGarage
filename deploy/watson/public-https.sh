@@ -31,9 +31,11 @@ done
 
 md() { curl -fsS --max-time 3 --noproxy '*' -H 'Metadata-Flavor: Google' "http://169.254.169.254/computeMetadata/v1/$1"; }
 ext_ip="$(md instance/network-interfaces/0/access-configs/0/external-ip || true)"
+int_ip="$(md instance/network-interfaces/0/ip || true)"
 [ -n "$ext_ip" ] || { echo "can't read this VM's external address from the metadata server: not on Compute Engine, or no external address" >&2; exit 1; }
 resolved="$({ getent ahostsv4 "$host" || true; } | awk '{print $1}' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-echo "This VM's external address: $ext_ip"
+[[ "$int_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "can't read this VM's internal address from the metadata server" >&2; exit 1; }
+echo "This VM's external address: $ext_ip (Caddy listens on $int_ip and 127.0.0.1)"
 echo "$host resolves to:       ${resolved:-nothing}"
 if [ "$resolved" != "$ext_ip" ]; then
   echo "REFUSED: $host must resolve to $ext_ip (and only to it) before Caddy asks for a certificate. Run duckdns-update.sh first." >&2
@@ -50,7 +52,7 @@ case "$listeners" in
 esac
 
 rendered="$(mktemp)"; trap 'rm -f "$rendered"' EXIT
-sed -e "s/{{HOST}}/$host/g" -e "s/{{UPSTREAM}}/$upstream/g" "$here/Caddyfile" > "$rendered"
+sed -e "s/{{HOST}}/$host/g" -e "s/{{UPSTREAM}}/$upstream/g" -e "s/{{BIND}}/$int_ip 127.0.0.1/g" "$here/Caddyfile" > "$rendered"
 if grep -q '{{' "$rendered"; then echo "the rendered Caddyfile still has a placeholder" >&2; exit 1; fi
 
 if [ "$apply" != yes ]; then
@@ -75,10 +77,12 @@ caddy version
 echo "== /etc/caddy/Caddyfile: $host -> $upstream"
 install -d -m 0755 /etc/caddy
 install -m 0644 "$rendered" /etc/caddy/Caddyfile.new
+# Caddy runs as caddy and must be able to open its access log; validating (as root) would otherwise create it root-owned.
+install -d -o caddy -g caddy -m 0750 /var/log/caddy
 caddy validate --config /etc/caddy/Caddyfile.new --adapter caddyfile >/dev/null
+chown -R caddy:caddy /var/log/caddy
 if [ -f /etc/caddy/Caddyfile ]; then cp -p /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak-$(date -u +%Y%m%dT%H%M%SZ)"; fi
 mv -f /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile
-install -d -o caddy -g caddy -m 0750 /var/log/caddy
 systemctl enable caddy >/dev/null
 if systemctl is-active --quiet caddy; then systemctl reload caddy; else systemctl restart caddy; fi
 

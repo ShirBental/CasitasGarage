@@ -32,7 +32,7 @@ http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 PY
 python3 -I "$work/upstream.py" "$U" "$work/seen" & pids+=($!)
 
-sed -e 's/{{HOST}}/localhost/g' -e "s/{{UPSTREAM}}/127.0.0.1:$U/g" -e "s#/var/log/caddy/casita-access.log#$work/access.log#" \
+sed -e 's/{{HOST}}/localhost/g' -e "s/{{UPSTREAM}}/127.0.0.1:$U/g" -e 's/{{BIND}}/127.0.0.1/g' -e "s#/var/log/caddy/casita-access.log#$work/access.log#" \
   "$here/../Caddyfile" > "$work/Caddyfile"
 # Unprivileged ports, a private storage dir, no admin endpoint clash: global options added to the first block.
 python3 -I - "$work/Caddyfile" "$P" "$H" <<'PY'

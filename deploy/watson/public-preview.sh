@@ -65,7 +65,14 @@ JAVA_OPTS=${java_opts:--Xmx128m -XX:+UseSerialGC}"
 echo "Release $id ($(cut -d' ' -f2- < "$src/RELEASE"))"
 echo "Would write /etc/casita-public/casita.env:"; sed 's/^/    /' <<<"$env_text"
 avail="$(free -m | awk 'NR==2 {print $7}')"
-echo "Memory available now: ${avail} MiB (the preview needs about 200 MiB while it runs next to casita.service)"
+# A preview already running is replaced, not joined: what it uses now comes back when it stops.
+running=0
+if systemctl is-active --quiet "$unit"; then
+  cur="$(systemctl show -p MemoryCurrent --value "$unit" 2>/dev/null || true)"
+  [[ "$cur" =~ ^[0-9]+$ ]] && running=$(( cur / 1024 / 1024 ))
+  avail=$(( ${avail:-0} + running ))
+fi
+echo "Memory available now: ${avail} MiB$([ "$running" -gt 0 ] && echo ", counting the ${running} MiB the running preview frees") (the preview needs about 200 MiB while it runs next to casita.service)"
 if [ "$apply" != yes ]; then echo "DRY RUN: nothing changed. Add --apply."; exit 0; fi
 [ "${avail:-0}" -ge 220 ] || { echo "less than 220 MiB available: not starting a second Casita" >&2; exit 1; }
 
