@@ -33,7 +33,9 @@ expect_refused() {
 
 expect_refused "deployment unset (this is a Compute Engine VM)" CASITA_DEPLOYMENT=
 expect_refused "deployment local" CASITA_DEPLOYMENT=local
-expect_refused "the placeholder tailnet" "CASITA_SECURITY_RPID=watson.<TAILNET>.ts.net" "CASITA_SECURITY_ALLOWEDORIGINS=https://watson.<TAILNET>.ts.net"
+expect_refused "the placeholder host" "CASITA_SECURITY_RPID=<PUBLIC_HOST>" "CASITA_SECURITY_ALLOWEDORIGINS=https://<PUBLIC_HOST>"
+expect_refused "Tailscale device identity" CASITA_SECURITY_DEVICEIDENTITY=tailscale
+expect_refused "listening on every interface" SERVER_ADDRESS=0.0.0.0
 expect_refused "a file store" CASITA_STORAGE_TYPE=file
 expect_refused "a Firestore emulator" FIRESTORE_EMULATOR_HOST=127.0.0.1:18085
 expect_refused "the dev profile" SPRING_PROFILES_ACTIVE=dev

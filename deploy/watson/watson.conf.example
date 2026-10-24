@@ -12,8 +12,14 @@ ZONE=us-east1-b
 # Firestore's (default) database, in the same region as the VM. Its location can't be changed later.
 FIRESTORE_LOCATION=us-east1
 
-# The VM and its tailnet name. Permanent: passkeys are bound to watson.<tailnet>.ts.net.
+# The VM. Passkeys are bound to PUBLIC_HOST (below), not to the VM's name.
 VM_NAME=watson
+
+# Public HTTPS (docs/PUBLIC_HTTPS.md): the DuckDNS name Caddy serves, the reserved name for the VM's external
+# address, and the network tag the HTTPS firewall rule applies to.
+PUBLIC_HOST=watsonbental.duckdns.org
+STATIC_IP_NAME=watson-ip
+HTTPS_TAG=casita-https
 
 # A network of its own: no inbound traffic except SSH through Identity-Aware Proxy (for setup and recovery).
 NETWORK=watson-net
