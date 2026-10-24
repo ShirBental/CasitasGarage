@@ -176,7 +176,7 @@ that cuts off every kind of credential:
    "close" only when it reports not closed. Never send a command toward the state the
    sensor already reports.
 3. **One movement at a time, until checked.** After a command, nothing else is sent until
-   Casita has checked the sensor, at travel time + grace (10 s + 2 s; a close finishes early
+   Casita has checked the sensor, at travel time + grace (10 s + 0 s; a close finishes early
    once the sensor reports closed). If that check is overdue when a new request arrives, it
    runs first, so a failure is never skipped or blamed on a newer movement.
 4. **Unknown outcomes aren't failures.** If a command fails without a guarantee that
