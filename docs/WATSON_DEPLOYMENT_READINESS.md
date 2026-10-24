@@ -1,5 +1,9 @@
 # Watson deployment readiness (GCP staging, simulation only)
 
+> **Superseded for access:** this was written for the Tailscale setup. watson is now reached over public HTTPS
+> (Caddy, `watsonbental.duckdns.org`) with passkeys and per-browser invites: see `docs/PUBLIC_HTTPS.md` and
+> `docs/ACCESS.md`. The rest (costs, Firestore gates, release process) still applies.
+
 Prepared 2026-10-21. Nothing here was run against GCP, Tailscale or Meross. Every result below comes from
 this environment: local builds, the pinned Firestore emulator, and child-process startups. Items that can
 only be proven on the VM are marked **on the VM**.

@@ -124,7 +124,7 @@ print(b[0]["source"].rstrip("/").split("/")[-1]+" "+v[0]["zone"].rstrip("/").spl
 check() {
   WATSON_PROJECT_ID="$PROJECT_ID" WATSON_REGION="$REGION" WATSON_ZONE="$ZONE" WATSON_FIRESTORE_LOCATION="$FIRESTORE_LOCATION" \
   WATSON_VM_NAME="$VM_NAME" WATSON_NETWORK="$NETWORK" WATSON_SUBNET="$SUBNET" WATSON_SUBNET_RANGE="$SUBNET_RANGE" \
-  WATSON_SA_EMAIL="$SA_EMAIL" WATSON_ROLE_ID="$ROLE_ID" WATSON_PERMS="$PERMS" WATSON_APIS="$APIS" \
+  WATSON_SA_EMAIL="$SA_EMAIL" WATSON_ROLE_ID="$ROLE_ID" WATSON_PERMS="$PERMS" WATSON_APIS="$APIS" WATSON_HTTPS_TAG="${HTTPS_TAG:-casita-https}" \
     python3 -I "$here/provision_check.py" "$inv"
 }
 
@@ -212,8 +212,9 @@ if is firewall absent; then any=yes
     --action=allow --rules=tcp:22 --source-ranges="$IAP_RANGE" --description="SSH only through Identity-Aware Proxy"
 fi
 if is vm absent; then any=yes
-  # Only on watson-net. The ephemeral external IPv4 address is for outbound traffic (Tailscale, packages,
-  # Firestore); no firewall rule admits inbound traffic to it except IAP's SSH range.
+  # Only on watson-net. The external IPv4 address is for outbound traffic (packages, Firestore) and, once
+  # provision-public.sh has reserved it and opened tcp:80,443 to the HTTPS tag, for public HTTPS through Caddy
+  # (docs/PUBLIC_HTTPS.md). Nothing else is admitted except IAP's SSH range.
   run "${G[@]}" compute instances create "$VM_NAME" --zone="$ZONE" --machine-type=e2-micro \
     --image-family=debian-12 --image-project=debian-cloud --boot-disk-size=30GB --boot-disk-type=pd-standard \
     --network="$NETWORK" --subnet="$SUBNET" \

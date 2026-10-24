@@ -1,5 +1,8 @@
 # Ford and Toyota for real: watson in production
 
+> **Update:** sign-in is now on `watsonbental.duckdns.org` with browser keys (`docs/PUBLIC_HTTPS.md`). The
+> `local` transport below needs the tailnet's subnet route; after `remove-tailscale.sh`, use `cloud`.
+
 Production is watson running `casita.deployment=production`: Ford on channel 1 and Toyota on channel 2 of the
 MSG200 (channel 3 is permanently disabled). Each door has its own GarageService: its own reading, movement, timer,
 hold and activity. The rules that keep a door safe are the same for both:

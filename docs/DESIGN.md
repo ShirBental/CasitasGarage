@@ -1,5 +1,8 @@
 # Casita's Garage: Design
 
+> **Update:** the Tailscale parts of this design were replaced by public HTTPS behind Caddy with passkeys and
+> per-browser invites (`docs/PUBLIC_HTTPS.md`, `docs/ACCESS.md`).
+
 Casita is our home's helper. This first piece lets the family see and move the garage door
 from their iPhones, safely, from anywhere.
 

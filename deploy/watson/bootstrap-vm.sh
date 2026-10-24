@@ -3,10 +3,11 @@
 #
 #   sudo bash bootstrap-vm.sh
 #
-# Installs Java 21 (Eclipse Temurin JRE) and Tailscale from their signed apt repositories; creates the casita
-# user, /opt/casita (releases), /var/lib/casita (data) and /etc/casita (settings); adds a 1 GiB swap file and
-# journald limits; installs casita.service (not started) and the casita-access helper.
-# It does NOT join the tailnet, start Tailscale Serve or start Casita: those are separate, deliberate steps.
+# Installs Java 21 (Eclipse Temurin JRE) from its signed apt repository; creates the casita user, /opt/casita
+# (releases), /var/lib/casita (data) and /etc/casita (settings); adds a 1 GiB swap file and journald limits; installs
+# casita.service (not started) and the casita-access helper.
+# It does NOT open the firewall, point DNS, set up Caddy or start Casita: those are separate, deliberate steps
+# (docs/PUBLIC_HTTPS.md).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
@@ -24,14 +25,9 @@ curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --
 echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb bookworm main" \
   > /etc/apt/sources.list.d/adoptium.list
 
-echo "== Tailscale from its apt repository"
-curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg
-curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list
-
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get -y install temurin-21-jre tailscale
+DEBIAN_FRONTEND=noninteractive apt-get -y install temurin-21-jre
 java -version 2>&1 | head -1
-tailscale version | head -1
 
 echo "== the casita user and its directories"
 id casita >/dev/null 2>&1 || useradd --system --home-dir /var/lib/casita --shell /usr/sbin/nologin casita
@@ -68,7 +64,8 @@ systemctl enable casita.service
 
 echo
 echo "Bootstrap done. Next, deliberately:"
-echo "  1. sudo tailscale up --hostname=$(hostname -s)    # sign in; then in the admin console disable key expiry for this node"
-echo "  2. fill in /etc/casita/casita.env (tailnet name, family, project id)"
-echo "  3. install a release: from the Mac, deploy-release.sh (it runs casita-install-release <release dir> <sha256> here)"
-echo "  4. bash tailscale-serve.sh --apply"
+echo "  1. from Cloud Shell or the Mac: provision-public.sh watson.conf --apply   # static address, tcp:80,443, the HTTPS tag"
+echo "  2. sudo bash duckdns-update.sh --set-token, then --host <name>.duckdns.org --apply --install-timer"
+echo "  3. fill in /etc/casita/casita.env (public host, family, project id)"
+echo "  4. install a release: deploy-release.sh (it runs casita-install-release <release dir> <sha256> here)"
+echo "  5. sudo bash public-https.sh --host <name>.duckdns.org --apply   # Caddy, certificate, https://<name>/healthz"

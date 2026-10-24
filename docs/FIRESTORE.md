@@ -43,7 +43,7 @@ another collection's document.
 | `members/m_{memberId}` | `memberId`, `status`, `userHandle`, `createdAt`, `updatedAt`, `revokedAt`, `changeEventId` |
 | `userHandles/u_{b64url(handle)}` | `memberId`, `createdAt`. Created in the same batch that gives the member the handle, so a handle has one owner |
 | `passkeys/c_{credentialId}` | `memberId`, `userHandle`, `publicKeyCose` (bytes), `signatureCount`, `uvInitialized`, `backupEligible`, `backupState`, `transports`, `attestationObject`, `attestationClientDataJson`, `label`, `createdAt`, `lastUsedAt`, `status`, `revokedAt`, `enrolledNodeId`, `inviteId`, `changeEventId` |
-| `devices/n_{tailscaleStableId}` | `nodeId`, `memberId`, `label`, `nodeName`, `credentialId`, `inviteId`, `status`, `authorizedAt`, `revokedAt`, `releasedAt`, `changeEventId` |
+| `devices/n_{deviceId}` (a browser key `b-…`; older documents: a Tailscale StableID) | `nodeId`, `memberId`, `label`, `nodeName`, `credentialId`, `inviteId`, `status`, `authorizedAt`, `revokedAt`, `releasedAt`, `changeEventId` |
 | `invitations/h_{sha256hex(token)}` | `tokenHash`, `inviteId`, `memberId`, `label`, `status`, `createdAt`, `expiresAt`, `consumedAt`, `consumeRequestId`, `enrollmentId`, `nodeId`, `nodeName`, `enrolledAt`, `enrolledCredentialId`, `revokedAt`, `ttl`, `changeEventId` |
 | `securityEvents/e_{random 128 bits}` | `type`, `at`, `outcome`, `reason`, `memberId`, `nodeId`, `inviteId`, `credentialId`, `expiresAt` |
 | `meta/schema` | `schemaVersion`. Written by provisioning only |

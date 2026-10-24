@@ -23,6 +23,10 @@ C = {k[len("WATSON_"):].lower(): v for k, v in os.environ.items() if k.startswit
 PERMS = sorted(C["perms"].split(","))
 IAP_RANGE = "35.235.240.0/20"
 FW_RULE = C["network"] + "-allow-iap-ssh"
+# Public HTTPS (docs/PUBLIC_HTTPS.md, created by provision-public.sh, not here): tcp:80 and tcp:443 from anywhere, only
+# to instances with the HTTPS tag. Port 80 is for certificate validation and the redirect to HTTPS; nothing else is open.
+HTTPS_FW_RULE = C["network"] + "-allow-https"
+HTTPS_TAG = C.get("https_tag") or "casita-https"
 ROLE_NAME = "projects/%s/roles/%s" % (C["project_id"], C["role_id"])
 SA_MEMBER = "serviceAccount:" + C["sa_email"]
 
@@ -278,7 +282,17 @@ if api("compute.googleapis.com"):
                 out("NOTE", "Firewall rule %s on %s is disabled." % (r.get("name"), C["network"]))
                 continue
             allowed = sorted("%s:%s" % (a.get("IPProtocol"), ",".join(a.get("ports", ["all"]))) for a in r["allowed"])
-            if r.get("name") == FW_RULE:
+            if r.get("name") == HTTPS_FW_RULE:
+                exact = (r.get("sourceRanges") == ["0.0.0.0/0"] and allowed == ["tcp:443", "tcp:80"] and not r.get("sourceTags")
+                         and not r.get("sourceServiceAccounts") and r.get("targetTags") == [HTTPS_TAG]
+                         and not r.get("targetServiceAccounts"))
+                if exact:
+                    out("OK", "Firewall %s: tcp:80,443 from anywhere, to tag %s only (public HTTPS)" % (HTTPS_FW_RULE, HTTPS_TAG))
+                else:
+                    out("PROBLEM", "Firewall %s isn't tcp:80,443 to tag %s only (sources %s, allows %s, targets %s). Fix it deliberately."
+                        % (HTTPS_FW_RULE, HTTPS_TAG, ",".join(r.get("sourceRanges", [])) or "-", " ".join(allowed),
+                           ",".join(r.get("targetTags", [])) or "every instance"))
+            elif r.get("name") == FW_RULE:
                 exact = (r.get("sourceRanges") == [IAP_RANGE] and allowed == ["tcp:22"] and not r.get("sourceTags")
                          and not r.get("sourceServiceAccounts"))
                 if exact:
@@ -289,8 +303,8 @@ if api("compute.googleapis.com"):
                         % (FW_RULE, IAP_RANGE, ",".join(r.get("sourceRanges", [])) or "-", " ".join(allowed)))
                     state["firewall"] = "unknown"
             else:
-                out("PROBLEM", "Unexpected inbound rule %s on %s (sources %s, allows %s): only %s may admit traffic."
-                    % (r.get("name"), C["network"], ",".join(r.get("sourceRanges", [])) or "-", " ".join(allowed), FW_RULE))
+                out("PROBLEM", "Unexpected inbound rule %s on %s (sources %s, allows %s): only %s and %s may admit traffic."
+                    % (r.get("name"), C["network"], ",".join(r.get("sourceRanges", [])) or "-", " ".join(allowed), FW_RULE, HTTPS_FW_RULE))
         if state["firewall"] == "absent":
             out("CREATE", "Firewall %s on %s: tcp:22 from %s (IAP) only" % (FW_RULE, C["network"], IAP_RANGE))
 

@@ -1,0 +1,60 @@
+# Caddy on watson: public HTTPS for Casita (docs/PUBLIC_HTTPS.md). public-https.sh renders this to /etc/caddy/Caddyfile,
+# replacing {{HOST}} (the public name, e.g. watsonbental.duckdns.org) and {{UPSTREAM}} (127.0.0.1:<Casita's port>).
+#
+# - Caddy gets a publicly trusted certificate for {{HOST}} (Let's Encrypt, or ZeroSSL as fallback) and renews it by
+#   itself. Port 80 serves the ACME HTTP-01 challenge and redirects everything else to HTTPS.
+# - Casita listens on 127.0.0.1 only; this is the only way in from outside. Tomcat trusts X-Forwarded-* from
+#   127.0.0.1 only, and Caddy never passes a client's own X-Forwarded-* on: it sets them from the connection (no
+#   trusted_proxies), so the client address Casita sees is the real one.
+# - Administration is never reachable from here: /admin answers 404 at Caddy (and Casita refuses forwarded admin
+#   requests anyway). casita-access talks to 127.0.0.1 directly, through IAP SSH.
+{
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 10s
+			idle 2m
+		}
+	}
+}
+
+{{HOST}} {
+	encode zstd gzip
+
+	# Casita's requests are small (sign-in, passkey setup, door commands).
+	request_body {
+		max_size 256KB
+	}
+
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	header -Server
+
+	reverse_proxy {{UPSTREAM}} {
+		# Claims a client might send that mean something to nobody here; dropped so they can't confuse anything.
+		header_up -X-Casita-Admin
+		header_up -Forwarded
+		header_up -X-Real-IP
+		header_up -Tailscale-User-Login
+		header_up -Tailscale-User-Name
+		header_up -Tailscale-User-Profile-Pic
+		header_up -Tailscale-Funnel-Request
+	}
+
+	# Access log without secrets: invite tokens (in /login/ott?token=...), cookies and CSRF tokens are redacted.
+	log {
+		output file /var/log/caddy/casita-access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		format filter {
+			request>uri query {
+				replace token REDACTED
+			}
+			request>headers>Cookie delete
+			request>headers>X-Xsrf-Token delete
+			resp_headers>Set-Cookie delete
+		}
+	}
+}

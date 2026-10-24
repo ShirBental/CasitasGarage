@@ -264,6 +264,11 @@ drift "IAP rule widened to more ports" "isn't tcp:22 from 35.235.240.0/20 only" 
   edit compute_firewall-rules_list.json "[r.update(allowed=[{'IPProtocol':'tcp','ports':['22','8080']}]) for r in d if r['name']=='watson-net-allow-iap-ssh']"
 drift "extra inbound rule on watson-net" "Unexpected inbound rule watson-net-allow-app" \
   edit compute_firewall-rules_list.json "d.append({'name':'watson-net-allow-app','network':'$C/global/networks/watson-net','direction':'INGRESS','sourceRanges':['0.0.0.0/0'],'allowed':[{'IPProtocol':'tcp','ports':['8080']}]})"
+HTTPS_RULE="{'name':'watson-net-allow-https','network':'$C/global/networks/watson-net','direction':'INGRESS','sourceRanges':['0.0.0.0/0'],'allowed':[{'IPProtocol':'tcp','ports':['80']},{'IPProtocol':'tcp','ports':['443']}],'targetTags':['casita-https']}"
+drift "public HTTPS rule widened to 8080" "isn't tcp:80,443 to tag casita-https only" \
+  edit compute_firewall-rules_list.json "d.append($HTTPS_RULE); d[-1]['allowed'].append({'IPProtocol':'tcp','ports':['8080']})"
+drift "public HTTPS rule for every instance" "isn't tcp:80,443 to tag casita-https only" \
+  edit compute_firewall-rules_list.json "d.append($HTTPS_RULE); d[-1].pop('targetTags')"
 drift "IAP rule name on another network" "exists on network default" \
   edit compute_firewall-rules_list.json "[r.update(network='$C/global/networks/default') for r in d if r['name']=='watson-net-allow-iap-ssh']"
 drift "network in auto mode" "isn't a custom-mode VPC" edit compute_networks_describe_watson-net.json "d['autoCreateSubnetworks']=True"
@@ -286,6 +291,14 @@ schema2() { echo '{"fields":{"schemaVersion":{"integerValue":"2"}}}' > "$st/sche
 drift "schema marker another version" "schemaVersion 2, expected 1" schema2
 denied() { rm "$st/compute_instances_list.json"; echo "ERROR: (gcloud.compute.instances.list) PERMISSION_DENIED: Required 'compute.instances.list'" > "$st/compute_instances_list.fail"; }
 drift "a read refused (permission)" "Couldn't read VM instances: ERROR: (gcloud.compute.instances.list) PERMISSION_DENIED" denied
+
+scenario "public HTTPS rule exactly as provision-public.sh makes it: accepted"
+compliant
+edit compute_firewall-rules_list.json "d.append($HTTPS_RULE)"
+run_script "$work/watson.conf" --apply
+expect_code 0; expect_no_mutation; expect_no_out "PROBLEM"
+expect_out "OK       Firewall watson-net-allow-https: tcp:80,443 from anywhere, to tag casita-https only (public HTTPS)"
+done_scenario
 
 scenario "bad usage and settings: refused before any read"
 fresh; run_script "$work/watson.conf" --aply

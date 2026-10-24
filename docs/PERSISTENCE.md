@@ -1,5 +1,8 @@
 # Casita on AWS: persistence
 
+> **Update:** device authorizations are now keyed by browser keys (`b-…`) rather than Tailscale StableIDs, and the
+> network is public HTTPS behind Caddy (`docs/ACCESS.md`, `docs/PUBLIC_HTTPS.md`). The store's shape is unchanged.
+
 What exists and what doesn't:
 
 - **Built** (`casita.storage.type: dynamodb`, tested against DynamoDB Local):
