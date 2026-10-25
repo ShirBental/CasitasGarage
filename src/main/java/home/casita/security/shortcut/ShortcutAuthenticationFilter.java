@@ -15,6 +15,8 @@ import org.springframework.security.web.authentication.preauth.PreAuthenticatedA
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import home.casita.security.store.SecurityStore;
+import home.casita.security.store.SecurityStore.ShortcutToken;
+import home.casita.security.store.SecurityStore.ShortcutView;
 import home.casita.security.store.StoreUnavailableException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -26,9 +28,10 @@ import jakarta.servlet.http.HttpServletResponse;
  * <ol>
  *   <li>HTTPS only (behind Caddy, Tomcat knows from X-Forwarded-Proto, trusted from 127.0.0.1 only): otherwise 403.</li>
  *   <li>The client's request count ({@link ShortcutRateLimiter}): otherwise 429.</li>
- *   <li>{@code Authorization: Bearer <token>}: a token Casita created, not revoked, not expired, whose member is still in
- *       the family and active in the security store (read on every request; an unreachable store refuses, 503).
- *       Otherwise 401, the same answer whatever the reason; the reason is logged with the token's id, never the token.</li>
+ *   <li>{@code Authorization: Bearer <token>}: read from the security store on every request (no cache, so a revocation
+ *       counts from the next request): a token Casita created, not revoked, not expired, whose member is still in the
+ *       family and active. An unreachable store refuses (503). Otherwise 401, the same answer whatever the reason; the
+ *       reason is logged with the token's id, never the token.</li>
  *   <li>For a command, the token's command count: otherwise 429.</li>
  * </ol>
  * Which door and action the token allows is checked by the endpoint, against the request's path.
@@ -40,16 +43,13 @@ public class ShortcutAuthenticationFilter extends OncePerRequestFilter {
     private static final String BEARER = "Bearer ";
 
     private final ShortcutTokens tokens;
-    private final SecurityStore store;
     private final List<String> family;
     private final ShortcutRateLimiter limits;
     private final Clock clock;
     private final SecurityContextHolderStrategy contexts = SecurityContextHolder.getContextHolderStrategy();
 
-    public ShortcutAuthenticationFilter(ShortcutTokens tokens, SecurityStore store, List<String> family, ShortcutRateLimiter limits,
-                                        Clock clock) {
+    public ShortcutAuthenticationFilter(ShortcutTokens tokens, List<String> family, ShortcutRateLimiter limits, Clock clock) {
         this.tokens = tokens;
-        this.store = store;
         this.family = List.copyOf(family);
         this.limits = limits;
         this.clock = clock;
@@ -77,31 +77,31 @@ public class ShortcutAuthenticationFilter extends OncePerRequestFilter {
             unauthorized(response);
             return;
         }
-        Optional<ShortcutTokens.Token> found = tokens.lookUp(header.substring(BEARER.length()).trim());
-        if (found.isEmpty()) {
+        Optional<ShortcutView> found;
+        try {
+            found = tokens.lookUp(header.substring(BEARER.length()).trim());
+        } catch (StoreUnavailableException e) {
+            // The store is the only authority on tokens: without it, nothing is allowed.
+            log.warn("Shortcut request refused: security store unavailable (client {})", client);
+            refuse(response, 503, "unavailable", "Casita can't check this Shortcut right now. Use the app.");
+            return;
+        }
+        if (found.isEmpty() || found.get().token().isEmpty()) {
             log.warn("Shortcut request refused: unknown or malformed token (client {})", client);
             unauthorized(response);
             return;
         }
-        ShortcutTokens.Token token = found.get();
+        ShortcutToken token = found.get().token().get();
         String reason = token.revoked() ? "revoked" : token.expired(clock.instant()) ? "expired"
-                : !family.contains(token.member()) ? "member not in casita.security.family" : null;
-        if (reason == null) {
-            try {
-                if (store.member(token.member()).filter(SecurityStore.Member::active).isEmpty()) reason = "member revoked";
-            } catch (StoreUnavailableException e) {
-                log.warn("Shortcut request refused: security store unavailable, token {} (client {})", token.id(), client);
-                refuse(response, 503, "unavailable", "Casita can't check this Shortcut right now. Use the app.");
-                return;
-            }
-        }
+                : !family.contains(token.memberId()) ? "member not in casita.security.family"
+                : found.get().member().filter(SecurityStore.Member::active).isEmpty() ? "member revoked" : null;
         if (reason != null) {
-            log.warn("Shortcut request refused: token {} {} (client {})", token.id(), reason, client);
+            log.warn("Shortcut request refused: token {} {} (client {})", token.tokenId(), reason, client);
             unauthorized(response);
             return;
         }
-        if ("POST".equals(request.getMethod()) && !limits.allowCommand(token.id())) {
-            log.warn("Shortcut command refused: rate limit for token {} ({}, client {})", token.id(), token.member(), client);
+        if ("POST".equals(request.getMethod()) && !limits.allowCommand(token.tokenId())) {
+            log.warn("Shortcut command refused: rate limit for token {} ({}, client {})", token.tokenId(), token.memberId(), client);
             response.setHeader("Retry-After", Long.toString(ShortcutRateLimiter.WINDOW.toSeconds()));
             refuse(response, 429, "rate-limited", "That Shortcut has been used a lot just now. Wait a few minutes, or use the app.");
             return;

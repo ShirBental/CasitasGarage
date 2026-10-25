@@ -81,7 +81,6 @@ class ShortcutApiTest {
     @AfterEach
     void forget() throws java.io.IOException {
         Files.deleteIfExists(DATA.resolve("security.json"));
-        Files.deleteIfExists(DATA.resolve("shortcut-tokens.json"));
         browsers.reset();
     }
 
@@ -268,7 +267,8 @@ class ShortcutApiTest {
                 .andExpect(jsonPath("$[0].id").value(idOf(created))).andExpect(jsonPath("$[0].state").value("active"))
                 .andReturn().getResponse().getContentAsString();
         assertThat(listed).doesNotContain(token).doesNotContain("hash");
-        assertThat(Files.readString(DATA.resolve("shortcut-tokens.json"))).doesNotContain(token);
+        assertThat(Files.readString(DATA.resolve("security.json"))).doesNotContain(token);
+        assertThat(DATA.resolve("shortcut-tokens.json")).doesNotExist(); // tokens live in the security store, nowhere else
     }
 
     @Test

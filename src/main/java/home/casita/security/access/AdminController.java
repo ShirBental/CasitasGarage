@@ -61,7 +61,7 @@ class AdminController {
     record Overview(List<MemberView> members, List<InviteView> invites) {}
 
     /** A Shortcut token as listed: never its secret or its hash. */
-    record ShortcutTokenView(String id, String member, String label, String door, Action action, Instant createdAt,
+    record ShortcutTokenView(String id, String member, String label, String door, String action, Instant createdAt,
                              Instant expiresAt, Instant revokedAt, String state) {}
 
     private final CasitaSecurityProperties properties;
@@ -160,11 +160,16 @@ class AdminController {
         if (days < 1 || days > ShortcutTokens.MAX_LIFETIME.toDays()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "days: 1 to " + ShortcutTokens.MAX_LIFETIME.toDays());
         }
-        ShortcutTokens.Created created = shortcutTokens.create(member, clean, key, Action.OPEN, Duration.ofDays(days));
-        ShortcutTokens.Token t = created.token();
-        log.info("Shortcut token {} for {} ({}) created: {} {}, expires {}", t.id(), member, clean, t.action(), t.door(), t.expiresAt());
+        ShortcutTokens.Created created;
+        try {
+            created = shortcutTokens.create(member, clean, key, Action.OPEN, Duration.ofDays(days));
+        } catch (IllegalStateException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage() + ": nothing was created");
+        }
+        SecurityStore.ShortcutToken t = created.token();
+        log.info("Shortcut token {} for {} ({}) created: {} {}, expires {}", t.tokenId(), member, clean, t.action(), t.door(), t.expiresAt());
         Map<String, Object> answer = new LinkedHashMap<>();
-        answer.put("id", t.id());
+        answer.put("id", t.tokenId());
         answer.put("member", member);
         answer.put("label", clean);
         answer.put("door", t.door());
@@ -178,7 +183,7 @@ class AdminController {
     @GetMapping("/shortcut-tokens")
     List<ShortcutTokenView> shortcutTokens() {
         Instant now = clock.instant();
-        return shortcutTokens.list().stream().map(t -> new ShortcutTokenView(t.id(), t.member(), t.label(), t.door(), t.action(),
+        return shortcutTokens.list(properties.family()).stream().map(t -> new ShortcutTokenView(t.tokenId(), t.memberId(), t.label(), t.door(), t.action(),
                 t.createdAt(), t.expiresAt(), t.revokedAt(), t.revoked() ? "revoked" : t.expired(now) ? "expired" : "active")).toList();
     }
 
@@ -186,7 +191,9 @@ class AdminController {
     @DeleteMapping("/shortcut-tokens/{id}")
     Map<String, Object> revokeShortcutToken(@PathVariable String id) {
         if (!ShortcutTokens.ID.matcher(id).matches()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "not a Shortcut token id");
-        if (!shortcutTokens.revoke(id)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such Shortcut token");
+        if (!shortcutTokens.revoke(id)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such Shortcut token (one created seconds ago may not be listed yet: run it again)");
+        }
         log.info("Shortcut token {} revoked", id);
         return Map.of("revoked", true);
     }
@@ -262,16 +269,15 @@ class AdminController {
     Map<String, Object> revokeMember(@PathVariable String member) {
         if (!store.revokeMember(member)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such member");
         log.info("Member {} revoked", member);
-        int tokens = shortcutTokens.revokeAllOf(member); // refused already (the member isn't active); this makes it permanent
-        log.info("Shortcut tokens of {} revoked: {}", member, tokens);
         try {
             SecurityStore.Cleanup c = store.cleanUpMember(member);
-            log.info("Cleanup for {}: {} devices, {} passkeys, {} invites", member, c.devices(), c.passkeys(), c.invitations());
+            log.info("Cleanup for {}: {} devices, {} passkeys, {} invites, {} Shortcut tokens", member, c.devices(), c.passkeys(),
+                    c.invitations(), c.shortcutTokens());
             return Map.of("revoked", true, "devices", c.devices(), "credentials", c.passkeys(), "invites", c.invitations(),
-                    "shortcutTokens", tokens);
+                    "shortcutTokens", c.shortcutTokens());
         } catch (StoreUnavailableException e) {
             log.warn("Member {} revoked; cleanup incomplete, run it again", member);
-            return Map.of("revoked", true, "cleanup", "incomplete: run revoke-member again", "shortcutTokens", tokens);
+            return Map.of("revoked", true, "cleanup", "incomplete: run revoke-member again");
         }
     }
 }

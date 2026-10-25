@@ -132,7 +132,7 @@ public class DynamoSecurityStore implements SecurityStore {
 
     @Override
     public Cleanup cleanUpMember(String memberId) {
-        int devices = 0, passkeys = 0, invitations = 0;
+        int devices = 0, passkeys = 0, invitations = 0, tokens = 0;
         for (String nodeId : indexKeys(tables.devices(), "nodeId", memberId)) if (revokeDevice(nodeId)) devices++;
         for (String credentialId : indexKeys(tables.passkeys(), "credentialId", memberId)) {
             if (revokePasskey(Bytes.fromBase64(credentialId))) passkeys++;
@@ -140,7 +140,10 @@ public class DynamoSecurityStore implements SecurityStore {
         for (Invitation invitation : invitationsOf(memberId)) {
             if (revokeInvitation(invitation.tokenHash(), invitation.inviteId()) == RevokeOutcome.REVOKED) invitations++;
         }
-        return new Cleanup(devices, passkeys, invitations);
+        for (ShortcutToken token : shortcutTokensOf(memberId)) {
+            if (!token.revoked() && revokeShortcutToken(token.tokenId())) tokens++;
+        }
+        return new Cleanup(devices, passkeys, invitations, tokens);
     }
 
     /* ---------- passkeys ---------- */
@@ -322,6 +325,69 @@ public class DynamoSecurityStore implements SecurityStore {
     @Override
     public RevokeOutcome revokeInvitation(String inviteId) {
         return invitationById(inviteId).map(i -> revokeInvitation(i.tokenHash(), inviteId)).orElse(RevokeOutcome.NOT_FOUND);
+    }
+
+    /* ---------- Shortcut tokens ---------- */
+
+    /** One conditional put: refused if the hash exists. The member is read first; every use reads it again. */
+    @Override
+    public void createShortcutToken(ShortcutToken token) {
+        if (token.status() != Status.ACTIVE) throw new IllegalArgumentException("a new Shortcut token is ACTIVE");
+        if (member(token.memberId()).filter(Member::active).isEmpty()) throw new IllegalStateException("member not active");
+        if (shortcutTokenById(token.tokenId()).isPresent()) throw new IllegalStateException("Shortcut token exists");
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put("tokenHash", s(token.tokenHash()));
+        item.put("tokenId", s(token.tokenId()));
+        item.put("memberId", s(token.memberId()));
+        item.put("label", s(token.label()));
+        item.put("door", s(token.door()));
+        item.put("action", s(token.action()));
+        item.put("status", s(Status.ACTIVE.name()));
+        item.put("createdAt", n(token.createdAt()));
+        item.put("expiresAt", n(token.expiresAt()));
+        try {
+            call(() -> db.putItem(b -> b.tableName(tables.shortcutTokens()).item(item).conditionExpression("attribute_not_exists(tokenHash)")));
+        } catch (ConditionalCheckFailedException e) {
+            throw new IllegalStateException("Shortcut token exists", e);
+        }
+    }
+
+    @Override
+    public ShortcutView shortcutView(String tokenHash) {
+        Optional<ShortcutToken> token = get(tables.shortcutTokens(), "tokenHash", tokenHash).map(DynamoSecurityStore::toShortcutToken);
+        return new ShortcutView(token, token.flatMap(t -> member(t.memberId())));
+    }
+
+    @Override
+    public Optional<ShortcutToken> shortcutTokenById(String tokenId) {
+        List<Map<String, AttributeValue>> keys = call(() -> db.query(b -> b.tableName(tables.shortcutTokens()).indexName(DynamoTables.BY_TOKEN_ID)
+                .keyConditionExpression("tokenId = :id").expressionAttributeValues(Map.of(":id", s(tokenId))))).items();
+        for (Map<String, AttributeValue> key : keys) {
+            Optional<ShortcutToken> token = get(tables.shortcutTokens(), "tokenHash", key.get("tokenHash").s()).map(DynamoSecurityStore::toShortcutToken);
+            if (token.isPresent() && token.get().tokenId().equals(tokenId)) return token;
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public List<ShortcutToken> shortcutTokensOf(String memberId) {
+        List<ShortcutToken> result = new ArrayList<>();
+        for (String hash : indexKeys(tables.shortcutTokens(), "tokenHash", memberId)) {
+            get(tables.shortcutTokens(), "tokenHash", hash).map(DynamoSecurityStore::toShortcutToken).filter(t -> t.memberId().equals(memberId))
+                    .ifPresent(result::add);
+        }
+        result.sort(Comparator.comparing(ShortcutToken::createdAt));
+        return result;
+    }
+
+    @Override
+    public boolean revokeShortcutToken(String tokenId) {
+        Optional<ShortcutToken> found = shortcutTokenById(tokenId);
+        if (found.isEmpty()) return false;
+        String hash = found.get().tokenHash();
+        if (setStatus(tables.shortcutTokens(), "tokenHash", hash, Status.ACTIVE, Status.REVOKED, "revokedAt")) return true;
+        // Refused: revoked already (states only move forward), or gone.
+        return get(tables.shortcutTokens(), "tokenHash", hash).map(DynamoSecurityStore::toShortcutToken).map(ShortcutToken::revoked).orElse(false);
     }
 
     /* ---------- consistent views ---------- */
@@ -544,6 +610,11 @@ public class DynamoSecurityStore implements SecurityStore {
     private static Device toDevice(Map<String, AttributeValue> item) {
         return new Device(str(item, "nodeId"), str(item, "memberId"), str(item, "label"), str(item, "nodeName"), str(item, "credentialId"),
                 str(item, "inviteId"), Status.valueOf(str(item, "status")), time(item, "authorizedAt"), time(item, "revokedAt"));
+    }
+
+    private static ShortcutToken toShortcutToken(Map<String, AttributeValue> item) {
+        return new ShortcutToken(str(item, "tokenHash"), str(item, "tokenId"), str(item, "memberId"), str(item, "label"), str(item, "door"),
+                str(item, "action"), Status.valueOf(str(item, "status")), time(item, "createdAt"), time(item, "expiresAt"), time(item, "revokedAt"));
     }
 
     private static Invitation toInvitation(Map<String, AttributeValue> item) {

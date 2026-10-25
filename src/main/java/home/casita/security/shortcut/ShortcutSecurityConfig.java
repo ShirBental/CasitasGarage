@@ -30,8 +30,8 @@ import home.casita.security.store.SecurityStore;
 class ShortcutSecurityConfig {
 
     @Bean
-    ShortcutTokens shortcutTokens(CasitaSecurityProperties properties, Clock clock) {
-        return new ShortcutTokens(properties.dataDir(), clock);
+    ShortcutTokens shortcutTokens(SecurityStore store, Clock clock) {
+        return new ShortcutTokens(store, clock);
     }
 
     @Bean
@@ -42,10 +42,10 @@ class ShortcutSecurityConfig {
     /** Before the browser chain, which matches every other request. */
     @Bean
     @Order(1)
-    SecurityFilterChain shortcutFilterChain(HttpSecurity http, ShortcutTokens tokens, SecurityStore store, CasitaSecurityProperties properties,
+    SecurityFilterChain shortcutFilterChain(HttpSecurity http, ShortcutTokens tokens, CasitaSecurityProperties properties,
                                             ShortcutRateLimiter limits, Clock clock) throws Exception {
         // Built here, not as a bean: a filter bean would also be registered for every request by Spring Boot.
-        ShortcutAuthenticationFilter authentication = new ShortcutAuthenticationFilter(tokens, store, properties.family(), limits, clock);
+        ShortcutAuthenticationFilter authentication = new ShortcutAuthenticationFilter(tokens, properties.family(), limits, clock);
         return http
                 .securityMatcher("/shortcut/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().hasAuthority(ShortcutAuthenticationFilter.AUTHORITY))

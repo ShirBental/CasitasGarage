@@ -23,7 +23,7 @@ import home.casita.garage.GarageProperties;
 import home.casita.garage.GarageService;
 import home.casita.garage.GarageStatus;
 import home.casita.garage.Outcome;
-import home.casita.security.shortcut.ShortcutTokens;
+import home.casita.security.store.SecurityStore.ShortcutToken;
 import jakarta.servlet.http.HttpServletRequest;
 
 /**
@@ -71,26 +71,26 @@ class ShortcutController {
 
     @PostMapping("/{door}/{action}")
     ResponseEntity<?> command(@PathVariable String door, @PathVariable String action,
-                              @AuthenticationPrincipal ShortcutTokens.Token token, HttpServletRequest request) {
+                              @AuthenticationPrincipal ShortcutToken token, HttpServletRequest request) {
         Optional<GarageService> scoped = scoped(token, door);
-        if (scoped.isEmpty() || !token.action().name().equalsIgnoreCase(action)) {
-            log.warn("Shortcut command refused: token {} ({}) may {} {} only, asked to {} {} (client {})", token.id(), token.member(),
+        if (scoped.isEmpty() || !token.action().equalsIgnoreCase(action)) {
+            log.warn("Shortcut command refused: token {} ({}) may {} {} only, asked to {} {} (client {})", token.tokenId(), token.memberId(),
                     token.action(), token.door(), action, door, request.getRemoteAddr());
             return refusal();
         }
-        if (token.action() != Action.OPEN) return refusal(); // the only action a token can be created for, for now
+        if (!Action.OPEN.name().equals(token.action())) return refusal(); // the only action a token can be created for, for now
         GarageService service = scoped.get();
-        CommandResult result = service.open(token.member() + " via Shortcut");
-        log.info("Shortcut command: token {} ({}, {}) {} {} -> {} (control {}, client {})", token.id(), token.member(), token.label(),
+        CommandResult result = service.open(token.memberId() + " via Shortcut");
+        log.info("Shortcut command: token {} ({}, {}) {} {} -> {} (control {}, client {})", token.tokenId(), token.memberId(), token.label(),
                 token.action(), service.name(), result.outcome(), service.control().id(), request.getRemoteAddr());
         return answer(service, result);
     }
 
     @GetMapping("/{door}")
-    ResponseEntity<?> status(@PathVariable String door, @AuthenticationPrincipal ShortcutTokens.Token token, HttpServletRequest request) {
+    ResponseEntity<?> status(@PathVariable String door, @AuthenticationPrincipal ShortcutToken token, HttpServletRequest request) {
         Optional<GarageService> scoped = scoped(token, door);
         if (scoped.isEmpty()) {
-            log.warn("Shortcut status refused: token {} ({}) is for {}, asked for {} (client {})", token.id(), token.member(), token.door(),
+            log.warn("Shortcut status refused: token {} ({}) is for {}, asked for {} (client {})", token.tokenId(), token.memberId(), token.door(),
                     door, request.getRemoteAddr());
             return refusal();
         }
@@ -102,7 +102,7 @@ class ShortcutController {
     }
 
     /** The token's own door, and only it; anything else (another door, a door that doesn't exist) is the same refusal. */
-    private Optional<GarageService> scoped(ShortcutTokens.Token token, String door) {
+    private Optional<GarageService> scoped(ShortcutToken token, String door) {
         return garage.door(door).filter(service -> service.key().equals(token.door()));
     }
 

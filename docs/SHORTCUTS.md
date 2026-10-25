@@ -13,12 +13,12 @@ Everything below follows from that.
 | | |
 |---|---|
 | Format | `casita_st_` + 256 random bits (base64url). Shown **once**, when created |
-| Stored | only its SHA-256, in `<data-dir>/shortcut-tokens.json` (owner-only, next to `admin.secret` and the invites). Not in Firestore |
+| Stored | only its SHA-256, in the security store with members, passkeys, devices and invitations: `shortcutTokens/t_{sha256}` in Firestore (one document per token) |
 | Belongs to | one member, one device label ("Shir's iPhone") |
 | Allows | **open** the **Ford** door. Nothing else: not close, not resume, not Toyota, not `/api/**`, not `/admin/**` |
 | Also reads | its own door's status (so the Shortcut can say what really happened) |
 | Lifetime | 180 days by default, at most 365; then it stops working |
-| Checked on every request | the token exists, isn't revoked or expired; its member is in `casita.security.family` and active in the security store (unreachable store: refused) |
+| Checked on every request | read from the store, no cache: the token exists, isn't revoked or expired; its member is in `casita.security.family` and active. Store unreachable: refused (503) |
 | Revoked by | `casita-access revoke-shortcut-token <id>`, or `revoke-member` (all of that member's tokens) |
 
 Closing stays in the app on purpose: the app shows the door and its sensor before you close it.
@@ -68,6 +68,22 @@ applies unchanged. A command answer:
 `confirmed` is true only when the sensor has settled: `CLOSED`, or `NOT_CLOSED` (open is inferred; the sensor only
 knows closed or not). To know the door opened, wait `checkAfterSeconds` and read the status. If `live` is false
 (`simulated`, `dry-run`), `speak` says so first, and nothing ever describes the real door moving.
+
+## Where tokens are kept, and why
+
+In the security store, with everything else an access decision reads: Firestore in production, one document per token
+(`shortcutTokens/t_{sha256}`); the same contract in the file store (local development) and DynamoDB. An earlier draft
+kept them in a file next to `admin.secret`. That was a mistake: it split security state across two stores
+(docs/PERSISTENCE.md, rule 5), put tokens on the VM's disk instead of Firestore's backups, and made revoking a member
+two separate writes. It didn't even help during an outage, since checking a token also needs its member from Firestore.
+
+- **Atomic:** creating is one batch, the token document created only if absent plus its security event; revoking is a
+  compare-and-set on the document (`updateTime` unchanged), retried on conflict. A commit whose answer was lost is
+  recognized by its own `changeEventId` and not repeated.
+- **Immediate revocation:** every request reads the token and its member, strongly consistent, with no cache. A cache
+  would delay revocation by its lifetime, and a cache used during an outage would accept a revoked token (fail open).
+- **Cost:** two document reads per Shortcut request (token, member), a few a day; well within the free quota.
+- **IAM:** nothing new (docs/FIRESTORE.md).
 
 ## Setting it up
 
@@ -125,7 +141,7 @@ Rotate the same way: create a new token, put it in the Shortcut, revoke the old 
 | **Other doors, closing, admin** | Not reachable: the token's door and action are checked against the path; `/api/**` ignores tokens; `/admin/**` is local-only with its own secret, and Caddy answers 404 for it | Tests cover each |
 | **Guessing** | 256 random bits | Rate limits keep the endpoint from being hammered, not guessing |
 | **Leaks through logs** | — | Tokens are never logged (only ids); Caddy drops the Authorization header from its access log (it also redacts it by default); error answers are fixed text |
-| **Lost data directory** | Tokens are gone; Shortcuts stop working | Make new ones. (Nothing else depends on the file) |
+| **Google Cloud outage** | Firestore can't be read, so no token can be checked | Refused (503), like every sign-in: fail closed. No cache or local copy is trusted instead, because it could still accept a revoked token |
 
 ### Locked phones (what can and can't be enforced)
 
@@ -151,5 +167,8 @@ repaired.
 - **Logs:** `journalctl -u casita | grep -i shortcut`: every command (token id, member, label, outcome, client address) and
   every refusal (reason, token id when known).
 - **Activity:** commands appear in the app as "Shir via Shortcut asked to open Ford".
-- **Kill switch:** revoke every token (`casita-access shortcut-tokens`, then `revoke-shortcut-token` each), or delete
-  `/var/lib/casita/shortcut-tokens.json` and restart Casita.
+- **Kill switch:** revoke every token (`casita-access shortcut-tokens`, then `revoke-shortcut-token` each), or
+  `revoke-member`, which revokes all of that member's tokens with everything else.
+- **Backups:** tokens are in Firestore with the rest of the security state, so they share its durability and recovery.
+  Losing the VM loses nothing.
+- **Audit:** creating and revoking a token writes a `securityEvents` record in the same commit (docs/FIRESTORE.md).

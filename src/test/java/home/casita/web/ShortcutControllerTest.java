@@ -23,7 +23,8 @@ import home.casita.garage.GarageProperties;
 import home.casita.garage.InMemoryActivityLog;
 import home.casita.garage.Outcome;
 import home.casita.garage.SimulatedDoor;
-import home.casita.security.shortcut.ShortcutTokens;
+import home.casita.security.store.SecurityStore;
+import home.casita.security.store.SecurityStore.ShortcutToken;
 import home.casita.security.store.TestClock;
 
 /**
@@ -38,8 +39,8 @@ class ShortcutControllerTest {
     private final TestClock clock = new TestClock();
     private final InMemoryActivityLog activity = new InMemoryActivityLog();
     private final List<Boolean> sent = new ArrayList<>();
-    private final ShortcutTokens.Token token = new ShortcutTokens.Token("st-0000000a", "hash", "shir", "Shir's iPhone", "ford",
-            Action.OPEN, Instant.parse("2026-10-01T00:00:00Z"), Instant.parse("2027-01-01T00:00:00Z"), null);
+    private final ShortcutToken token = new ShortcutToken("hash", "st-00000000000a", "shir", "Shir's iPhone", "ford", "OPEN",
+            SecurityStore.Status.ACTIVE, Instant.parse("2026-10-01T00:00:00Z"), Instant.parse("2027-01-01T00:00:00Z"), null);
 
     /** A door that reads {@code open} and handles a command as {@code onCommand} says. */
     private DoorDevice door(boolean open, Behaviour onCommand) {
