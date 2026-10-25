@@ -139,7 +139,14 @@ The runtime service account needs `datastore.entities.get`, `list`, `create`, `u
 `datastore.databases.getMetadata`. It needs **no `delete`**: nothing in this code deletes a document. Shortcut tokens
 need nothing more (the same four entity permissions, on one more collection). The
 emulator doesn't enforce IAM, so this is a provisioning check, not a test. No service-account keys. Org policy
-`iam.disableServiceAccountKeyCreation` on the project. Security Rules: `allow read, write: if false;`.
+`iam.disableServiceAccountKeyCreation` on the project. Security Rules: `allow read, write: if false;` (intended;
+`provision-gcp.sh` doesn't set them, so check them in the console's Firestore *Rules* tab. Server client libraries
+with IAM, as Casita uses, aren't subject to them; they matter only for Firebase client SDKs).
+
+**Recovery:** the database is created with delete protection; **Point-in-Time Recovery is not enabled** by provisioning.
+Check: `gcloud firestore databases describe --database='(default)' --format='value(pointInTimeRecoveryEnablement,deleteProtectionState)'`.
+Enable (billed for the retained versions): `gcloud firestore databases update --database='(default)' --enable-pitr`.
+A restore to an earlier time undoes every revocation since then: revoke again before Casita serves requests.
 
 ## Tests
 

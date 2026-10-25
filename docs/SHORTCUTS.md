@@ -95,8 +95,9 @@ casita-access shortcut-token shir "Shir's iPhone"          # optional 3rd argume
 ```
 
 The answer contains `"token": "casita_st_..."`. It is shown this once and not kept anywhere. Copy it straight into the
-Shortcut (step 2), using AirDrop or Notes between your own devices if you must. Don't send it through chat or email,
-then `clear` the terminal. If it leaks, revoke it and make a new one.
+Shortcut (step 2), using AirDrop or Notes between your own devices if you must (then delete the note). Don't send it
+through chat or email, don't screenshot it or the finished Shortcut (the header shows the token), then `clear` the
+terminal. If it leaks, revoke it and make a new one.
 
 ### 2. Build the Shortcut (on the iPhone, Shortcuts app)
 
@@ -134,10 +135,10 @@ Rotate the same way: create a new token, put it in the Shortcut, revoke the old 
 
 | Risk | What happens | What limits it |
 |---|---|---|
-| **Siri on a locked phone** | Siri can run Shortcuts from the lock screen, and "Get Contents of URL" doesn't require unlocking. Anyone within earshot of the phone may be able to say the phrase. A bearer token can't tell | See *Locked phones* below. Casita adds no fake check for this |
+| **Siri on a locked phone** | Siri can run Shortcuts from the lock screen, and Apple doesn't document that "Get Contents of URL" requires unlocking: assume it doesn't. Anyone within earshot of the phone may be able to say the phrase. A bearer token can't tell | See *Locked phones* below. Casita adds no fake check for this |
 | **Token copied** (screenshot, backup, shared Shortcut, iCloud sync of Shortcuts) | Whoever has it can open Ford from anywhere until it expires or is revoked | Ford and open only; 6 commands per 10 minutes per token; every use logged with the token's id; revoke at once with `casita-access`; 180-day default life. **Never share the Shortcut**: shared Shortcuts carry their headers |
 | **Replay / repeated requests** | The token is the same on every request; resending opens again if the door is closed | HTTPS only (nothing to capture in transit); `GarageService` refuses while a movement is unchecked, refuses when the door isn't closed, holds after a stuck move; per-token and per-client rate limits. No nonce: Shortcuts can't sign requests |
-| **Compromised phone** | Same as a copied token, plus the browser's session | Revoke the token (`revoke-shortcut-token`) and the browser (`revoke-device`), or the member (`revoke-member`, which also revokes their tokens) |
+| **Compromised phone** | Same as a copied token, plus the browser's session | Revoke the token (`revoke-shortcut-token`) **and** the browser (`revoke-device`): they are separate credentials, and revoking the browser does **not** revoke the token. Or revoke the member (`revoke-member`), which revokes both |
 | **Other doors, closing, admin** | Not reachable: the token's door and action are checked against the path; `/api/**` ignores tokens; `/admin/**` is local-only with its own secret, and Caddy answers 404 for it | Tests cover each |
 | **Guessing** | 256 random bits | Rate limits keep the endpoint from being hammered, not guessing |
 | **Leaks through logs** | — | Tokens are never logged (only ids); Caddy drops the Authorization header from its access log (it also redacts it by default); error answers are fixed text |
@@ -148,9 +149,9 @@ Rotate the same way: create a new token, put it in the Shortcut, revoke the old 
 - **Casita can't verify user presence.** No server-side check can, with a bearer token. Casita doesn't pretend to.
 - **The only phone-side step Apple documents:** if a shortcut opens an app while the device is locked, Siri asks to
   unlock before continuing ([Apple: Run shortcuts with Siri](https://support.apple.com/guide/shortcuts/apd07c25bb38/ios)).
-  Adding **Open App** as the Shortcut's first action should therefore make Siri ask for Face ID first. Test it on your
-  phone. It is a setting inside the Shortcut, on the phone: Casita can't check that it's there, and a copied token
-  skips it.
+  Adding **Open App** as the Shortcut's first action should therefore make Siri ask you to unlock (Face ID or passcode)
+  first. **This hasn't been verified on a device**: test it with the phone locked before relying on it. It is a step
+  inside the Shortcut, on the phone: Casita can't check that it's there, and a copied token skips it.
 - **The strict option:** Settings → Face ID & Passcode → *Allow Access When Locked* → turn off **Siri**. Siri then
   needs the phone unlocked for everything.
 - If neither suits you, use Siri to open the Casita app instead (an **Open URLs** Shortcut with
@@ -169,6 +170,25 @@ repaired.
 - **Activity:** commands appear in the app as "Shir via Shortcut asked to open Ford".
 - **Kill switch:** revoke every token (`casita-access shortcut-tokens`, then `revoke-shortcut-token` each), or
   `revoke-member`, which revokes all of that member's tokens with everything else.
-- **Backups:** tokens are in Firestore with the rest of the security state, so they share its durability and recovery.
-  Losing the VM loses nothing.
-- **Audit:** creating and revoking a token writes a `securityEvents` record in the same commit (docs/FIRESTORE.md).
+- **Backups:** tokens are in Firestore with the rest of the security state: replicated, with delete protection on the
+  database, and losing the VM loses nothing. **Point-in-Time Recovery is not enabled** by `provision-gcp.sh`; check with
+  `gcloud firestore databases describe --database='(default)' --format='value(pointInTimeRecoveryEnablement)'`.
+  If the database is ever restored to an earlier time (PITR or an import), every revocation since then is undone, for
+  tokens, devices, passkeys and members alike: revoke them again before Casita serves requests.
+- **Audit:** creating and revoking a token writes a `securityEvents` record in the same commit (docs/FIRESTORE.md), kept
+  400 days. Each use is one journal line (persistent journal, capped at 200 MB): for a command, the token id, member,
+  label, door, outcome, control and client address in one line, so the line is itself the link between the token and
+  the door command; for a refusal, the reason, the token id when known, and the client address. The app's activity list
+  shows "Shir via Shortcut" but is kept in memory only.
+
+## Consistency model
+
+- **Authorization is decided once per request, at its start**, from two strongly consistent reads (the token, then its
+  member). The door command follows a few milliseconds later, through the same `GarageService` as the app.
+- **A revocation committed before a request's reads** (token, member, or the member's cleanup) refuses that request.
+- **A revocation committed while a request is already past its reads** doesn't stop that one request: the door command
+  goes ahead. Every later request is refused. The browser path behaves the same way.
+- No transaction can close that window: the door command is a message to Meross, which can't be made part of a
+  Firestore commit. The window is the time between the reads and the command, not the command's duration.
+- Two commands at once (Shortcut and app, or two Shortcuts) are serialized by `GarageService`: the second is refused as
+  busy while the first is unchecked.
