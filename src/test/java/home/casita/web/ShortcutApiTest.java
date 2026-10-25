@@ -284,7 +284,7 @@ class ShortcutApiTest {
                 .param("days", "0")).andExpect(status().isBadRequest());
         mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "shir").param("label", " "))
                 .andExpect(status().isBadRequest());
-        mvc.perform(delete("/admin/shortcut-tokens/st-00000000").header(LocalAdmin.HEADER, admin)).andExpect(status().isNotFound());
+        mvc.perform(delete("/admin/shortcut-tokens/st-000000000000").header(LocalAdmin.HEADER, admin)).andExpect(status().isNotFound());
         mvc.perform(delete("/admin/shortcut-tokens/not-an-id").header(LocalAdmin.HEADER, admin)).andExpect(status().isBadRequest());
     }
 

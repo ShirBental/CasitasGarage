@@ -200,6 +200,7 @@ class ShortcutControllerTest {
         open(controller);
         ShortcutController.StatusAnswer opening = (ShortcutController.StatusAnswer) controller.status("ford", token, request()).getBody();
         assertThat(opening.confirmed()).isFalse();
-        assertThat(opening.speak()).doesNotContain("is open");
+        assertThat(opening.doorState()).isEqualTo(DoorState.OPENING);
+        assertThat(opening.speak()).isEqualTo("Ford is opening; it isn't confirmed yet.");
     }
 }

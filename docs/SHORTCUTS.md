@@ -125,7 +125,7 @@ Test it once in the Shortcuts app, while you can see the garage.
 
 ```bash
 casita-access shortcut-tokens                    # ids, labels, state (never the tokens)
-casita-access revoke-shortcut-token st-1a2b3c4d
+casita-access revoke-shortcut-token st-1a2b3c4d5e6f
 ```
 
 Rotate the same way: create a new token, put it in the Shortcut, revoke the old one.

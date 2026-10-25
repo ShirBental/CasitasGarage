@@ -114,7 +114,7 @@ bearer secret and proves nothing about who holds the phone or whether it is unlo
 ```bash
 casita-access shortcut-token shir "Shir's iPhone"   # the token is shown once
 casita-access shortcut-tokens
-casita-access revoke-shortcut-token st-1a2b3c4d
+casita-access revoke-shortcut-token st-1a2b3c4d5e6f
 ```
 
 `revoke-member` also revokes that member's Shortcut tokens.
