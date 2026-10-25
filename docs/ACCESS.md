@@ -105,6 +105,20 @@ casita-access revoke-invite i-1a2b3c4d      # unused, or an enrollment in progre
 `revoke-invite` says exactly what happened; anything but `"revoked": true` prints `FAILED` and exits 1. Revocation
 takes effect on the next request of every affected session, and is in Firestore before the command returns.
 
+## Siri and Shortcuts
+
+Shortcuts can't use passkeys or the browser key, so they get **Shortcut tokens**: per phone, hashed, revocable, open
+Ford only, on their own `/shortcut/**` chain that never reads a cookie or session (`docs/SHORTCUTS.md`). A token is a
+bearer secret and proves nothing about who holds the phone or whether it is unlocked.
+
+```bash
+casita-access shortcut-token shir "Shir's iPhone"   # the token is shown once
+casita-access shortcut-tokens
+casita-access revoke-shortcut-token st-1a2b3c4d
+```
+
+`revoke-member` also revokes that member's Shortcut tokens.
+
 ## Restarts, outages and the device key
 
 Sessions live in memory: a restart signs everyone out (Face ID signs them back in). Members, passkeys, browser

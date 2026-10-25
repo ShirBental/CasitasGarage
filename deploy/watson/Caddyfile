@@ -47,7 +47,8 @@
 		header_up -Tailscale-Funnel-Request
 	}
 
-	# Access log without secrets: invite tokens (in /login/ott?token=...), cookies and CSRF tokens are redacted.
+	# Access log without secrets: invite tokens (in /login/ott?token=...), cookies, CSRF tokens and Shortcut tokens
+	# (Authorization) are left out.
 	log {
 		output file /var/log/caddy/casita-access.log {
 			roll_size 10MiB
@@ -58,6 +59,7 @@
 				replace token REDACTED
 			}
 			request>headers>Cookie delete
+			request>headers>Authorization delete
 			request>headers>X-Xsrf-Token delete
 			resp_headers>Set-Cookie delete
 		}
