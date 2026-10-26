@@ -1,16 +1,17 @@
 package home.casita.security.access;
 
 /**
- * A device as Tailscale knows it: one tailnet node, with its own WireGuard key (never iCloud-synced).
+ * The device a request comes from, as far as Casita can verify it: an enrolled browser key ({@link DeviceKeys}).
+ * Stored device authorizations keep the field name {@code nodeId} (from when a device was a tailnet node), so
+ * existing records, Firestore documents and the admin API stay readable.
  *
- * @param nodeId    the node's stable id, as the local tailscaled reports it: the device id Casita authorizes
- * @param nodeName  its name in the tailnet, for administration only
- * @param userLogin the tailnet user the node belongs to
+ * @param nodeId   the device id Casita authorizes: {@code b-} and 128 random bits for a browser key
+ * @param nodeName a short name for administration and logs only, never proof of anything
  */
-public record DeviceIdentity(String nodeId, String nodeName, String userLogin) {
+public record DeviceIdentity(String nodeId, String nodeName) {
 
     @Override
     public String toString() {
-        return "DeviceIdentity[node=" + nodeName + "]";
+        return "DeviceIdentity[" + nodeName + "]";
     }
 }

@@ -18,9 +18,10 @@ exactly what the app would use. Casita refuses to start when:
 | In staging, `casita.door` isn't exactly `simulated` | `meross`, `MEROSS`, `Simulated`, padded, empty or missing are all refused. (The door switch itself would accept `Simulated`; the guard is stricter on purpose) |
 | In staging, `casita.meross.command-mode` isn't exactly `off` | `live`, `dry-run`, `OFF`, `false` (YAML's reading of a bare `off`), empty or missing are all refused |
 | In staging, Meross credentials are present anywhere | `casita.meross.email`/`password` (e.g. `CASITA_MEROSS_EMAIL`), `MEROSS_EMAIL`/`MEROSS_PASSWORD` (the live tests' variables), or `config/meross.local.json` in the working directory |
-| In staging, `casita.security.rp-id` isn't `watson.<tailnet>.ts.net` with a real tailnet name | `localhost`, the old `casita.…` name, a placeholder such as `watson.<verified-tailnet>.ts.net`, upper case or a trailing dot are refused. Passkeys are bound to this name, so it must be right before anyone enrolls |
+| In staging, `casita.security.rp-id` isn't the server's public host name | It must be a lower-case DNS name with at least two labels and a letters-only top-level domain (watson: `watsonbental.duckdns.org`). `localhost`, an address, a placeholder such as `<PUBLIC_HOST>`, upper case or a trailing dot are refused. Passkeys are bound to this name, so it must be right before anyone enrolls |
 | In staging, `casita.security.allowed-origins` isn't exactly `https://<rp-id>` | No other origin, no port, no `http`, no trailing slash |
-| In staging, `casita.security.family` is empty, `device-identity` isn't `tailscale`, or `data-dir` isn't absolute | Who may sign in must be named; devices are verified through `tailscale serve`; the admin secret and invite links live in a known place (`/var/lib/casita`) |
+| In staging, `casita.security.family` is empty, `device-identity` isn't `browser`, or `data-dir` isn't absolute | Who may sign in must be named; browsers are verified by the browser key their invite gave them (`tailscale` and `development` are refused); the admin secret, invite links and `device.key` live in a known place (`/var/lib/casita`) |
+| In staging, `server.address` isn't the loopback address | Casita must listen on `127.0.0.1` only: Caddy is the only way in. `0.0.0.0`, the VM's own address or unset are refused |
 | In staging, `casita.storage.type` isn't exactly `firestore`, or an emulator is configured | `casita.storage.firestore.emulator-host` or `FIRESTORE_EMULATOR_HOST`: staging's security store is the real, authenticated Firestore |
 | In staging, session cookies aren't `Secure`, or the `dev` profile is active | The `dev` profile is for plain `http://localhost` only |
 
@@ -28,7 +29,7 @@ Every reason is reported at once, in one message ending "See docs/STAGING_GUARD.
 the log has one line:
 
 ```
-staging guard: ok deployment=staging compute_engine=true door=simulated command_mode=off meross_credentials=absent storage=firestore rp_id=watson.<tailnet>.ts.net
+staging guard: ok deployment=staging compute_engine=true door=simulated command_mode=off meross_credentials=absent storage=firestore rp_id=watsonbental.duckdns.org
 ```
 
 With `casita.door=simulated`, the Meross configuration (`MerossConfig`) isn't loaded at all. No
@@ -70,10 +71,10 @@ the template's variables and one unsafe override at a time, including `SPRING_AP
 - **`StagingStartupTest`:** the whole app started through the registered guard. Command-line arguments
   stand in for the VM's environment variables (same precedence over `application.yml`).
   - Staging starts with Ford and Toyota both `SIMULATED`, no Meross credentials, session or client beans,
-    sign-in bound to `watson.example-tailnet.ts.net`, and the Firestore store (the emulator, injected as a
+    sign-in bound to `casita.example.org`, and the Firestore store (the emulator, injected as a
     bean so staging's own settings name none).
   - Each of these fails to start: staging with `casita.door=meross` (even with credentials), with commands
-    `live` or `dry-run`, with credentials, with the placeholder tailnet, with only `casita.deployment=staging`
+    `live` or `dry-run`, with credentials, with the placeholder host, with only `casita.deployment=staging`
     (the localhost defaults), with a file store or an emulator, with the `dev` profile, or with an unknown
     deployment.
   - With the guard unregistered, all seven refusals start instead; checked by hand on 2026-10-21.
@@ -103,7 +104,7 @@ Record the date, image and commit with the results.
 ## Production: the real doors
 
 `casita.deployment=production` is the only way the real doors run on watson. It keeps staging's sign-in and
-storage rules (rp-id, origins, family, Tailscale device identity, Firestore, Secure cookies, no `dev`
+storage rules (rp-id, origins, family, browser device identity, loopback listener, Firestore, Secure cookies, no `dev`
 profile) and replaces the simulation rules with these. Casita refuses to start when, in production:
 
 | Condition | Why |
@@ -119,7 +120,7 @@ profile) and replaces the simulation rules with these. Casita refuses to start w
 When production passes, the log has one line (checked by `casita-health`):
 
 ```
-production guard: ok deployment=production compute_engine=true door=meross command_mode=off command_channels=[1, 2] transport=cloud storage=firestore rp_id=watson.<tailnet>.ts.net
+production guard: ok deployment=production compute_engine=true door=meross command_mode=off command_channels=[1, 2] transport=cloud storage=firestore rp_id=watsonbental.duckdns.org
 ```
 
 The steps and the first supervised tests are in `deploy/watson/LIVE_DOORS.md`.

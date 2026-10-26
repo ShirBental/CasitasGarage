@@ -37,10 +37,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import home.casita.security.access.AccessCheckFilter;
 import home.casita.security.access.AccessSession;
 import home.casita.security.access.AccessDecisions;
-import home.casita.security.access.CliTailscaleWhois;
+import home.casita.security.access.BrowserDeviceIdentity;
 import home.casita.security.access.CredentialEvents;
 import home.casita.security.access.DevelopmentDeviceIdentity;
 import home.casita.security.access.DeviceIdentityResolver;
+import home.casita.security.access.DeviceKeys;
 import home.casita.security.access.EnrollmentAuthenticationProvider;
 import home.casita.security.access.EnrollmentGuardFilter;
 import home.casita.security.access.EnrollmentSuccessHandler;
@@ -50,8 +51,6 @@ import home.casita.security.access.LocalAdmin;
 import home.casita.security.access.PasskeySignInSuccessHandler;
 import home.casita.security.access.RegistrationErrorFilter;
 import home.casita.security.access.RedemptionGuardFilter;
-import home.casita.security.access.TailscaleDeviceIdentity;
-import home.casita.security.access.TailscaleWhois;
 import home.casita.security.store.SecurityStore;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -63,7 +62,7 @@ import jakarta.servlet.http.HttpServletResponse;
  *
  * <ul>
  *   <li><b>Passkey</b> (Face ID or the device passcode; user verification required) says <i>who</i>. The
- *       <b>tailnet node</b>, verified through tailscale serve and the local tailscaled, says <i>which device</i>.
+ *       <b>browser key</b> an invite gave that browser ({@link DeviceKeys}) says <i>which enrolled browser</i>.
  *       A session needs both, for the same member, on every request ({@link AccessCheckFilter}).</li>
  *   <li><b>One invite, one device.</b> An invite is created on the server for a member and a device label. It
  *       gives an enrollment-only session that can do one thing: set up a passkey, or use the member's existing
@@ -71,7 +70,8 @@ import jakarta.servlet.http.HttpServletResponse;
  *   <li>Unverifiable device: no invite redemption, no enrollment, no session. Fail closed.</li>
  *   <li>Access is administered on the server only ({@link LocalAdmin}).</li>
  *   <li>CSRF on (single-page-app mode); a strict content security policy; {@code /api/**} answers 401,
- *       pages go to {@code /login} (relative, safe behind tailscale serve).</li>
+ *       pages go to {@code /login} (relative, safe behind the reverse proxy).</li>
+ *   <li>The public sign-in and invite endpoints are rate limited ({@link AuthRateLimitFilter}).</li>
  * </ul>
  */
 @Configuration
@@ -104,17 +104,17 @@ class SecurityConfig {
         return new Invitations(store, clock);
     }
 
-    /** The local tailscaled, asked through {@code tailscale whois}. */
+    /** The server secret browser keys are signed with ({@code <data-dir>/device.key} unless set). */
     @Bean
-    TailscaleWhois tailscaleWhois(CasitaSecurityProperties properties, Clock clock) {
-        return new CliTailscaleWhois(properties.tailscaleCli(), clock);
+    DeviceKeys deviceKeys(CasitaSecurityProperties properties) {
+        return new DeviceKeys(properties.deviceKey());
     }
 
     @Bean
-    DeviceIdentityResolver deviceIdentity(CasitaSecurityProperties properties, TailscaleWhois whois) {
+    DeviceIdentityResolver deviceIdentity(CasitaSecurityProperties properties, DeviceKeys keys) {
         return properties.deviceIdentity() == CasitaSecurityProperties.DeviceIdentityMode.DEVELOPMENT
                 ? new DevelopmentDeviceIdentity()
-                : new TailscaleDeviceIdentity(whois);
+                : new BrowserDeviceIdentity(keys);
     }
 
     @Bean
@@ -170,7 +170,7 @@ class SecurityConfig {
         return file.substring(0, dot) + "-{hash:[0-9a-f]{32}}" + file.substring(dot);
     }
 
-    /** Redirects to {@code /login} relatively: behind tailscale serve, Casita sees http://127.0.0.1, not the real host. */
+    /** Redirects to {@code /login} relatively: behind the reverse proxy, Casita sees http://127.0.0.1, not the real host. */
     private static LoginUrlAuthenticationEntryPoint loginPage() {
         LoginUrlAuthenticationEntryPoint entryPoint = new LoginUrlAuthenticationEntryPoint("/login");
         entryPoint.setFavorRelativeUris(true);
@@ -180,7 +180,7 @@ class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, CasitaSecurityProperties properties, Invitations invitations, SecurityStore store,
                                             DeviceIdentityResolver devices, AccessDecisions decisions, PasskeySignInSuccessHandler passkeySignIn,
-                                            LocalAdmin localAdmin) throws Exception {
+                                            LocalAdmin localAdmin, AuthRateLimitProperties rateLimits, Clock clock) throws Exception {
         PathPatternRequestMatcher.Builder path = PathPatternRequestMatcher.withDefaults();
         return http
                 .authorizeHttpRequests(auth -> auth
@@ -232,11 +232,13 @@ class SecurityConfig {
                         .failureHandler(new InviteFailureHandler()))
                 // Spring's passkey script for the sign-in and passkey pages, served from here (no CDN).
                 .addFilterBefore(DefaultResourcesFilter.webauthn(), CsrfFilter.class)
+                // Public sign-in, invite and passkey-setup endpoints: rate limited before anything else looks at them.
+                .addFilterBefore(new AuthRateLimitFilter(rateLimits, clock), CsrfFilter.class)
                 .csrf(csrf -> csrf.spa().ignoringRequestMatchers(path.matcher("/admin/**")))
                 // The token is created lazily; load it on every request so the XSRF-TOKEN cookie is there
                 // before the page's first POST (Spring Security's documented single-page-app setup).
                 .addFilterAfter(new CsrfCookieFilter(), BasicAuthenticationFilter.class)
-                // An invite is redeemed only from a verifiable device, before it is used up.
+                // An invite is redeemed only from a verifiable device (a new browser gets its key here), before it is used up.
                 .addFilterAfter(new RedemptionGuardFilter(devices, store), CsrfFilter.class)
                 // Passkeys can be set up only in a live enrollment, on its device.
                 .addFilterAfter(new EnrollmentGuardFilter(decisions, devices), RedemptionGuardFilter.class)

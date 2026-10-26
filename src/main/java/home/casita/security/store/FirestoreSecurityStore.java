@@ -66,7 +66,7 @@ import com.google.cloud.firestore.WriteBatch;
  * Firestore, and no decision within the timeout, is a {@link StoreUnavailableException} (fail closed), except where
  * noted: an enrollment whose outcome is unknown is settled by reading what is stored.
  *
- * <p>Changes to access (consuming, enrolling, revoking, releasing, signing in) write a {@code securityEvents}
+ * <p>Changes to access (consuming, enrolling, revoking, releasing, signing in, Shortcut tokens) write a {@code securityEvents}
  * record in the same batch: the change and its record are committed together or not at all.
  */
 public class FirestoreSecurityStore implements SecurityStore {
@@ -184,7 +184,7 @@ public class FirestoreSecurityStore implements SecurityStore {
 
     @Override
     public Cleanup cleanUpMember(String memberId) {
-        int devices = 0, passkeys = 0, invitations = 0;
+        int devices = 0, passkeys = 0, invitations = 0, tokens = 0;
         for (DocumentSnapshot d : query(db.collection(collections.devices()).whereEqualTo("memberId", memberId))) {
             if (revokeDevice(d.getString("nodeId"))) devices++;
         }
@@ -194,7 +194,10 @@ public class FirestoreSecurityStore implements SecurityStore {
         for (Invitation invitation : invitationsOf(memberId)) {
             if (revokeInvitation(invitation.tokenHash(), invitation.inviteId()) == RevokeOutcome.REVOKED) invitations++;
         }
-        return new Cleanup(devices, passkeys, invitations);
+        for (ShortcutToken token : shortcutTokensOf(memberId)) {
+            if (!token.revoked() && revokeShortcutToken(token.tokenId())) tokens++;
+        }
+        return new Cleanup(devices, passkeys, invitations, tokens);
     }
 
     /* ---------- passkeys ---------- */
@@ -396,6 +399,112 @@ public class FirestoreSecurityStore implements SecurityStore {
     @Override
     public RevokeOutcome revokeInvitation(String inviteId) {
         return invitationById(inviteId).map(i -> revokeInvitation(i.tokenHash(), inviteId)).orElse(RevokeOutcome.NOT_FOUND);
+    }
+
+    /* ---------- Shortcut tokens ---------- */
+
+    /**
+     * One atomic batch: the token document, created only if absent ({@code create}), and its security event. The member
+     * must be active when read; a revocation that lands just after doesn't matter, because every use of the token reads
+     * the member again.
+     */
+    @Override
+    public void createShortcutToken(ShortcutToken token) {
+        if (token.status() != Status.ACTIVE) throw new IllegalArgumentException("a new Shortcut token is ACTIVE");
+        if (!FirestoreCollections.valid(token.tokenHash()) || !FirestoreCollections.valid(token.memberId())) {
+            throw new IllegalArgumentException("not a storable Shortcut token");
+        }
+        Instant now = now();
+        String eventId = newEventId();
+        Map<String, Object> doc = new HashMap<>();
+        doc.put("tokenHash", token.tokenHash());
+        doc.put("tokenId", token.tokenId());
+        doc.put("memberId", token.memberId());
+        doc.put("label", token.label());
+        doc.put("door", token.door());
+        doc.put("action", token.action());
+        doc.put("status", Status.ACTIVE.name());
+        doc.put("createdAt", ts(token.createdAt()));
+        doc.put("expiresAt", ts(token.expiresAt()));
+        doc.put("changeEventId", eventId);
+        DocumentReference ref = collections.shortcutToken(db, token.tokenHash());
+        DocumentReference memberRef = collections.member(db, token.memberId());
+        Optional<String> refused = decided(() -> {
+            List<DocumentSnapshot> read = getAll(ref, memberRef);
+            DocumentSnapshot existing = read.get(0), member = read.get(1);
+            if (existing.exists()) {
+                // Ours, decided again after a lost answer; or another token's.
+                return Decision.answer(eventId.equals(existing.getString("changeEventId")) ? Optional.empty() : Optional.of("Shortcut token exists"));
+            }
+            if (!member.exists() || !Status.ACTIVE.name().equals(member.getString("status"))) return Decision.answer(Optional.of("member not active"));
+            if (!query(db.collection(collections.shortcutTokens()).whereEqualTo("tokenId", token.tokenId()).limit(1)).isEmpty()) {
+                return Decision.answer(Optional.of("Shortcut token exists"));
+            }
+            WriteBatch batch = db.batch();
+            batch.create(ref, doc);
+            tokenEvent(batch, eventId, now, "SHORTCUT_TOKEN_CREATED", token.memberId(), token.tokenId());
+            return new Decision<>(Optional.<String>empty(), batch);
+        });
+        if (refused.isPresent()) throw new IllegalStateException(refused.get());
+    }
+
+    /** The token, then its member: two strongly consistent reads (the member is known only from the token). */
+    @Override
+    public ShortcutView shortcutView(String tokenHash) {
+        if (!FirestoreCollections.valid(tokenHash)) return new ShortcutView(Optional.empty(), Optional.empty());
+        Optional<ShortcutToken> token = get(collections.shortcutToken(db, tokenHash)).map(FirestoreSecurityStore::toShortcutToken);
+        return new ShortcutView(token, token.flatMap(t -> member(t.memberId())));
+    }
+
+    @Override
+    public Optional<ShortcutToken> shortcutTokenById(String tokenId) {
+        for (DocumentSnapshot d : query(db.collection(collections.shortcutTokens()).whereEqualTo("tokenId", tokenId).limit(2))) {
+            ShortcutToken token = toShortcutToken(d);
+            if (token.tokenId().equals(tokenId)) return Optional.of(token);
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public List<ShortcutToken> shortcutTokensOf(String memberId) {
+        List<ShortcutToken> result = new ArrayList<>();
+        for (DocumentSnapshot d : query(db.collection(collections.shortcutTokens()).whereEqualTo("memberId", memberId))) {
+            ShortcutToken token = toShortcutToken(d);
+            if (token.memberId().equals(memberId)) result.add(token);
+        }
+        result.sort(Comparator.comparing(ShortcutToken::createdAt));
+        return result;
+    }
+
+    /** Found by id (Firestore's queries are strongly consistent), then a compare-and-set on the token's own document. */
+    @Override
+    public boolean revokeShortcutToken(String tokenId) {
+        Optional<ShortcutToken> found = shortcutTokenById(tokenId);
+        if (found.isEmpty()) return false;
+        Instant now = now();
+        String eventId = newEventId();
+        DocumentReference ref = collections.shortcutToken(db, found.get().tokenHash());
+        return decided(() -> {
+            DocumentSnapshot doc = read(ref);
+            if (!doc.exists() || !tokenId.equals(doc.getString("tokenId"))) return Decision.answer(false);
+            if (!Status.ACTIVE.name().equals(doc.getString("status"))) return Decision.answer(true); // revoked: by this call or earlier
+            WriteBatch batch = db.batch();
+            batch.update(ref, Map.of("status", Status.REVOKED.name(), "revokedAt", ts(now), "changeEventId", eventId), unchanged(doc));
+            tokenEvent(batch, eventId, now, "SHORTCUT_TOKEN_REVOKED", doc.getString("memberId"), tokenId);
+            return new Decision<>(true, batch);
+        });
+    }
+
+    /** A security event about a Shortcut token: its id and member, never the token or its hash. */
+    private void tokenEvent(WriteBatch batch, String eventId, Instant now, String type, String memberId, String tokenId) {
+        Map<String, Object> doc = new HashMap<>();
+        doc.put("type", type);
+        doc.put("at", ts(now));
+        doc.put("outcome", "OK");
+        doc.put("expiresAt", ts(now.plus(EVENT_RETENTION)));
+        doc.put("memberId", memberId);
+        doc.put("shortcutTokenId", tokenId);
+        batch.set(collections.securityEvent(db, eventId), doc);
     }
 
     /* ---------- consistent views ---------- */
@@ -725,6 +834,12 @@ public class FirestoreSecurityStore implements SecurityStore {
     private static Device toDevice(DocumentSnapshot d) {
         return new Device(d.getString("nodeId"), d.getString("memberId"), d.getString("label"), d.getString("nodeName"), d.getString("credentialId"),
                 d.getString("inviteId"), Status.valueOf(d.getString("status")), time(d, "authorizedAt"), time(d, "revokedAt"));
+    }
+
+    private static ShortcutToken toShortcutToken(DocumentSnapshot d) {
+        return new ShortcutToken(d.getString("tokenHash"), d.getString("tokenId"), d.getString("memberId"), d.getString("label"),
+                d.getString("door"), d.getString("action"), Status.valueOf(d.getString("status")), time(d, "createdAt"), time(d, "expiresAt"),
+                time(d, "revokedAt"));
     }
 
     private static Invitation toInvitation(DocumentSnapshot d) {

@@ -7,12 +7,14 @@ spring:
       add-mappings: false
 
 server:
-  # Never listen on a public interface: 'tailscale serve' publishes Casita to the tailnet.
+  # Never listen on a public interface: the reverse proxy (Caddy, deploy/watson/Caddyfile) publishes Casita over
+  # HTTPS. The staging guard refuses anything but loopback on a server.
   address: 127.0.0.1
   port: 8080
-  # Behind tailscale serve, requests arrive as http://127.0.0.1:8080. Trust its X-Forwarded-Proto and
-  # X-Forwarded-Host, from this machine only, so Casita knows it is https://<name>.ts.net: redirects
-  # and cookies then use the real address (an http://127.0.0.1 redirect breaks sign-in on the phone).
+  # Behind the reverse proxy, requests arrive as http://127.0.0.1:8080. Trust its X-Forwarded-For, -Proto and
+  # -Host, from this machine only, so Casita knows the client's address and that it is https://<public name>:
+  # redirects and cookies then use the real address (an http://127.0.0.1 redirect breaks sign-in on the phone).
+  # Caddy replaces any X-Forwarded-* a client sends with its own; a direct request to 127.0.0.1 is local.
   forward-headers-strategy: native
   tomcat:
     remoteip:
@@ -50,20 +52,25 @@ casita:
   # Which door Casita talks to: 'simulated' (pretend door) or 'meross' (the real one).
   door: simulated
   security:
-    # Passkeys are bound to this host name. Production: the Tailscale name, e.g.
-    # watson.<tailnet>.ts.net, with allowed-origins https://watson.<tailnet>.ts.net (deploy/watson/casita.env.example).
+    # Passkeys are bound to this host name. Production: the server's public name, watsonbental.duckdns.org,
+    # with allowed-origins https://watsonbental.duckdns.org (deploy/watson/casita.env.example).
     rp-id: localhost
     allowed-origins: [http://localhost:8080]
     # Who may sign in, by short name. Nobody else can, even with an invite link.
     family: []
-    # Passkeys (public keys only), device authorizations, invite links and the admin secret; outside git,
-    # readable by Casita's user only.
+    # Invite links, the admin secret and the browser-key secret (device.key); outside git, readable by Casita's
+    # user only. (With the file store, also members, passkeys and devices.)
     data-dir: data
-    # Which device a request comes from: its tailnet node, via tailscale serve and `tailscale whois`.
-    # Unverifiable: no access. (The dev profile uses 'development' for plain http://localhost.)
-    device-identity: tailscale
-    # The tailscale command. On a Mac with the App Store app: /Applications/Tailscale.app/Contents/MacOS/Tailscale
-    tailscale-cli: tailscale
+    # Which device a request comes from: 'browser', the browser key an invite gave that browser (an HttpOnly,
+    # Secure cookie signed with device.key; docs/ACCESS.md). Unverifiable: no access. (The dev profile uses
+    # 'development' for plain http://localhost.)
+    device-identity: browser
+    # device-key-file: /var/lib/casita/device.key   # default: <data-dir>/device.key
+    # The public sign-in, invite and passkey-setup endpoints, per client address and in total, per window.
+    rate-limit:
+      per-client: 30
+      total: 300
+      window: 10m
   # Members, passkeys, device authorizations and invitations, always together (docs/PERSISTENCE.md):
   # 'file' (<data-dir>/security.json, local development), 'dynamodb' (AWS; tables must already exist,
   # credentials from the EC2 instance profile only) or 'firestore' (GCP, docs/FIRESTORE.md; the (default)
@@ -91,7 +98,8 @@ casita:
     request-timeout: 8s
     # How Casita reaches the opener: cloud (Meross's cloud over TLS, the default and the path proven on
     # Ford) or local (straight to the opener on the home network, POST http://<its private IPv4>/config,
-    # reached from watson through a Tailscale subnet route; deploy/watson/LIVE_DOORS.md).
+    # which needs a private network path from the server to the home network; deploy/watson/LIVE_DOORS.md).
+    # watson without Tailscale has no such path: it uses cloud.
     transport: cloud
     # local-url: http://192.168.1.50   # local only: the opener's DHCP-reserved private address
     # Sending open/close to the real doors: off (every command rejected before anything is built),

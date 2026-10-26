@@ -1,7 +1,7 @@
 package home.casita.security.access;
 
-import static home.casita.security.access.TestTailnet.SHIR_PHONE;
-import static home.casita.security.access.TestTailnet.from;
+import static home.casita.security.access.TestBrowsers.SHIR_PHONE;
+import static home.casita.security.access.TestBrowsers.from;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -26,7 +26,7 @@ import home.casita.security.store.SecurityStore;
 
 /** The access flows with the DynamoDB store (DynamoDB Local, in the test JVM), plus failing closed in an outage. */
 @SpringBootTest(properties = {"casita.storage.type=dynamodb", "casita.storage.region=us-east-1"})
-@Import({TestTailnet.Config.class, LocalDynamo.Config.class})
+@Import({TestBrowsers.Config.class, LocalDynamo.Config.class})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class DynamoAccessFlowTest extends AccessFlowContract {
 
@@ -45,7 +45,7 @@ class DynamoAccessFlowTest extends AccessFlowContract {
 
     @Test
     void duringAnOutageEverySessionIsRefused() throws Exception {
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         expectGarage(session, SHIR_PHONE, 200);
 
         dynamo.down(true);
@@ -79,11 +79,11 @@ class DynamoAccessFlowTest extends AccessFlowContract {
 
     @Test
     void anOutageDuringSignInGivesNoSession() {
-        TestTailnet.enrollNewPasskey(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        TestBrowsers.enrollNewPasskey(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         MockHttpSession session = new MockHttpSession();
 
         dynamo.failBefore("transactGetItems", 1); // the sign-in's consistent read of member, passkey and device
-        String refusal = TestTailnet.signIn(context, session, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        String refusal = TestBrowsers.signIn(context, session, "shir", "c2hpcnMta2V5", SHIR_PHONE);
 
         assertThat(refusal).isEqualTo("security store unavailable");
         assertThat(session.isInvalid()).isTrue();
@@ -113,7 +113,7 @@ class DynamoAccessFlowTest extends AccessFlowContract {
 
     @Test
     void aMemberRevocationWhoseCleanupFailsStillRefusesThemAndCanBeRerun() throws Exception {
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
 
         dynamo.failBefore("query", 1); // the member record is updated, then the cleanup's first index query fails
         mvc.perform(delete("/admin/members/shir").header(LocalAdmin.HEADER, adminSecret()))

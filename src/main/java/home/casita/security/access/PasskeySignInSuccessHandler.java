@@ -56,6 +56,11 @@ public class PasskeySignInSuccessHandler implements AuthenticationSuccessHandler
             response.getWriter().write("{\"authenticated\":false}");
             return;
         }
+        // The browser key this session is bound to: renewed, so a browser in daily use never loses it.
+        HttpSession session = request.getSession(false);
+        if (session != null && session.getAttribute(AccessSession.BINDING) instanceof AccessSession.Binding binding) {
+            devices.resolve(request).filter(d -> d.nodeId().equals(binding.nodeId())).ifPresent(d -> devices.renew(request, response, d));
+        }
         next.onAuthenticationSuccess(request, response, authentication);
     }
 
@@ -75,7 +80,7 @@ public class PasskeySignInSuccessHandler implements AuthenticationSuccessHandler
         if (pending instanceof EnrollmentClaim claim && claim.memberId().equals(member) && claim.nodeId().equals(device.get().nodeId())) {
             try {
                 if (decisions.enrollmentSession(member, claim, device.get()) == null && store.enroll(claim, null, Bytes.fromBase64(credentialId))) {
-                    log.info("Invite {} finished: existing passkey for {} on node {} ({})", claim.inviteId(), member, claim.nodeName(), claim.label());
+                    log.info("Invite {} finished: existing passkey for {} on device {} ({})", claim.inviteId(), member, claim.nodeName(), claim.label());
                 }
             } catch (StoreUnavailableException e) {
                 return "security store unavailable";

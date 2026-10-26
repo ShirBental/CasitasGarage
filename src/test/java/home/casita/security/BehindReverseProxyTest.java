@@ -19,15 +19,17 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 
+import home.casita.security.access.DeviceKeys;
 import home.casita.security.access.Invitations;
+import home.casita.security.access.LocalAdmin;
 import home.casita.security.store.SecurityStore;
-import home.casita.security.access.TestTailnet;
+import home.casita.security.access.TestBrowsers;
 
 /**
- * Enrolling a phone through tailscale serve, on a real Tomcat (MockMvc skips Tomcat's forwarded-header
- * handling). tailscale serve forwards https://<name>.ts.net to http://127.0.0.1:8080, keeping Host, setting
- * X-Forwarded-For to the phone's tailnet address, X-Forwarded-Proto and X-Forwarded-Host, and adding
- * Tailscale-User-Login (Tailscale 1.104's serve.go). tailscaled is the test's pretend one.
+ * Enrolling a phone through the reverse proxy, on a real Tomcat (MockMvc skips Tomcat's forwarded-header
+ * handling). Caddy forwards https://<public name> to http://127.0.0.1:8080, keeping Host, and replacing any
+ * client-sent X-Forwarded-For, -Proto and -Host with its own: the client's address, https and the public name
+ * (deploy/watson/Caddyfile). Tomcat trusts those from 127.0.0.1 only.
  *
  * <p>The bug this guards against: Casita answered a successful invite sign-in with
  * {@code Location: http://127.0.0.1:8080/passkey}. Safari blocked that redirect (the page's
@@ -35,14 +37,16 @@ import home.casita.security.access.TestTailnet;
  * already rotated: 403. No CSRF or test helpers here: the real token from the page and the real cookies.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "casita.security.data-dir=target/test-data/tailscale",
+        "casita.security.data-dir=target/test-data/reverse-proxy",
         "casita.security.family=shir",
-        "casita.security.rp-id=macbook-air.example-tailnet.ts.net",
-        "casita.security.allowed-origins=https://macbook-air.example-tailnet.ts.net"})
-@Import(TestTailnet.Config.class)
-class BehindTailscaleServeTest {
+        "casita.security.rp-id=casita.example.org",
+        "casita.security.allowed-origins=https://casita.example.org"})
+@Import(TestBrowsers.Config.class)
+class BehindReverseProxyTest {
 
-    static final String NAME = "macbook-air.example-tailnet.ts.net";
+    static final String NAME = "casita.example.org";
+    /** The phone's address on the internet (a documentation address), as Caddy reports it. */
+    static final String PHONE_ADDRESS = "203.0.113.10";
     static final String ORIGIN = "https://" + NAME;
 
     @LocalServerPort
@@ -55,13 +59,12 @@ class BehindTailscaleServeTest {
     private final HttpClient http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
     private final Map<String, String> cookies = new LinkedHashMap<>(); // what Safari would keep for the site
 
-    /** A request as tailscale serve delivers it. */
+    /** A request as Caddy delivers it. */
     private HttpRequest.Builder proxied(String path) {
         return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
                 .header("X-Forwarded-Proto", "https")
                 .header("X-Forwarded-Host", NAME)
-                .header("X-Forwarded-For", TestTailnet.SHIR_PHONE.address())
-                .header("Tailscale-User-Login", TestTailnet.SHIR_PHONE.login());
+                .header("X-Forwarded-For", PHONE_ADDRESS);
     }
 
     private HttpResponse<String> send(HttpRequest.Builder request) throws Exception {
@@ -107,6 +110,11 @@ class BehindTailscaleServeTest {
         String location = signIn.headers().firstValue("Location").orElseThrow();
         assertThat(location).doesNotContain("127.0.0.1").isIn("/passkey", ORIGIN + "/passkey");
         assertThat(signIn.headers().allValues("Set-Cookie")).anyMatch(c -> c.startsWith("JSESSIONID=") && c.contains("Secure"));
+        // This browser's new browser key: host-only, HTTPS-only, invisible to scripts, and the device the invite is for.
+        String key = signIn.headers().allValues("Set-Cookie").stream().filter(c -> c.startsWith(DeviceKeys.COOKIE + "=")).findFirst().orElseThrow();
+        assertThat(key).contains("Path=/", "Secure", "HttpOnly", "SameSite=Lax").doesNotContain("Domain=");
+        String deviceId = cookies.get(DeviceKeys.COOKIE).substring(0, cookies.get(DeviceKeys.COOKIE).indexOf('.'));
+        assertThat(store.invitationsOf("shir")).anyMatch(i -> deviceId.equals(i.nodeId()));
 
         // 3. Following it, enrolling: the Face ID setup page.
         HttpResponse<String> setup = send(proxied("/passkey").GET());
@@ -122,11 +130,12 @@ class BehindTailscaleServeTest {
         Matcher hidden = Pattern.compile("name=\"_csrf\" type=\"hidden\" value=\"([^\"]+)\"").matcher(page.body());
         assertThat(hidden.find()).isTrue();
 
-        // A tailnet address claimed in X-Forwarded-For, but no Tailscale-User-Login: not tailscale serve.
+        // Plain http, not through the proxy, Tailscale's identity header and all: the browser couldn't keep a browser key.
         HttpResponse<String> signIn = send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/login/ott"))
-                .header("X-Forwarded-Proto", "https").header("X-Forwarded-Host", NAME).header("X-Forwarded-For", TestTailnet.SHIR_PHONE.address())
+                .header("Tailscale-User-Login", "shir@example.com")
                 .header("Content-Type", "application/x-www-form-urlencoded").header("Origin", ORIGIN)
                 .POST(form("token", token, "_csrf", hidden.group(1))));
+        assertThat(signIn.headers().allValues("Set-Cookie")).noneMatch(c -> c.startsWith(DeviceKeys.COOKIE));
 
         assertThat(signIn.statusCode()).isEqualTo(302);
         assertThat(signIn.headers().firstValue("Location").orElseThrow()).isIn("/login?device-unverified", ORIGIN + "/login?device-unverified");
@@ -140,6 +149,18 @@ class BehindTailscaleServeTest {
 
         assertThat(home.statusCode()).isEqualTo(302);
         assertThat(home.headers().firstValue("Location").orElseThrow()).doesNotContain("127.0.0.1").isIn("/login", ORIGIN + "/login");
+    }
+
+    @Test
+    void administrationThroughTheProxyIsRefusedEvenWithTheSecret() throws Exception {
+        String secret = java.nio.file.Files.readString(java.nio.file.Path.of("target/test-data/reverse-proxy/admin.secret")).trim();
+        // As Caddy would forward it (if it didn't already answer /admin itself): Tomcat takes the client's address.
+        HttpResponse<String> proxiedAdmin = send(proxied("/admin/access").header(LocalAdmin.HEADER, secret).GET());
+        assertThat(proxiedAdmin.statusCode()).isEqualTo(403);
+        // Straight to 127.0.0.1, as casita-access does: allowed.
+        HttpResponse<String> local = http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/admin/access"))
+                .header(LocalAdmin.HEADER, secret).GET().build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(local.statusCode()).isEqualTo(200);
     }
 
     @Test

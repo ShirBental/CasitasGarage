@@ -23,7 +23,7 @@ import com.google.cloud.firestore.DocumentSnapshot;
 import com.google.cloud.firestore.Firestore;
 import com.google.cloud.firestore.QueryDocumentSnapshot;
 
-import home.casita.security.access.TestTailnet;
+import home.casita.security.access.TestBrowsers;
 import home.casita.security.store.FirestoreSecurityStore.SecurityEvent;
 import home.casita.security.store.SecurityStore.EnrollmentClaim;
 import home.casita.security.store.SecurityStore.Invitation;
@@ -138,28 +138,28 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void identifiersThatCantBeDocumentIdsReadAsAbsentAndWriteNothing() {
-        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
         for (String bad : List.of("n/../c_c2hpcnMta2V5", "__name__", "a/b", "")) {
             assertThat(store.device(bad)).as(bad).isEmpty();
             assertThat(store.member(bad)).as(bad).isEmpty();
             assertThat(store.revokeDevice(bad)).as(bad).isFalse();
             assertThat(store.invitation(bad)).as(bad).isEmpty();
-            assertThat(store.consume(bad, TestTailnet.SHIR_IPAD.nodeId(), "ipad", "r", "e")).as(bad).isEmpty();
+            assertThat(store.consume(bad, TestBrowsers.SHIR_IPAD.nodeId(), "ipad", "r", "e")).as(bad).isEmpty();
         }
         // A forged path can't read another collection's document as an access decision.
         assertThat(store.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), "n/../m_shir").device()).isEmpty();
-        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
     }
 
     @Test
     void anotherMembersDocumentsAreNeverListedAsTheirs() {
-        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
-        enrolled("hubby", "aHViYnlzLWtleQ", TestTailnet.HUBBY_PHONE);
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
+        enrolled("hubby", "aHViYnlzLWtleQ", TestBrowsers.HUBBY_PHONE);
 
-        assertThat(store.devicesOf("shir")).extracting(SecurityStore.Device::nodeId).containsExactly(TestTailnet.SHIR_PHONE.nodeId());
+        assertThat(store.devicesOf("shir")).extracting(SecurityStore.Device::nodeId).containsExactly(TestBrowsers.SHIR_PHONE.nodeId());
         assertThat(store.passkeysOf("hubby")).extracting(SecurityStore.Passkey::id).containsExactly("aHViYnlzLWtleQ");
         assertThat(store.invitationsOf("hubby")).allSatisfy(i -> assertThat(i.memberId()).isEqualTo("hubby"));
-        assertThat(store.accessView("hubby", Bytes.fromBase64("c2hpcnMta2V5"), TestTailnet.SHIR_PHONE.nodeId())).satisfies(v -> {
+        assertThat(store.accessView("hubby", Bytes.fromBase64("c2hpcnMta2V5"), TestBrowsers.SHIR_PHONE.nodeId())).satisfies(v -> {
             assertThat(v.passkey()).get().satisfies(p -> assertThat(p.activeFor("hubby")).isFalse());
             assertThat(v.device()).get().satisfies(d -> assertThat(d.activeFor("hubby")).isFalse());
         });
@@ -181,7 +181,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         List<Optional<Invitation>> results = concurrently(20, () -> {
             String[] a = attempts.get(next.getAndIncrement());
             try {
-                return store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", a[0], a[1]);
+                return store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", a[0], a[1]);
             } catch (StoreUnavailableException e) {
                 unavailable.incrementAndGet();
                 return Optional.<Invitation>empty();
@@ -197,10 +197,10 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
             assertThat(stored.enrollmentId()).isEqualTo(winner.enrollmentId()); // the winner's write, and only it
         });
         String[] winning = attempts.stream().filter(a -> a[1].equals(winner.enrollmentId())).findFirst().orElseThrow();
-        assertThat(store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", winning[0], winning[1])).get()
+        assertThat(store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", winning[0], winning[1])).get()
                 .extracting(Invitation::enrollmentId).isEqualTo(winner.enrollmentId());
         for (String[] a : attempts) {
-            if (a != winning) assertThat(store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", a[0], a[1])).isEmpty();
+            if (a != winning) assertThat(store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", a[0], a[1])).isEmpty();
         }
         assertThat(events("INVITATION_CONSUMED")).hasSize(1);
     }
@@ -210,13 +210,13 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         Invitation i = invite("shir");
         faults.loseResponse("Commit", 1);
 
-        Optional<Invitation> consumed = store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1");
+        Optional<Invitation> consumed = store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1");
 
         assertThat(consumed).get().satisfies(c -> {
             assertThat(c.enrollmentId()).isEqualTo("eid-1");
             assertThat(c.expiresAt()).isEqualTo(i.expiresAt());
         });
-        assertThat(store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-2", "eid-2")).isEmpty();
+        assertThat(store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid-2", "eid-2")).isEmpty();
         assertThat(events("INVITATION_CONSUMED")).hasSize(1); // the rerun saw its own write and wrote nothing
     }
 
@@ -225,25 +225,25 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         Invitation i = invite("shir");
         faults.failBefore("Commit", 1_000);
 
-        assertThatThrownBy(() -> store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid", "eid"))
+        assertThatThrownBy(() -> store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid", "eid"))
                 .isInstanceOf(StoreUnavailableException.class);
 
         faults.reset();
         assertThat(store.invitation(i.tokenHash())).get().extracting(Invitation::status).isEqualTo(InvitationStatus.PENDING);
-        assertThat(store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid", "eid")).isPresent();
+        assertThat(store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid", "eid")).isPresent();
     }
 
     @Test
     void contentionIsRetriedABoundedNumberOfTimesThenRefused() {
         Invitation i = invite("shir");
         faults.abort("Commit", 2); // two lost locks: the third run commits
-        assertThat(store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1")).isPresent();
+        assertThat(store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1")).isPresent();
         assertThat(events("INVITATION_CONSUMED")).hasSize(1);
 
         Invitation other = invite("hubby");
         faults.reset();
         faults.abort("Commit", 1_000); // contended for good
-        assertThatThrownBy(() -> store.consume(other.tokenHash(), TestTailnet.HUBBY_PHONE.nodeId(), "phone", "rid-2", "eid-2"))
+        assertThatThrownBy(() -> store.consume(other.tokenHash(), TestBrowsers.HUBBY_PHONE.nodeId(), "phone", "rid-2", "eid-2"))
                 .isInstanceOf(StoreUnavailableException.class);
         // Bounded: at most ATTEMPTS decisions, each one commit (allowing for the client library's own resend of a commit).
         assertThat(faults.calls("Commit")).isLessThanOrEqualTo(2 * FirestoreSecurityStore.ATTEMPTS);
@@ -255,7 +255,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void anEnrollmentWhoseCommitAnswerWasLostReportsSuccessAndWritesOnce() {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         faults.loseResponse("Commit", 1);
 
         assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isTrue();
@@ -268,14 +268,14 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void anEnrollmentThatNeverReachesFirestoreIsRefusedWithNothingWritten() {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         CredentialRecord record = passkey("shir", "c2hpcnMta2V5"); // gives Shir her user handle: a write, so before the fault
         faults.failBefore("Commit", 1_000);
 
         assertThat(store.enroll(claim, record, null)).isFalse();
 
         faults.reset();
-        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).isEmpty();
         assertThat(store.passkey(Bytes.fromBase64("c2hpcnMta2V5"))).isEmpty();
         assertThat(store.invitationById(claim.inviteId())).get().satisfies(i -> assertThat(i.enrolledAt()).isNull());
         assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isTrue(); // the same enrollment, once Firestore is back
@@ -283,7 +283,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void ifTheReadBackFailsTooItIsRefusedButTheStoredStateIsWhole() {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         FaultyFirestore f = new FaultyFirestore();
         FirestoreSecurityStore impatient = impatient(f);
         f.loseResponseThenDown("Commit");
@@ -291,7 +291,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         assertThat(impatient.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isFalse(); // fail closed
 
         // It did happen, entirely: the next sign-in on that phone finds device and passkey both.
-        assertThat(store.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestTailnet.SHIR_PHONE.nodeId())).satisfies(v -> {
+        assertThat(store.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestBrowsers.SHIR_PHONE.nodeId())).satisfies(v -> {
             assertThat(v.device()).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
             assertThat(v.passkey()).get().satisfies(p -> assertThat(p.activeFor("shir")).isTrue());
         });
@@ -302,7 +302,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
     void aRepeatedEnrollmentLongAfterIsAcknowledgedFromStateAndDuplicatesNothing() {
         // Firestore has no idempotency token and no ten-minute window: a resend at any time is judged by what is stored.
         Invitation invitation = invite("shir");
-        EnrollmentClaim claim = consume(invitation, TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invitation, TestBrowsers.SHIR_PHONE);
         CredentialRecord record = passkey("shir", "c2hpcnMta2V5");
         assertThat(store.enroll(claim, record, null)).isTrue();
 
@@ -321,24 +321,24 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void anEnrollmentThatNeverHappenedCantSucceedLate() {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         clock.advance(Duration.ofMinutes(11));
 
         assertThat(store.enroll(claim, passkey("shir", "c2hpcnMta2V5"), null)).isFalse();
-        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).isEmpty();
         assertThat(events("ENROLLMENT_REFUSED")).singleElement().extracting(SecurityEvent::reason).isEqualTo("expired");
     }
 
     @Test
     void contendedEnrollmentsGiveUpWithNothingPartial() {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         CredentialRecord record = passkey("shir", "c2hpcnMta2V5");
         faults.abort("Commit", 1_000);
 
         assertThat(store.enroll(claim, record, null)).isFalse();
 
         faults.reset();
-        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).isEmpty();
         assertThat(store.passkey(Bytes.fromBase64("c2hpcnMta2V5"))).isEmpty();
         assertThat(store.invitationById(claim.inviteId())).get().satisfies(i -> assertThat(i.enrolledAt()).isNull());
     }
@@ -346,8 +346,8 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
     @Test
     void oneCredentialRegisteredByTwoEnrollmentsAtOnceIsStoredOnce() throws Exception {
         user("shir");
-        EnrollmentClaim phone = consume(invite("shir"), TestTailnet.SHIR_PHONE);
-        EnrollmentClaim ipad = consume(invite("shir"), TestTailnet.SHIR_IPAD);
+        EnrollmentClaim phone = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
+        EnrollmentClaim ipad = consume(invite("shir"), TestBrowsers.SHIR_IPAD);
         AtomicInteger next = new AtomicInteger();
 
         List<Boolean> results = concurrently(2, () -> next.getAndIncrement() == 0
@@ -394,14 +394,14 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void anEnrollmentDecidedBeforeTheMemberWasRevokedCantLandAfter() throws Exception {
-        EnrollmentClaim claim = consume(invite("shir"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
         CredentialRecord record = passkey("shir", "c2hpcnMta2V5");
         SecurityStore other = restarted();
 
         boolean enrolled = interleaved(() -> store.enroll(claim, record, null), () -> other.revokeMember("shir"));
 
         assertThat(enrolled).isFalse();
-        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).isEmpty();
         assertThat(store.passkey(record.getCredentialId())).isEmpty();
         assertThat(events("ENROLLMENT_REFUSED")).singleElement().extracting(SecurityEvent::reason).isEqualTo("member-inactive");
         assertThat(events("DEVICE_ENROLLED")).isEmpty();
@@ -409,21 +409,21 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void anEnrollmentWithAnExistingPasskeyDecidedBeforeItWasRevokedCantLandAfter() throws Exception {
-        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
-        EnrollmentClaim ipad = consume(invite("shir"), TestTailnet.SHIR_IPAD);
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
+        EnrollmentClaim ipad = consume(invite("shir"), TestBrowsers.SHIR_IPAD);
         SecurityStore other = restarted();
 
         boolean enrolled = interleaved(() -> store.enroll(ipad, null, Bytes.fromBase64("c2hpcnMta2V5")),
                 () -> other.revokePasskey(Bytes.fromBase64("c2hpcnMta2V5")));
 
         assertThat(enrolled).isFalse();
-        assertThat(store.device(TestTailnet.SHIR_IPAD.nodeId())).isEmpty();
+        assertThat(store.device(TestBrowsers.SHIR_IPAD.nodeId())).isEmpty();
     }
 
     @Test
     void anEnrollmentDecidedBeforeItsInvitationWasRevokedCantLandAfter() throws Exception {
         Invitation i = invite("shir");
-        EnrollmentClaim claim = consume(i, TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(i, TestBrowsers.SHIR_PHONE);
         CredentialRecord record = passkey("shir", "c2hpcnMta2V5");
         SecurityStore other = restarted();
 
@@ -431,7 +431,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
                 () -> assertThat(other.revokeInvitation(i.tokenHash(), i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED));
 
         assertThat(enrolled).isFalse();
-        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).isEmpty();
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).isEmpty();
         assertThat(store.invitation(i.tokenHash())).get().extracting(Invitation::status).isEqualTo(InvitationStatus.REVOKED);
     }
 
@@ -439,8 +439,8 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
     void anEnrollmentDecidedBeforeAnotherMemberTookTheNodeCantLandAfter() throws Exception {
         user("shir");
         user("hubby");
-        EnrollmentClaim shir = consume(invite("shir"), TestTailnet.SHIR_PHONE);
-        EnrollmentClaim hubby = consume(invite("hubby"), TestTailnet.SHIR_PHONE);
+        EnrollmentClaim shir = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
+        EnrollmentClaim hubby = consume(invite("hubby"), TestBrowsers.SHIR_PHONE);
         CredentialRecord shirs = passkey("shir", "c2hpcg");
         CredentialRecord hubbys = passkey("hubby", "aHViYnk");
         SecurityStore other = restarted();
@@ -448,7 +448,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         boolean enrolled = interleaved(() -> store.enroll(shir, shirs, null), () -> assertThat(other.enroll(hubby, hubbys, null)).isTrue());
 
         assertThat(enrolled).isFalse();
-        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("hubby")).isTrue());
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("hubby")).isTrue());
         assertThat(store.passkey(shirs.getCredentialId())).isEmpty();
     }
 
@@ -457,15 +457,15 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         Invitation revoked = invite("shir");
         SecurityStore other = restarted();
         Optional<Invitation> afterRevoke = interleaved(
-                () -> store.consume(revoked.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1"),
+                () -> store.consume(revoked.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid-1", "eid-1"),
                 () -> other.revokeInvitation(revoked.tokenHash(), revoked.inviteId()));
         assertThat(afterRevoke).isEmpty();
         assertThat(store.invitation(revoked.tokenHash())).get().extracting(Invitation::status).isEqualTo(InvitationStatus.REVOKED);
 
         Invitation raced = invite("shir");
         Optional<Invitation> afterOther = interleaved(
-                () -> store.consume(raced.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid-2", "eid-2"),
-                () -> assertThat(other.consume(raced.tokenHash(), TestTailnet.SHIR_IPAD.nodeId(), "ipad", "rid-3", "eid-3")).isPresent());
+                () -> store.consume(raced.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid-2", "eid-2"),
+                () -> assertThat(other.consume(raced.tokenHash(), TestBrowsers.SHIR_IPAD.nodeId(), "ipad", "rid-3", "eid-3")).isPresent());
         assertThat(afterOther).isEmpty();
         assertThat(store.invitation(raced.tokenHash())).get().extracting(Invitation::enrollmentId).isEqualTo("eid-3");
         assertThat(events("INVITATION_CONSUMED")).hasSize(1);
@@ -473,7 +473,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void aSignInRecordedAfterThePasskeyWasRevokedIsRefused() throws Exception {
-        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
         CredentialRecord used = passkey("shir", "c2hpcnMta2V5");
         SecurityStore other = restarted();
 
@@ -487,51 +487,51 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
 
     @Test
     void aRevocationIsSeenByTheVeryNextAccessCheckFromAnotherClient() {
-        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
         SecurityStore otherServer = restarted(); // another client: no cache shared with the one that revokes
 
-        assertThat(store.revokeDevice(TestTailnet.SHIR_PHONE.nodeId())).isTrue();
+        assertThat(store.revokeDevice(TestBrowsers.SHIR_PHONE.nodeId())).isTrue();
 
-        assertThat(otherServer.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestTailnet.SHIR_PHONE.nodeId()).device()).get()
+        assertThat(otherServer.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestBrowsers.SHIR_PHONE.nodeId()).device()).get()
                 .satisfies(d -> assertThat(d.activeFor("shir")).isFalse());
         assertThat(events("DEVICE_REVOKED")).singleElement().satisfies(e -> {
             assertThat(e.memberId()).isEqualTo("shir");
-            assertThat(e.nodeId()).isEqualTo(TestTailnet.SHIR_PHONE.nodeId());
+            assertThat(e.nodeId()).isEqualTo(TestBrowsers.SHIR_PHONE.nodeId());
         });
     }
 
     @Test
     void duringAnOutageEveryReadAndWriteIsUnavailable() {
-        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
         Invitation i = invite("shir");
         FaultyFirestore f = new FaultyFirestore();
         FirestoreSecurityStore impatient = impatient(f);
         f.down(true);
 
         for (Runnable call : List.<Runnable>of(
-                () -> impatient.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestTailnet.SHIR_PHONE.nodeId()),
+                () -> impatient.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestBrowsers.SHIR_PHONE.nodeId()),
                 () -> impatient.enrollmentView(i.tokenHash(), "shir"),
                 () -> impatient.member("shir"),
                 () -> impatient.passkeysOf("shir"),
-                () -> impatient.consume(i.tokenHash(), TestTailnet.SHIR_IPAD.nodeId(), "ipad", "r", "e"),
-                () -> impatient.revokeDevice(TestTailnet.SHIR_PHONE.nodeId()),
+                () -> impatient.consume(i.tokenHash(), TestBrowsers.SHIR_IPAD.nodeId(), "ipad", "r", "e"),
+                () -> impatient.revokeDevice(TestBrowsers.SHIR_PHONE.nodeId()),
                 () -> impatient.revokeInvitation(i.tokenHash(), i.inviteId()),
                 () -> impatient.recordUse(passkey("shir", "c2hpcnMta2V5"), "shir"))) {
             assertThatThrownBy(call::run).isInstanceOf(StoreUnavailableException.class);
         }
-        assertThat(store.device(TestTailnet.SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
         assertThat(store.invitation(i.tokenHash())).get().extracting(Invitation::status).isEqualTo(InvitationStatus.PENDING);
     }
 
     @Test
     void aSlowFirestoreIsAnUnavailableOne() {
-        enrolled("shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
         FaultyFirestore f = new FaultyFirestore();
         FirestoreSecurityStore impatient = impatient(f);
         f.failBefore("BatchGetDocuments", 1_000); // retried by the client until the deadline
 
         long start = System.nanoTime();
-        assertThatThrownBy(() -> impatient.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestTailnet.SHIR_PHONE.nodeId()))
+        assertThatThrownBy(() -> impatient.accessView("shir", Bytes.fromBase64("c2hpcnMta2V5"), TestBrowsers.SHIR_PHONE.nodeId()))
                 .isInstanceOf(StoreUnavailableException.class);
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(3));
     }
@@ -546,7 +546,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         assertThatThrownBy(() -> impatient.revokeInvitation(i.tokenHash(), i.inviteId())).isInstanceOf(StoreUnavailableException.class);
 
         assertThat(store.revokeInvitation(i.tokenHash(), i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.ALREADY_REVOKED);
-        assertThat(store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "r", "e")).isEmpty();
+        assertThat(store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "r", "e")).isEmpty();
     }
 
     @Test
@@ -556,6 +556,79 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         assertThat(store.revokeInvitation(i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED);
     }
 
+    /* ---------- Shortcut tokens ---------- */
+
+    @Test
+    void aShortcutTokenIsOneDocumentByItsHashWithNothingSecretInItsEvents() throws Exception {
+        SecurityStore.ShortcutToken t = shortcutToken("shir");
+        DocumentSnapshot doc = db.collection("shortcutTokens").document("t_" + t.tokenHash()).get().get(5, TimeUnit.SECONDS);
+
+        assertThat(doc.exists()).isTrue();
+        assertThat(doc.getData()).doesNotContainKey("token").containsEntry("tokenId", t.tokenId()).containsEntry("status", "ACTIVE")
+                .containsEntry("door", "ford").containsEntry("action", "OPEN");
+        store.revokeShortcutToken(t.tokenId());
+
+        List<QueryDocumentSnapshot> events = db.collection("securityEvents").whereEqualTo("shortcutTokenId", t.tokenId()).get()
+                .get(5, TimeUnit.SECONDS).getDocuments();
+        assertThat(events).extracting(e -> e.getString("type")).containsExactlyInAnyOrder("SHORTCUT_TOKEN_CREATED", "SHORTCUT_TOKEN_REVOKED");
+        for (QueryDocumentSnapshot e : events) {
+            assertThat(e.getId()).doesNotContain(t.tokenHash());
+            assertThat(e.getData().values()).doesNotContain(t.tokenHash());
+        }
+    }
+
+    @Test
+    void aShortcutTokenWhoseCreationAnswerWasLostIsStoredOnce() throws Exception {
+        faults.loseResponse("Commit", 1);
+        SecurityStore.ShortcutToken t = shortcutToken("shir"); // no exception: the rerun found its own write
+
+        assertThat(store.shortcutView(t.tokenHash()).token()).contains(t);
+        assertThat(db.collection("securityEvents").whereEqualTo("type", "SHORTCUT_TOKEN_CREATED").get().get(5, TimeUnit.SECONDS).size())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void aShortcutTokenRevocationWhoseAnswerWasLostIsTheTruth() throws Exception {
+        SecurityStore.ShortcutToken t = shortcutToken("shir");
+        faults.loseResponse("Commit", 1);
+
+        assertThat(store.revokeShortcutToken(t.tokenId())).isTrue();
+        assertThat(store.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> assertThat(stored.revoked()).isTrue());
+        assertThat(db.collection("securityEvents").whereEqualTo("type", "SHORTCUT_TOKEN_REVOKED").get().get(5, TimeUnit.SECONDS).size())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void duringAnOutageShortcutTokensAreUnavailableNeverValid() {
+        SecurityStore.ShortcutToken t = shortcutToken("shir");
+        FaultyFirestore f = new FaultyFirestore();
+        FirestoreSecurityStore impatient = impatient(f);
+        f.down(true);
+
+        for (Runnable call : List.<Runnable>of(
+                () -> impatient.shortcutView(t.tokenHash()),
+                () -> impatient.shortcutTokensOf("shir"),
+                () -> impatient.shortcutTokenById(t.tokenId()),
+                () -> impatient.revokeShortcutToken(t.tokenId()),
+                () -> impatient.createShortcutToken(new SecurityStore.ShortcutToken("b".repeat(64), "st-00000000000b", "shir", "x", "ford",
+                        "OPEN", Status.ACTIVE, clock.instant(), clock.instant().plus(Duration.ofDays(1)), null)))) {
+            assertThatThrownBy(call::run).isInstanceOf(StoreUnavailableException.class);
+        }
+        assertThat(store.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> assertThat(stored.revoked()).isFalse());
+        assertThat(store.shortcutView("b".repeat(64)).token()).isEmpty();
+    }
+
+    @Test
+    void aTokenRevokedFromOneClientIsRefusedByTheNextReadFromAnother() {
+        SecurityStore.ShortcutToken t = shortcutToken("shir");
+        SecurityStore other = restarted();
+        assertThat(other.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> assertThat(stored.revoked()).isFalse());
+
+        store.revokeShortcutToken(t.tokenId());
+
+        assertThat(other.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> assertThat(stored.revoked()).isTrue());
+    }
+
     /* ---------- security events ---------- */
 
     @Test
@@ -563,24 +636,24 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         Duration tick = Duration.ofSeconds(1); // events are listed by time
         Invitation i = invite("shir");
         clock.advance(tick);
-        EnrollmentClaim claim = consume(i, TestTailnet.SHIR_PHONE);
+        EnrollmentClaim claim = consume(i, TestBrowsers.SHIR_PHONE);
         clock.advance(tick);
         CredentialRecord record = passkey("shir", "c2hpcnMta2V5");
         store.enroll(claim, record, null);
         clock.advance(tick);
         store.recordUse(record, "shir");
         clock.advance(tick);
-        store.consume(i.tokenHash(), TestTailnet.SHIR_IPAD.nodeId(), "ipad", "replayed", "replayed"); // a replayed invite link
+        store.consume(i.tokenHash(), TestBrowsers.SHIR_IPAD.nodeId(), "ipad", "replayed", "replayed"); // a replayed invite link
         clock.advance(tick);
         store.revokePasskey(record.getCredentialId());
         clock.advance(tick);
-        store.revokeDevice(TestTailnet.SHIR_PHONE.nodeId());
+        store.revokeDevice(TestBrowsers.SHIR_PHONE.nodeId());
         clock.advance(tick);
-        store.releaseDevice(TestTailnet.SHIR_PHONE.nodeId());
+        store.releaseDevice(TestBrowsers.SHIR_PHONE.nodeId());
         clock.advance(tick);
         store.revokeMember("shir");
         clock.advance(tick);
-        store.consume("0".repeat(64), TestTailnet.SHIR_IPAD.nodeId(), "ipad", "r", "e"); // an unknown token: nothing to record
+        store.consume("0".repeat(64), TestBrowsers.SHIR_IPAD.nodeId(), "ipad", "r", "e"); // an unknown token: nothing to record
 
         assertThat(firestore().securityEvents(50)).extracting(SecurityEvent::type).containsExactly("MEMBER_REVOKED", "DEVICE_RELEASED",
                 "DEVICE_REVOKED", "PASSKEY_REVOKED", "INVITATION_REFUSED", "SIGNED_IN", "DEVICE_ENROLLED", "INVITATION_CONSUMED",
@@ -588,7 +661,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         assertThat(events("INVITATION_REFUSED")).singleElement().satisfies(e -> {
             assertThat(e.outcome()).isEqualTo("REFUSED");
             assertThat(e.reason()).isEqualTo("already-used");
-            assertThat(e.nodeId()).isEqualTo(TestTailnet.SHIR_IPAD.nodeId());
+            assertThat(e.nodeId()).isEqualTo(TestBrowsers.SHIR_IPAD.nodeId());
         });
         assertThat(events("DEVICE_ENROLLED")).singleElement().satisfies(e -> {
             assertThat(e.credentialId()).isEqualTo("c2hpcnMta2V5");
@@ -600,7 +673,7 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
     void aChangeThatFailsLeavesNoEventAndAnEventNeverOutlivesItsChange() {
         Invitation i = invite("shir");
         faults.failBefore("Commit", 1_000);
-        assertThatThrownBy(() -> store.consume(i.tokenHash(), TestTailnet.SHIR_PHONE.nodeId(), "phone", "rid", "eid"))
+        assertThatThrownBy(() -> store.consume(i.tokenHash(), TestBrowsers.SHIR_PHONE.nodeId(), "phone", "rid", "eid"))
                 .isInstanceOf(StoreUnavailableException.class);
         faults.reset();
 

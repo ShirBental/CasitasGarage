@@ -23,6 +23,10 @@ C = {k[len("WATSON_"):].lower(): v for k, v in os.environ.items() if k.startswit
 PERMS = sorted(C["perms"].split(","))
 IAP_RANGE = "35.235.240.0/20"
 FW_RULE = C["network"] + "-allow-iap-ssh"
+# Public HTTPS (docs/PUBLIC_HTTPS.md, created by provision-public.sh, not here): tcp:80 and tcp:443 from anywhere, only
+# to instances with the HTTPS tag. Port 80 is for certificate validation and the redirect to HTTPS; nothing else is open.
+HTTPS_FW_RULE = C["network"] + "-allow-https"
+HTTPS_TAG = C.get("https_tag") or "casita-https"
 ROLE_NAME = "projects/%s/roles/%s" % (C["project_id"], C["role_id"])
 SA_MEMBER = "serviceAccount:" + C["sa_email"]
 
@@ -64,7 +68,7 @@ def services():
 enabled = services()
 if enabled is None:
     out("PROBLEM", "Couldn't list the project's enabled APIs, so nothing could be checked.")
-    state.update(dict.fromkeys(["sa", "role", "binding", "firestore", "schema", "network", "subnet", "firewall", "vm"], "unknown"))
+    state.update(dict.fromkeys(["sa", "role", "binding", "firestore", "schema", "rules", "network", "subnet", "firewall", "vm"], "unknown"))
 else:
     missing = [a for a in C["apis"].split(",") if a not in enabled]
     for a in C["apis"].split(","):
@@ -181,7 +185,7 @@ if api("firestore.googleapis.com"):
     s, db = read("firestore")
     if not unreadable("firestore", "the Firestore database", s, db):
         if s == "absent":
-            out("CREATE", "Firestore (default): Native mode, %s, delete protection on" % C["firestore_location"])
+            out("CREATE", "Firestore (default): Native mode, %s, delete protection on, point-in-time recovery on" % C["firestore_location"])
             state["firestore"] = "absent"
             state["schema"] = "absent"
         else:
@@ -193,10 +197,14 @@ if api("firestore.googleapis.com"):
                 bad.append("mode %s, expected FIRESTORE_NATIVE" % db.get("type"))
             if db.get("deleteProtectionState") != "DELETE_PROTECTION_ENABLED":
                 bad.append("delete protection %s, expected DELETE_PROTECTION_ENABLED" % db.get("deleteProtectionState"))
+            if db.get("pointInTimeRecoveryEnablement") != "POINT_IN_TIME_RECOVERY_ENABLED":
+                bad.append("point-in-time recovery %s, expected POINT_IN_TIME_RECOVERY_ENABLED (enable it deliberately: gcloud "
+                           "firestore databases update --database='(default)' --enable-pitr; billed, docs/FIRESTORE.md)"
+                           % (db.get("pointInTimeRecoveryEnablement") or "unset"))
             if bad:
                 out("PROBLEM", "Firestore (default): " + "; ".join(bad) + ".")
             else:
-                out("OK", "Firestore (default): Native mode, %s, delete protection on" % C["firestore_location"])
+                out("OK", "Firestore (default): Native mode, %s, delete protection on, point-in-time recovery on" % C["firestore_location"])
             ss, doc = read("schema")
             if ss == "present":
                 version = ((doc or {}).get("fields", {}).get("schemaVersion", {}) or {}).get("integerValue")
@@ -216,10 +224,47 @@ if api("firestore.googleapis.com"):
                 out("NOTE", "meta/schema not checked (no access token): --apply checks it before writing")
                 state["schema"] = "unknown"
 else:
-    out("CREATE", "Firestore (default): Native mode, %s, delete protection on (Firestore API not enabled: checked after --apply)"
+    out("CREATE", "Firestore (default): Native mode, %s, delete protection on, point-in-time recovery on (Firestore API not enabled: "
+        "checked after --apply)"
         % C["firestore_location"])
     out("CREATE", "Schema marker meta/schema {schemaVersion: 1} (create-only)")
     state["firestore"] = state["schema"] = "absent"
+
+# ---------- Firestore Security Rules ----------
+def normalized(text):
+    """Rules text without comments and with whitespace collapsed: a reformatted file compares equal, a changed rule doesn't."""
+    kept = [l.split("//", 1)[0] for l in (text or "").splitlines()]
+    return " ".join(" ".join(kept).split())
+
+
+with open(C["rules_file"]) as f:
+    WANT_RULES = normalized(f.read())
+
+if api("firebaserules.googleapis.com"):
+    s, release = read("rules-release")
+    if not unreadable("rules", "the Firestore rules release", s, release):
+        if s == "absent":
+            out("CREATE", "Firestore Security Rules: deny all (firestore.rules), released as cloud.firestore (create-only)")
+            state["rules"] = "absent"
+        elif s == "unchecked":
+            out("NOTE", "Firestore Security Rules not checked (no access token): --apply checks them before writing")
+            state["rules"] = "unknown"
+        else:
+            rs, ruleset = read("rules-ruleset")
+            if not unreadable("rules", "the released Firestore ruleset", rs, ruleset):
+                files = ((ruleset or {}).get("source") or {}).get("files") or []
+                got = normalized("\n".join(f.get("content", "") for f in files))
+                if rs == "present" and got == WANT_RULES:
+                    out("OK", "Firestore Security Rules: deny all, as firestore.rules")
+                    state["rules"] = "present"
+                else:
+                    out("PROBLEM", "Firestore Security Rules released as cloud.firestore (%s) differ from firestore.rules. This script "
+                        "won't replace them: review them in the console, then release firestore.rules deliberately."
+                        % (release or {}).get("rulesetName", "?"))
+                    state["rules"] = "unknown"
+else:
+    out("CREATE", "Firestore Security Rules: deny all (firestore.rules) (Firebase Rules API not enabled: checked after --apply)")
+    state["rules"] = "absent"
 
 # ---------- network, firewall, VM ----------
 if api("compute.googleapis.com"):
@@ -278,7 +323,17 @@ if api("compute.googleapis.com"):
                 out("NOTE", "Firewall rule %s on %s is disabled." % (r.get("name"), C["network"]))
                 continue
             allowed = sorted("%s:%s" % (a.get("IPProtocol"), ",".join(a.get("ports", ["all"]))) for a in r["allowed"])
-            if r.get("name") == FW_RULE:
+            if r.get("name") == HTTPS_FW_RULE:
+                exact = (r.get("sourceRanges") == ["0.0.0.0/0"] and allowed == ["tcp:443", "tcp:80"] and not r.get("sourceTags")
+                         and not r.get("sourceServiceAccounts") and r.get("targetTags") == [HTTPS_TAG]
+                         and not r.get("targetServiceAccounts"))
+                if exact:
+                    out("OK", "Firewall %s: tcp:80,443 from anywhere, to tag %s only (public HTTPS)" % (HTTPS_FW_RULE, HTTPS_TAG))
+                else:
+                    out("PROBLEM", "Firewall %s isn't tcp:80,443 to tag %s only (sources %s, allows %s, targets %s). Fix it deliberately."
+                        % (HTTPS_FW_RULE, HTTPS_TAG, ",".join(r.get("sourceRanges", [])) or "-", " ".join(allowed),
+                           ",".join(r.get("targetTags", [])) or "every instance"))
+            elif r.get("name") == FW_RULE:
                 exact = (r.get("sourceRanges") == [IAP_RANGE] and allowed == ["tcp:22"] and not r.get("sourceTags")
                          and not r.get("sourceServiceAccounts"))
                 if exact:
@@ -289,8 +344,8 @@ if api("compute.googleapis.com"):
                         % (FW_RULE, IAP_RANGE, ",".join(r.get("sourceRanges", [])) or "-", " ".join(allowed)))
                     state["firewall"] = "unknown"
             else:
-                out("PROBLEM", "Unexpected inbound rule %s on %s (sources %s, allows %s): only %s may admit traffic."
-                    % (r.get("name"), C["network"], ",".join(r.get("sourceRanges", [])) or "-", " ".join(allowed), FW_RULE))
+                out("PROBLEM", "Unexpected inbound rule %s on %s (sources %s, allows %s): only %s and %s may admit traffic."
+                    % (r.get("name"), C["network"], ",".join(r.get("sourceRanges", [])) or "-", " ".join(allowed), FW_RULE, HTTPS_FW_RULE))
         if state["firewall"] == "absent":
             out("CREATE", "Firewall %s on %s: tcp:22 from %s (IAP) only" % (FW_RULE, C["network"], IAP_RANGE))
 

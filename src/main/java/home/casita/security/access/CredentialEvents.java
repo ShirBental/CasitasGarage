@@ -49,7 +49,7 @@ public class CredentialEvents {
         if (refusal != null) throw refuse(refusal);
         if (!store.enroll(claim, record, null)) throw refuse("the enrollment transaction was refused");
         session.removeAttribute(AccessSession.ENROLLMENT);
-        log.info("Invite {} finished: new passkey for {} on node {} ({})", claim.inviteId(), claim.memberId(), claim.nodeName(), claim.label());
+        log.info("Invite {} finished: new passkey for {} on device {} ({})", claim.inviteId(), claim.memberId(), claim.nodeName(), claim.label());
     }
 
     public void credentialUsed(CredentialRecord record) {

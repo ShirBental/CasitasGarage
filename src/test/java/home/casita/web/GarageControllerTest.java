@@ -25,15 +25,15 @@ import home.casita.garage.ActivityLog;
 import home.casita.garage.DoorRoster;
 import home.casita.garage.SimulatedDoor;
 import home.casita.security.access.LocalAdmin;
-import home.casita.security.access.TestTailnet;
+import home.casita.security.access.TestBrowsers;
 
 /**
  * The API over the practice garage (the default): two simulated doors, nothing reaches Meross. Requests come as
- * they would from a family member's authorized phone through tailscale serve, signed in with a passkey, so
+ * they would from a family member's authorized phone through the reverse proxy, signed in with a passkey, so
  * every request also passes AccessCheckFilter.
  */
 @SpringBootTest(properties = "casita.security.family=shir")
-@Import(TestTailnet.Config.class)
+@Import(TestBrowsers.Config.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class GarageControllerTest {
 
@@ -56,7 +56,7 @@ class GarageControllerTest {
     @org.junit.jupiter.api.AfterEach
     void forgetEnrollments() throws java.io.IOException {
         java.nio.file.Files.deleteIfExists(DATA.resolve("security.json"));
-        whois.reset();
+        browsers.reset();
     }
 
     private static final String[] DOORS = {"ford", "toyota"};
@@ -68,7 +68,7 @@ class GarageControllerTest {
     @Autowired
     private DoorRoster roster;
     @Autowired
-    private TestTailnet.FakeWhois whois;
+    private TestBrowsers.Browsers browsers;
 
     private MockMvc mvc;
 
@@ -79,10 +79,10 @@ class GarageControllerTest {
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
-        session = TestTailnet.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestTailnet.SHIR_PHONE);
+        session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestBrowsers.SHIR_PHONE);
         family = request -> {
             request.setSession(session);
-            return TestTailnet.from(TestTailnet.SHIR_PHONE).postProcessRequest(request);
+            return TestBrowsers.from(TestBrowsers.SHIR_PHONE).postProcessRequest(request);
         };
     }
 
@@ -127,41 +127,41 @@ class GarageControllerTest {
             mvc.perform(post("/api/doors/" + door + "/close").with(csrf())).andExpect(status().isUnauthorized());
             mvc.perform(post("/api/doors/" + door + "/resume").with(csrf())).andExpect(status().isUnauthorized());
         }
-        // Even from Shir's authorized phone: being on the tailnet is not a sign-in.
-        doorApiRefuses(TestTailnet.from(TestTailnet.SHIR_PHONE));
+        // Even from Shir's authorized phone: an enrolled browser key is not a sign-in.
+        doorApiRefuses(TestBrowsers.from(TestBrowsers.SHIR_PHONE));
     }
 
     @Test
     void aSignInThatIsntAPasskeyOnAnAuthorizedDeviceIsRefused() throws Exception {
         // Not a passkey session, whoever it claims to be and whatever role: AccessCheckFilter ends it, and the
         // request goes on signed out. (Before PR #8 a non-family user got 403 here; now no such session survives.)
-        doorApiRefuses(request -> TestTailnet.from(TestTailnet.SHIR_PHONE).postProcessRequest(user("stranger").postProcessRequest(request)));
-        doorApiRefuses(request -> TestTailnet.from(TestTailnet.SHIR_PHONE).postProcessRequest(user("shir").roles("FAMILY").postProcessRequest(request)));
-        // Shir's own session, but not through tailscale serve: the device can't be verified.
+        doorApiRefuses(request -> TestBrowsers.from(TestBrowsers.SHIR_PHONE).postProcessRequest(user("stranger").postProcessRequest(request)));
+        doorApiRefuses(request -> TestBrowsers.from(TestBrowsers.SHIR_PHONE).postProcessRequest(user("shir").roles("FAMILY").postProcessRequest(request)));
+        // Shir's own session, but without her browser key (not over HTTPS through the proxy): the device can't be verified.
         mvc.perform(post("/api/doors/toyota/open").session(session).with(csrf())).andExpect(status().isUnauthorized());
         assertThat(session.isInvalid()).isTrue();
         assertThat(activity.recent(10)).isEmpty();
     }
 
     @Test
-    void aSessionFromADeviceTheTailnetDoesntKnowIsEndedAndMovesNoDoor() throws Exception {
+    void aSessionFromABrowserThatLostItsKeyIsEndedAndMovesNoDoor() throws Exception {
         mvc.perform(get("/api/doors").with(family)).andExpect(status().isOk());
-        whois.forget(TestTailnet.SHIR_PHONE.address()); // tailscaled can't say which node this is
+        browsers.forget(TestBrowsers.SHIR_PHONE); // the session cookie, but no browser key (website data cleared)
 
         mvc.perform(post("/api/doors/toyota/open").with(family).with(csrf())).andExpect(status().isUnauthorized());
         assertThat(session.isInvalid()).isTrue();
-        whois.reset();
+        browsers.reset();
         doorApiRefuses(family); // ended for good, not just for that one request
     }
 
     @Test
     void aSessionCarriedToAnotherOfShirsDevicesIsEndedAndMovesNoDoor() throws Exception {
-        // Shir's iPad is on the tailnet but was never enrolled: her phone's session doesn't work from it.
-        mvc.perform(post("/api/doors/ford/open").session(session).with(TestTailnet.from(TestTailnet.SHIR_IPAD)).with(csrf()))
+        // Shir's iPad has a browser key of its own but was never enrolled: her phone's session doesn't work from it.
+        mvc.perform(post("/api/doors/ford/open").session(session).with(TestBrowsers.from(TestBrowsers.SHIR_IPAD)).with(csrf()))
                 .andExpect(status().isUnauthorized());
         assertThat(session.isInvalid()).isTrue();
         // And signing in there with her passkey is refused: the iPad needs its own invite.
-        assertThat(TestTailnet.signIn(context, new MockHttpSession(), "shir", "c2hpcnMtcGFzc2tleQ", TestTailnet.SHIR_IPAD))
+        assertThat(TestBrowsers.signIn(context, new MockHttpSession(), "shir", "c2hpcnMtcGFzc2tleQ", TestBrowsers.SHIR_IPAD))
                 .isEqualTo("device not authorized");
         assertThat(activity.recent(10)).isEmpty();
     }
@@ -169,14 +169,14 @@ class GarageControllerTest {
     @Test
     void revokingThePhoneEndsItsSessionOnTheNextDoorCommand() throws Exception {
         mvc.perform(get("/api/doors").with(family)).andExpect(status().isOk());
-        mvc.perform(delete("/admin/devices/" + TestTailnet.SHIR_PHONE.nodeId()).header(LocalAdmin.HEADER, adminSecret()))
+        mvc.perform(delete("/admin/devices/" + TestBrowsers.SHIR_PHONE.nodeId()).header(LocalAdmin.HEADER, adminSecret()))
                 .andExpect(jsonPath("$.revoked").value(true));
 
         mvc.perform(post("/api/doors/toyota/open").with(family).with(csrf())).andExpect(status().isUnauthorized());
         assertThat(session.isInvalid()).isTrue();
         doorApiRefuses(family);
         // Signing in again with the passkey doesn't help: the phone needs a new invite.
-        assertThat(TestTailnet.signIn(context, new MockHttpSession(), "shir", "c2hpcnMtcGFzc2tleQ", TestTailnet.SHIR_PHONE))
+        assertThat(TestBrowsers.signIn(context, new MockHttpSession(), "shir", "c2hpcnMtcGFzc2tleQ", TestBrowsers.SHIR_PHONE))
                 .isEqualTo("device not authorized");
         assertThat(activity.recent(10)).isEmpty();
     }

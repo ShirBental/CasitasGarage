@@ -48,7 +48,7 @@ public class FileSecurityStore implements SecurityStore {
     record StoredMember(String id, Status status, String userHandle, Instant createdAt, Instant revokedAt) {}
 
     record Contents(List<StoredMember> members, List<StoredPasskey> passkeys, List<Device> devices, List<Invitation> invitations,
-                    Map<String, String> consumeRequests) {}
+                    Map<String, String> consumeRequests, List<ShortcutToken> shortcutTokens) {}
 
     private final Path file;
     private final Clock clock;
@@ -59,6 +59,8 @@ public class FileSecurityStore implements SecurityStore {
     private Map<String, Invitation> invitations = new LinkedHashMap<>();
     /** The attempt that consumed each invitation, by token hash: server-side only, for idempotent retries. */
     private Map<String, String> consumeRequests = new LinkedHashMap<>();
+    /** By token hash. */
+    private Map<String, ShortcutToken> shortcutTokens = new LinkedHashMap<>();
 
     public FileSecurityStore(Path dataDir, Clock clock) {
         this.file = dataDir.resolve("security.json");
@@ -70,6 +72,7 @@ public class FileSecurityStore implements SecurityStore {
             c.devices().forEach(d -> devices.put(d.nodeId(), d));
             c.invitations().forEach(i -> invitations.put(i.tokenHash(), i));
             if (c.consumeRequests() != null) consumeRequests.putAll(c.consumeRequests());
+            if (c.shortcutTokens() != null) c.shortcutTokens().forEach(t -> shortcutTokens.put(t.tokenHash(), t)); // absent in older files
         }
     }
 
@@ -115,13 +118,14 @@ public class FileSecurityStore implements SecurityStore {
 
     @Override
     public synchronized Cleanup cleanUpMember(String memberId) {
-        int d = 0, p = 0, i = 0;
+        int d = 0, p = 0, i = 0, t = 0;
         for (Device device : devicesOf(memberId)) if (device.status() == Status.ACTIVE && revokeDevice(device.nodeId())) d++;
         for (Passkey passkey : passkeysOf(memberId)) if (revokePasskey(passkey.record().getCredentialId())) p++;
         for (Invitation invitation : invitationsOf(memberId)) {
             if (revokeInvitation(invitation.tokenHash(), invitation.inviteId()) == RevokeOutcome.REVOKED) i++;
         }
-        return new Cleanup(d, p, i);
+        for (ShortcutToken token : shortcutTokensOf(memberId)) if (!token.revoked() && revokeShortcutToken(token.tokenId())) t++;
+        return new Cleanup(d, p, i, t);
     }
 
     /* ---------- passkeys ---------- */
@@ -250,6 +254,46 @@ public class FileSecurityStore implements SecurityStore {
         return invitationById(inviteId).map(i -> revokeInvitation(i.tokenHash(), inviteId)).orElse(RevokeOutcome.NOT_FOUND);
     }
 
+    /* ---------- Shortcut tokens ---------- */
+
+    @Override
+    public synchronized void createShortcutToken(ShortcutToken token) {
+        if (token.status() != Status.ACTIVE) throw new IllegalArgumentException("a new Shortcut token is ACTIVE");
+        if (shortcutTokens.containsKey(token.tokenHash()) || shortcutTokenById(token.tokenId()).isPresent()) {
+            throw new IllegalStateException("Shortcut token exists");
+        }
+        if (member(token.memberId()).filter(Member::active).isEmpty()) throw new IllegalStateException("member not active");
+        change(() -> shortcutTokens.put(token.tokenHash(), token));
+    }
+
+    @Override
+    public synchronized ShortcutView shortcutView(String tokenHash) {
+        Optional<ShortcutToken> token = Optional.ofNullable(shortcutTokens.get(tokenHash));
+        return new ShortcutView(token, token.flatMap(t -> member(t.memberId())));
+    }
+
+    @Override
+    public synchronized Optional<ShortcutToken> shortcutTokenById(String tokenId) {
+        return shortcutTokens.values().stream().filter(t -> t.tokenId().equals(tokenId)).findFirst();
+    }
+
+    @Override
+    public synchronized List<ShortcutToken> shortcutTokensOf(String memberId) {
+        return shortcutTokens.values().stream().filter(t -> t.memberId().equals(memberId))
+                .sorted(Comparator.comparing(ShortcutToken::createdAt)).toList();
+    }
+
+    @Override
+    public synchronized boolean revokeShortcutToken(String tokenId) {
+        Optional<ShortcutToken> found = shortcutTokenById(tokenId);
+        if (found.isEmpty()) return false;
+        ShortcutToken t = found.get();
+        if (t.revoked()) return true;
+        change(() -> shortcutTokens.put(t.tokenHash(), new ShortcutToken(t.tokenHash(), t.tokenId(), t.memberId(), t.label(), t.door(),
+                t.action(), Status.REVOKED, t.createdAt(), t.expiresAt(), clock.instant())));
+        return true;
+    }
+
     /* ---------- views ---------- */
 
     @Override
@@ -361,6 +405,7 @@ public class FileSecurityStore implements SecurityStore {
         Map<String, Device> d = new LinkedHashMap<>(devices);
         Map<String, Invitation> i = new LinkedHashMap<>(invitations);
         Map<String, String> r = new LinkedHashMap<>(consumeRequests);
+        Map<String, ShortcutToken> t = new LinkedHashMap<>(shortcutTokens);
         try {
             change.run();
             write();
@@ -370,6 +415,7 @@ public class FileSecurityStore implements SecurityStore {
             devices = d;
             invitations = i;
             consumeRequests = r;
+            shortcutTokens = t;
             throw e instanceof StoreUnavailableException ? e : new StoreUnavailableException("Couldn't save the security store", e);
         }
     }
@@ -382,7 +428,8 @@ public class FileSecurityStore implements SecurityStore {
             Path tmp = Files.createTempFile(dir, "security", ".tmp");
             restrict(tmp, "rw-------");
             json.writeValue(tmp.toFile(), new Contents(new ArrayList<>(members.values()), new ArrayList<>(passkeys.values()),
-                    new ArrayList<>(devices.values()), new ArrayList<>(invitations.values()), new LinkedHashMap<>(consumeRequests)));
+                    new ArrayList<>(devices.values()), new ArrayList<>(invitations.values()), new LinkedHashMap<>(consumeRequests),
+                    new ArrayList<>(shortcutTokens.values())));
             try {
                 Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException e) {

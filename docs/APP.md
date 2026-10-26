@@ -13,8 +13,8 @@ disables its action button. Turning it on waits for review.
 | Piece | Where |
 |---|---|
 | Passkey sign-in (Face ID) | `SecurityConfig`: Spring Security WebAuthn, Casita's own `/login` page using Spring's passkey script |
-| Who and which device | `security.access`: a passkey for who, the tailnet node for which device; one invite per device; revocation. See `docs/ACCESS.md` |
-| Invites and administration | `bin/casita-access` on the server (`/admin`, 127.0.0.1 plus a secret only); invite links go to owner-only files |
+| Who and which browser | `security.access`: a passkey for who, the browser key an invite gave that browser for which browser; one invite per browser; revocation. See `docs/ACCESS.md` |
+| Invites and administration | `bin/casita-access` on the server (`/admin`, 127.0.0.1 plus a secret only, reached through IAP SSH); invite links go to owner-only files |
 | Face ID setup | `/passkey` (Spring's script, Casita's page) |
 | Security store | Members, passkeys (public keys only), device authorizations and invitations: `<data-dir>/security.json` (owner-only) for local development, DynamoDB on AWS (`docs/PERSISTENCE.md`) |
 | API | `GarageController`: `/api/doors`, `/api/status`, `/api/open`, `/api/close`, `/api/resume`, `/api/activity`, `/api/me` |
@@ -24,39 +24,43 @@ disables its action button. Turning it on waits for review.
 
 ## Signing in
 
-Full rules and the Tailscale trust chain are in `docs/ACCESS.md`. In short:
+Full rules and the proxy trust chain are in `docs/ACCESS.md`. In short:
 
 1. **Invite one device.** On the server:
    ```bash
    bin/casita-access invite hubby "Hubby's iPhone"
-   cat data/invites/i-….txt     # the link: single use, 5 minutes, never logged
+   cat data/invites/i-….txt     # the link: single use, 15 minutes, never logged
    ```
    Send the link to him privately.
-2. **He opens it on that iPhone** (Tailscale on) and taps *Sign in*. That gives a session that can only
-   set up Face ID on that phone. He taps *Set up Face ID*, or *Sign in with it here* if his iCloud
-   Keychain already has his Casita passkey. Either way, that phone is now authorized for him.
-3. **From then on** he signs in with Face ID on that phone. Another device, even with the synced
-   passkey, needs its own invite.
+2. **He opens it in Safari on that iPhone** (any network) and taps *Sign in*. That gives the browser its
+   browser key and a session that can only set up Face ID there. He taps *Set up Face ID*, or *Sign in
+   with it here* if his iCloud Keychain already has his Casita passkey. Either way, that browser is now
+   authorized for him.
+3. **From then on** he signs in with Face ID there. Another browser, even with the synced passkey,
+   needs its own invite.
 
 ## Threat model
 
-Casita is reachable only on our tailnet, so an attacker must first be a device on it (or hold one).
+Casita is on the public internet (`https://watsonbental.duckdns.org`, docs/PUBLIC_HTTPS.md): anyone can reach the
+sign-in page. Nothing else is reachable without an invite and a passkey.
 
 | Threat | What stops it |
 |---|---|
-| Someone on the internet | No public endpoint: Casita binds to 127.0.0.1; `tailscale serve` publishes it to the tailnet only |
-| A tailnet device that isn't family | Every page and API call needs a passkey sign-in by a family member **on a device authorized for them**, checked again on every request; `/api` answers 401, pages go to `/login` |
-| A family member's passkey on an unauthorized device | The device (tailnet node, from `tailscale serve` and tailscaled) must have been enrolled through its own invite |
+| Someone on the internet | Every page and API call needs a passkey sign-in by a family member **in a browser enrolled for them**, checked again on every request; `/api` answers 401, pages go to `/login`; `/admin` is 404 at Caddy and local-only in Casita; port 8080 is never open |
+| Hammering sign-in or invite endpoints | Rate limits per client address and in total (`AuthRateLimitFilter`, 429); invite tokens have 256 random bits; request bodies capped at Caddy |
+| Spoofed proxy or identity headers | Casita listens on 127.0.0.1; Tomcat trusts `X-Forwarded-*` from 127.0.0.1 only; Caddy replaces a client's `X-Forwarded-*` and drops `Forwarded`, `X-Real-IP`, `X-Casita-Admin`, `Tailscale-*` |
+| A family member's passkey in an unenrolled browser | The browser must hold a browser key that was enrolled through its own invite (HMAC-signed, `__Host-`, `HttpOnly`) |
 | Password guessing, phishing | There are no passwords. Passkeys are bound to Casita's host name (`rp-id`) and allowed origins, so a look-alike site can't use them |
 | A stolen invite link | Single use, 5 minutes, revocable; it only gives an enrollment session (no garage) for the device that redeems it; written to an owner-only file on the server, never logged |
 | Cross-site request forgery | CSRF tokens on every POST (Spring's single-page-app mode: `XSRF-TOKEN` cookie, `X-XSRF-TOKEN` header), plus `SameSite=Lax` session cookies |
 | Injected script | Content-Security-Policy `script-src 'self'`, no inline script or style; pages build text with `textContent` only |
 | Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |
-| A stolen session cookie | `HttpOnly` and `Secure`; tied to the device it signed in on (a request from any other node ends it); ends on revocation, after 7 idle days, or at a restart |
+| A stolen session cookie | `HttpOnly` and `Secure`; tied to the browser key it signed in with (a request without that key ends it); ends on revocation, after 7 idle days, or at a restart |
+| A stolen session and browser-key cookie together | Works until revoked, like a stolen unlocked phone: the browser key is a bearer secret, not hardware. Revoke the browser (`casita-access revoke-device`) or the member |
 | An unlocked phone in the wrong hands | Accepted in the design (no extra Face ID per action). Explicit one-tap actions (never a toggle: *Open Ford* can only open), the activity log, and `GarageService`'s rules limit it |
-| The server's disk | `data/` holds public keys, device authorizations, short-lived invite links and the admin secret, owner-only; it is outside git |
+| The server's disk | `data/` holds short-lived invite links, the admin secret and `device.key` (browser keys are signed with it), owner-only; it is outside git |
 
-Out of scope here: a compromised server or tailnet admin account, and the opener's physical safety
+Out of scope here: a compromised server or GCP project, and the opener's physical safety
 (photo eyes, auto-reverse).
 
 ## Sessions and cookies
@@ -65,27 +69,29 @@ Out of scope here: a compromised server or tailnet admin account, and the opener
 - `server.servlet.session.timeout: 7d` (idle) until the design's remember-me lands.
 - Session cookie: `HttpOnly`, `Secure`, `SameSite=Lax`. Lax rather than Strict, so opening Casita
   from a notification or a Shortcut keeps you signed in; CSRF tokens protect every POST either way.
-- `dev` profile only: the cookie isn't `Secure`, for plain `http://localhost`. Never behind Tailscale.
+- `dev` profile only: the cookie isn't `Secure`, for plain `http://localhost`. Never on a server (the guard refuses it).
 
-## Tailscale
+## Behind Caddy
 
 ```yaml
 casita:
   security:
-    rp-id: watson.<tailnet>.ts.net
-    allowed-origins: [https://watson.<tailnet>.ts.net]
+    rp-id: watsonbental.duckdns.org
+    allowed-origins: [https://watsonbental.duckdns.org]
+    device-identity: browser
     family: [shir, hubby]
 ```
 
-- `tailscale serve` gives Casita HTTPS on that name and forwards to `http://127.0.0.1:8080`, adding
-  `X-Forwarded-Proto: https` and `X-Forwarded-Host`.
+- Caddy gives Casita HTTPS on that name (a Let's Encrypt certificate it renews itself) and forwards to
+  `http://127.0.0.1:8080`, setting `X-Forwarded-For`, `X-Forwarded-Proto: https` and `X-Forwarded-Host`
+  from the connection (never from the client).
 - Casita trusts those two headers **from 127.0.0.1 only** (`server.forward-headers-strategy: native`,
   `server.tomcat.remoteip.internal-proxies`). It listens on 127.0.0.1 alone, so only a local proxy can
-  set them. With them, Casita knows it is `https://<name>.ts.net`: cookies are `Secure`, and redirects
+  set them. With them, Casita knows it is `https://<public name>`: cookies are `Secure`, and redirects
   (which are also relative) never point at `http://127.0.0.1:8080`. Without this, a successful invite
   sign-in redirected the phone to `http://127.0.0.1:8080/passkey`; Safari blocked it, and a second
   tap of *Sign in* got 403 because the sign-in had already rotated the CSRF token.
-- Passkeys need HTTPS and a fixed name. If the tailnet name changes, everyone enrolls again.
+- Passkeys need HTTPS and a fixed name. If the public name changes, everyone enrolls again.
 - An invite works once. If a sign-in shows an error page, ask for a fresh invite rather than
   tapping again.
 

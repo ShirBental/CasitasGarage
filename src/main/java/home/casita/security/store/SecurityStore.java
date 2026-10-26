@@ -10,7 +10,7 @@ import org.springframework.security.web.webauthn.api.Bytes;
 import org.springframework.security.web.webauthn.api.CredentialRecord;
 
 /**
- * Members, passkeys, device authorizations and invitations: everything an access decision reads, in one
+ * Members, passkeys, device authorizations, invitations and Shortcut tokens: everything an access decision reads, in one
  * store, so enrolling a device is one atomic change (docs/PERSISTENCE.md). Three implementations with the
  * same contract: {@link FileSecurityStore} (local development), {@link DynamoSecurityStore} (AWS) and
  * {@link FirestoreSecurityStore} (GCP, docs/FIRESTORE.md).
@@ -40,7 +40,7 @@ public interface SecurityStore {
         }
     }
 
-    /** A tailnet node's authorization: one per node, for at most one member. */
+    /** A device's authorization, by its device id (a browser key, b-...; older records: a tailnet node): one per device, for at most one member. */
     record Device(String nodeId, String memberId, String label, String nodeName, String credentialId, String inviteId,
                   Status status, Instant authorizedAt, Instant revokedAt) {
         public boolean activeFor(String member) {
@@ -71,6 +71,27 @@ public interface SecurityStore {
     }
 
     /**
+     * A Shortcut token (docs/SHORTCUTS.md), by the SHA-256 of the token: the token itself is never stored. {@code door} is
+     * a door's API key ({@code ford}), {@code action} an action's name ({@code OPEN}). Expiry is decided here, on every
+     * read, never by the store's own cleanup; revoking is a status, never a deletion.
+     */
+    record ShortcutToken(String tokenHash, String tokenId, String memberId, String label, String door, String action, Status status,
+                         Instant createdAt, Instant expiresAt, Instant revokedAt) {
+        public boolean revoked() {
+            return status != Status.ACTIVE;
+        }
+
+        public boolean expired(Instant now) {
+            return !now.isBefore(expiresAt);
+        }
+
+        @Override
+        public String toString() {
+            return "ShortcutToken[" + tokenId + ", " + memberId + ", " + action + " " + door + ", " + status + "]";
+        }
+    }
+
+    /**
      * What an enrollment session holds, server-side only: which consumed invitation, the enrollment attempt
      * that consumed it, and the node it was consumed on.
      */
@@ -88,7 +109,10 @@ public interface SecurityStore {
     /** One consistent read of what an enrollment session depends on. */
     record EnrollmentView(Optional<Invitation> invitation, Optional<Member> member) {}
 
-    record Cleanup(int devices, int passkeys, int invitations) {}
+    /** What a Shortcut request depends on: its token and that token's member. */
+    record ShortcutView(Optional<ShortcutToken> token, Optional<Member> member) {}
+
+    record Cleanup(int devices, int passkeys, int invitations, int shortcutTokens) {}
 
     /** What revoking an invitation did. Only REVOKED and ALREADY_REVOKED mean its token can't be used. */
     enum RevokeOutcome {
@@ -122,7 +146,7 @@ public interface SecurityStore {
     /** Revokes a member: on its own, this refuses everything of theirs from the next request on. */
     boolean revokeMember(String memberId);
 
-    /** After {@link #revokeMember}: revokes their devices, passkeys and open invitations. Best effort, repeatable. */
+    /** After {@link #revokeMember}: revokes their devices, passkeys, open invitations and Shortcut tokens. Best effort, repeatable. */
     Cleanup cleanUpMember(String memberId);
 
     /* ---------- passkeys ---------- */
@@ -177,6 +201,32 @@ public interface SecurityStore {
      * just-created invitation: then NOT_FOUND, and nothing was changed.
      */
     RevokeOutcome revokeInvitation(String inviteId);
+
+    /* ---------- Shortcut tokens ---------- */
+
+    /**
+     * Stores a new ACTIVE Shortcut token: one atomic write that fails if its hash exists. Refused with an
+     * {@link IllegalStateException} if the hash or the id exists, or the member isn't active. (The id is 48 random bits;
+     * its uniqueness is checked through an index, which in DynamoDB can lag a token created a moment ago.)
+     */
+    void createShortcutToken(ShortcutToken token);
+
+    /**
+     * The token with this hash, then its member: each read strongly consistent from the base table. A revocation that
+     * lands between the two reads is the same as one that lands just after the request. Empty token: no such token.
+     */
+    ShortcutView shortcutView(String tokenHash);
+
+    /** By id, through an index (which in DynamoDB can lag a token created a moment ago); the base table decides. */
+    Optional<ShortcutToken> shortcutTokenById(String tokenId);
+
+    List<ShortcutToken> shortcutTokensOf(String memberId);
+
+    /**
+     * Revokes a Shortcut token by id: a conditional status change on the base table. True if it is revoked afterwards
+     * (by this call or an earlier one); false if there is no such token (in DynamoDB, possibly one not indexed yet).
+     */
+    boolean revokeShortcutToken(String tokenId);
 
     /* ---------- consistent views for access decisions ---------- */
 

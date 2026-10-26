@@ -1,5 +1,8 @@
 # Casita's Garage: Design
 
+> **Update:** the Tailscale parts of this design were replaced by public HTTPS behind Caddy with passkeys and
+> per-browser invites (`docs/PUBLIC_HTTPS.md`, `docs/ACCESS.md`).
+
 Casita is our home's helper. This first piece lets the family see and move the garage door
 from their iPhones, safely, from anywhere.
 
@@ -16,7 +19,7 @@ was built; where the two differ, the code and the docs next to it win.
 | Remember-me cookie, fixed 6 months, `SameSite=Strict` | Not built: an in-memory session, 7 days idle, `SameSite=Lax` | `application.yml` |
 | Invite: a 10-minute one-time token, any device | One invite per device, 5 minutes, an enrollment-only session | `docs/ACCESS.md` |
 | A passkey alone signs you in | A passkey **and** an authorized Tailscale node, checked again on every request | `docs/ACCESS.md` |
-| Shortcut status tokens | Not built | |
+| Shortcut status tokens | Shortcut tokens: open Ford only, plus its status; hashed, revocable, per phone | `docs/SHORTCUTS.md` |
 | One MSG100, one door | An MSG200: Ford (channel 1) and Toyota (channel 2); channel 3 is disabled and never addressed. Commands are off by default and Ford-only when enabled | `docs/MEROSS.md` |
 | Travel time 10 s | Ford measured at 20 s, and the MSG200's reading can lag the door; both must be reflected in the configuration before any live command | `docs/MEROSS.md` |
 | Open: Java version, MQTT client | Java 21, HiveMQ | |
@@ -125,7 +128,8 @@ that cuts off every kind of credential:
 - "Hey Siri, open garage" and the arrival automation **open the Casita app**; the door
   moves from there.
 - *Open:* now that actions don't need Face ID, should Shortcut tokens be allowed to open
-  (not close) as well?
+  (not close) as well? **Decided (2026-10-24): yes, Ford only, never close** (`docs/SHORTCUTS.md`, with the
+  locked-phone trade-off).
 
 ## 4. Parameter Store layout
 

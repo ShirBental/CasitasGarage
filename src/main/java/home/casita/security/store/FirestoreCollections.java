@@ -12,12 +12,16 @@ import com.google.cloud.firestore.Firestore;
  * {@code meta/schema}: provisioning does, reviewed separately. {@link #verify} is the start-up check.
  *
  * <p>Every ID carries a short prefix: Firestore reserves IDs matching {@code __.*__}, and a base64url credential
- * ID could be one. No ID holds a secret: an invitation is found by the SHA-256 of its token, never the token.
+ * ID could be one. No ID holds a secret: an invitation or a Shortcut token is found by the SHA-256 of its token, never
+ * the token.
  */
 public record FirestoreCollections(String members, String userHandles, String passkeys, String devices, String invitations,
-                                   String securityEvents, String meta) {
+                                   String shortcutTokens, String securityEvents, String meta) {
 
-    /** The schema this code reads and writes. Provisioning writes it to {@code meta/schema}. */
+    /**
+     * The schema this code reads and writes. Provisioning writes it to {@code meta/schema}. A new collection that older
+     * code never reads ({@code shortcutTokens}) doesn't change it; a change to existing documents would.
+     */
     public static final long SCHEMA_VERSION = 1;
 
     /** Only the {@code (default)} database gets Firestore's free quota, so Casita uses no other. */
@@ -27,7 +31,8 @@ public record FirestoreCollections(String members, String userHandles, String pa
     private static final Pattern RAW_ID = Pattern.compile("[A-Za-z0-9._-]{1,700}");
 
     public static FirestoreCollections standard() {
-        return new FirestoreCollections("members", "userHandles", "passkeys", "devices", "invitations", "securityEvents", "meta");
+        return new FirestoreCollections("members", "userHandles", "passkeys", "devices", "invitations", "shortcutTokens", "securityEvents",
+                "meta");
     }
 
     DocumentReference member(Firestore db, String memberId) {
@@ -48,6 +53,10 @@ public record FirestoreCollections(String members, String userHandles, String pa
 
     DocumentReference invitation(Firestore db, String tokenHash) {
         return db.collection(invitations).document("h_" + checked(tokenHash));
+    }
+
+    DocumentReference shortcutToken(Firestore db, String tokenHash) {
+        return db.collection(shortcutTokens).document("t_" + checked(tokenHash));
     }
 
     DocumentReference securityEvent(Firestore db, String eventId) {

@@ -1,9 +1,9 @@
 package home.casita.security.access;
 
-import static home.casita.security.access.TestTailnet.HUBBY_PHONE;
-import static home.casita.security.access.TestTailnet.SHIR_IPAD;
-import static home.casita.security.access.TestTailnet.SHIR_PHONE;
-import static home.casita.security.access.TestTailnet.from;
+import static home.casita.security.access.TestBrowsers.HUBBY_PHONE;
+import static home.casita.security.access.TestBrowsers.SHIR_IPAD;
+import static home.casita.security.access.TestBrowsers.SHIR_PHONE;
+import static home.casita.security.access.TestBrowsers.from;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -50,7 +50,7 @@ import home.casita.security.store.SecurityStore;
 import home.casita.security.store.SecurityStore.Invitation;
 
 /**
- * One invite, one device, end to end through the real filter chain, with a pretend tailnet in front, run
+ * One invite, one device, end to end through the real filter chain, with enrolled test browsers in front, run
  * against each security store (FileAccessFlowTest, DynamoAccessFlowTest): invites, enrollment-only sessions,
  * passkey registration, an existing synced passkey on a second device, cross-device use, and every kind of
  * revocation. The door is the simulated one; nothing here reaches Meross.
@@ -82,7 +82,7 @@ abstract class AccessFlowContract {
     @Autowired
     protected ActivityLog activity;
     @Autowired
-    protected TestTailnet.FakeWhois whois;
+    protected TestBrowsers.Browsers browsers;
 
     protected MockMvc mvc;
 
@@ -95,7 +95,7 @@ abstract class AccessFlowContract {
     @AfterEach
     void cleanUp() throws IOException {
         Files.deleteIfExists(DATA.resolve("security.json"));
-        whois.reset();
+        browsers.reset();
     }
 
     /* ---------- helpers: what the admin script, the phone and Spring's WebAuthn would do ---------- */
@@ -118,26 +118,26 @@ abstract class AccessFlowContract {
     }
 
     /** Tapping the invite link's Sign in on a phone: an enrollment-only session. */
-    protected MockHttpSession redeem(String token, TestTailnet.Phone phone) throws Exception {
+    protected MockHttpSession redeem(String token, TestBrowsers.Phone phone) throws Exception {
         return (MockHttpSession) mvc.perform(post("/login/ott").param("token", token).with(csrf()).with(from(phone)))
                 .andExpect(status().isFound()).andExpect(redirectedUrl("/passkey"))
                 .andReturn().getRequest().getSession();
     }
 
     /** Spring's WebAuthn storing a newly registered (verified) passkey, inside the registration request. */
-    protected void registerPasskey(MockHttpSession session, TestTailnet.Phone phone, String credentialId, String member) {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/webauthn/register");
+    protected void registerPasskey(MockHttpSession session, TestBrowsers.Phone phone, String credentialId, String member) {
+        MockHttpServletRequest request = TestBrowsers.request(context, "POST", "/webauthn/register");
         request.setSession(session);
         from(phone).postProcessRequest(request);
         RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
         try {
-            passkeys.save(TestTailnet.credential(TestTailnet.user(store, member), credentialId));
+            passkeys.save(TestBrowsers.credential(TestBrowsers.user(store, member), credentialId));
         } finally {
             RequestContextHolder.resetRequestAttributes();
         }
     }
 
-    protected void expectGarage(MockHttpSession session, TestTailnet.Phone phone, int status) throws Exception {
+    protected void expectGarage(MockHttpSession session, TestBrowsers.Phone phone, int status) throws Exception {
         mvc.perform(get("/api/doors").session(session).with(from(phone))).andExpect(status().is(status));
     }
 
@@ -171,6 +171,62 @@ abstract class AccessFlowContract {
                 .andExpect(jsonPath("$.authenticatorSelection.userVerification").value("required"));
     }
 
+    /* ---------- browser keys: what stands in for the device ---------- */
+
+    @Test
+    void aBrowserWithoutAKeyIsGivenOneWhenItRedeemsAnInviteAndThatKeyIsTheDeviceEnrolled() throws Exception {
+        String[] invite = invite("shir", "Shir's iPhone");
+        MvcResult redeemed = mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).secure(true))
+                .andExpect(status().isFound()).andExpect(redirectedUrl("/passkey")).andReturn();
+        String setCookie = redeemed.getResponse().getHeaders("Set-Cookie").stream()
+                .filter(c -> c.startsWith(DeviceKeys.COOKIE + "=")).findFirst().orElseThrow();
+        assertThat(setCookie).contains("Path=/", "Secure", "HttpOnly", "SameSite=Lax", "Max-Age=").doesNotContain("Domain=");
+        String value = setCookie.substring((DeviceKeys.COOKIE + "=").length(), setCookie.indexOf(';'));
+        String deviceId = value.substring(0, value.indexOf('.'));
+        assertThat(deviceId).matches("b-[0-9a-f]{32}");
+        assertThat(invitation(invite[0]).nodeId()).isEqualTo(deviceId);
+
+        // Face ID set up in that same browser: its key is the device now authorized for Shir.
+        TestBrowsers.Phone browser = new TestBrowsers.Phone(deviceId, "a new browser");
+        registerPasskey((MockHttpSession) redeemed.getRequest().getSession(), browser, "bmV3LWtleQ", "shir");
+        assertThat(store.device(deviceId)).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
+
+        MockHttpSession session = new MockHttpSession();
+        assertThat(TestBrowsers.signIn(context, session, "shir", "bmV3LWtleQ", browser)).isNull();
+        expectGarage(session, browser, 200);
+        // The same synced passkey in a browser without that key gets no session.
+        assertThat(TestBrowsers.signIn(context, new MockHttpSession(), "shir", "bmV3LWtleQ", SHIR_IPAD)).isEqualTo("device not authorized");
+    }
+
+    @Test
+    void aForgedBrowserKeyOrSpoofedIdentityHeadersAreNoDevice() throws Exception {
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        expectGarage(session, SHIR_PHONE, 200);
+
+        // The device id as listed by the admin, with a MAC it can't have: no device, and the session ends.
+        browsers.forget(SHIR_PHONE);
+        mvc.perform(get("/api/doors").session(session).with(from(SHIR_PHONE))
+                        .cookie(new jakarta.servlet.http.Cookie(DeviceKeys.COOKIE, SHIR_PHONE.nodeId() + ".AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")))
+                .andExpect(status().isUnauthorized());
+        assertThat(session.isInvalid()).isTrue();
+        browsers.reset();
+
+        // Tailscale's identity headers and a forwarded address, without the browser key: nothing.
+        MockHttpSession again = new MockHttpSession();
+        assertThat(TestBrowsers.signIn(context, again, "shir", "c2hpcnMta2V5", SHIR_PHONE)).isNull();
+        mvc.perform(get("/api/doors").session(again).secure(true)
+                        .header("Tailscale-User-Login", "shir@example.com").header("X-Forwarded-For", "100.64.0.11"))
+                .andExpect(status().isUnauthorized());
+        assertThat(again.isInvalid()).isTrue();
+
+        // A valid key over plain http (not through the proxy) isn't accepted either.
+        MockHttpSession third = new MockHttpSession();
+        assertThat(TestBrowsers.signIn(context, third, "shir", "c2hpcnMta2V5", SHIR_PHONE)).isNull();
+        mvc.perform(get("/api/doors").session(third).with(from(SHIR_PHONE)).with(r -> { r.setSecure(false); r.setScheme("http"); return r; }))
+                .andExpect(status().isUnauthorized());
+        assertThat(activity.recent(10)).isEmpty();
+    }
+
     @Test
     void passkeySignInAsksForUserVerification() throws Exception {
         mvc.perform(post("/webauthn/authenticate/options").with(csrf()).with(from(SHIR_PHONE)))
@@ -195,17 +251,13 @@ abstract class AccessFlowContract {
         String[] invite = invite("shir", "Shir's iPhone");
         String token = invite[1];
 
-        // Not through tailscale serve; then a node tailscaled doesn't know; then a tagged node; then a Funnel request.
+        // Not over HTTPS (not through the reverse proxy): the browser couldn't keep a browser key, so nothing is
+        // redeemed and no key is handed out; Tailscale identity headers mean nothing any more.
         mvc.perform(post("/login/ott").param("token", token).with(csrf()))
-                .andExpect(status().isFound()).andExpect(redirectedUrl("/login?device-unverified"));
-        whois.forget(SHIR_PHONE.address());
-        mvc.perform(post("/login/ott").param("token", token).with(csrf()).with(from(SHIR_PHONE)))
-                .andExpect(redirectedUrl("/login?device-unverified"));
-        whois.put(SHIR_PHONE.address(), new TailscaleWhois.Node(SHIR_PHONE.nodeId(), "server", SHIR_PHONE.login(), true));
-        mvc.perform(post("/login/ott").param("token", token).with(csrf()).with(from(SHIR_PHONE)))
-                .andExpect(redirectedUrl("/login?device-unverified"));
-        whois.reset();
-        mvc.perform(post("/login/ott").param("token", token).with(csrf()).with(from(SHIR_PHONE)).header("Tailscale-Funnel-Request", "?1"))
+                .andExpect(status().isFound()).andExpect(redirectedUrl("/login?device-unverified"))
+                .andExpect(result -> assertThat(result.getResponse().getHeaders("Set-Cookie")).noneMatch(c -> c.startsWith(DeviceKeys.COOKIE)));
+        mvc.perform(post("/login/ott").param("token", token).with(csrf())
+                        .header("Tailscale-User-Login", "shir@example.com").header("X-Forwarded-For", "100.64.0.11"))
                 .andExpect(redirectedUrl("/login?device-unverified"));
         assertThat(invitation(invite[0]).status()).isEqualTo(SecurityStore.InvitationStatus.PENDING);
 
@@ -214,7 +266,7 @@ abstract class AccessFlowContract {
 
     @Test
     void anInviteOnADeviceThatIsAlreadySetUpIsNotUsedUp() throws Exception {
-        TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         String[] invite = invite("hubby", "Hubby's iPhone");
 
         mvc.perform(post("/login/ott").param("token", invite[1]).with(csrf()).with(from(SHIR_PHONE)))
@@ -247,7 +299,7 @@ abstract class AccessFlowContract {
         mvc.perform(get("/passkey").session(enrolling).with(from(SHIR_PHONE))).andExpect(redirectedUrl("/login"));
 
         MockHttpSession session = new MockHttpSession();
-        assertThat(TestTailnet.signIn(context, session, "shir", "c2hpcnMtcGhvbmUta2V5", SHIR_PHONE)).isNull();
+        assertThat(TestBrowsers.signIn(context, session, "shir", "c2hpcnMtcGhvbmUta2V5", SHIR_PHONE)).isNull();
         expectGarage(session, SHIR_PHONE, 200);
         mvc.perform(post("/api/open").session(session).with(from(SHIR_PHONE)).with(csrf()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.outcome").value("MOVING"));
@@ -257,7 +309,7 @@ abstract class AccessFlowContract {
     @Test
     void aPasskeyCantBeRegisteredOutsideALiveEnrollmentOnItsDevice() throws Exception {
         // A signed-in family member: no adding passkeys.
-        MockHttpSession family = TestTailnet.signedInOn(context, "shir", "c2hpcnMtZmlyc3Q", SHIR_PHONE);
+        MockHttpSession family = TestBrowsers.signedInOn(context, "shir", "c2hpcnMtZmlyc3Q", SHIR_PHONE);
         mvc.perform(post("/webauthn/register/options").session(family).with(from(SHIR_PHONE)).with(csrf())).andExpect(status().isForbidden());
         mvc.perform(post("/webauthn/register").session(family).with(from(SHIR_PHONE)).with(csrf())).andExpect(status().isForbidden());
 
@@ -292,17 +344,17 @@ abstract class AccessFlowContract {
 
     @Test
     void anExistingSyncedPasskeyNeedsItsOwnInviteOnEachDevice() throws Exception {
-        TestTailnet.signedInOn(context, "shir", "c2hpcnMtc3luY2Vk", SHIR_PHONE);
+        TestBrowsers.signedInOn(context, "shir", "c2hpcnMtc3luY2Vk", SHIR_PHONE);
 
         // The same synced passkey on her iPad, without an invite: the sign-in itself is refused.
         MockHttpSession uninvited = new MockHttpSession();
-        assertThat(TestTailnet.signIn(context, uninvited, "shir", "c2hpcnMtc3luY2Vk", SHIR_IPAD)).isEqualTo("device not authorized");
+        assertThat(TestBrowsers.signIn(context, uninvited, "shir", "c2hpcnMtc3luY2Vk", SHIR_IPAD)).isEqualTo("device not authorized");
         assertThat(uninvited.isInvalid()).isTrue();
 
         // With an invite for the iPad: redeem it there, then sign in with the existing passkey there.
         String[] invite = invite("shir", "Shir's iPad");
         MockHttpSession session = redeem(invite[1], SHIR_IPAD);
-        assertThat(TestTailnet.signIn(context, session, "shir", "c2hpcnMtc3luY2Vk", SHIR_IPAD)).isNull();
+        assertThat(TestBrowsers.signIn(context, session, "shir", "c2hpcnMtc3luY2Vk", SHIR_IPAD)).isNull();
         expectGarage(session, SHIR_IPAD, 200);
         assertThat(store.device(SHIR_IPAD.nodeId())).get().satisfies(d -> assertThat(d.inviteId()).isEqualTo(invite[0]));
         assertThat(invitation(invite[0]).enrolledAt()).isNotNull();
@@ -311,12 +363,12 @@ abstract class AccessFlowContract {
 
     @Test
     void someoneElsesInviteDoesntAuthorizeYourDevice() throws Exception {
-        TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
 
         // Hubby's invite, redeemed on Shir's iPad, then Shir signs in there.
         String[] invite = invite("hubby", "Hubby's iPhone");
         MockHttpSession session = redeem(invite[1], SHIR_IPAD);
-        assertThat(TestTailnet.signIn(context, session, "shir", "c2hpcnMta2V5", SHIR_IPAD)).isNotNull();
+        assertThat(TestBrowsers.signIn(context, session, "shir", "c2hpcnMta2V5", SHIR_IPAD)).isNotNull();
         assertThat(store.device(SHIR_IPAD.nodeId())).isEmpty();
         assertThat(invitation(invite[0]).enrolledAt()).isNull();
     }
@@ -325,9 +377,9 @@ abstract class AccessFlowContract {
 
     @Test
     void aSessionCantMoveToAnotherDevice() throws Exception {
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         // Even to another of Shir's authorized devices: the session is tied to the one it signed in on.
-        TestTailnet.enrollExistingPasskey(context, "shir", "c2hpcnMta2V5", SHIR_IPAD);
+        TestBrowsers.enrollExistingPasskey(context, "shir", "c2hpcnMta2V5", SHIR_IPAD);
         expectGarage(session, SHIR_PHONE, 200);
 
         expectGarage(session, SHIR_IPAD, 401);
@@ -337,16 +389,16 @@ abstract class AccessFlowContract {
 
     @Test
     void aSignInOnAnotherMembersDeviceIsRefused() throws Exception {
-        TestTailnet.signedInOn(context, "hubby", "aHViYnlzLWtleQ", HUBBY_PHONE);
-        MockHttpSession shir = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        TestBrowsers.signedInOn(context, "hubby", "aHViYnlzLWtleQ", HUBBY_PHONE);
+        MockHttpSession shir = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
 
-        assertThat(TestTailnet.signIn(context, new MockHttpSession(), "shir", "c2hpcnMta2V5", HUBBY_PHONE)).isEqualTo("device not authorized");
+        assertThat(TestBrowsers.signIn(context, new MockHttpSession(), "shir", "c2hpcnMta2V5", HUBBY_PHONE)).isEqualTo("device not authorized");
         expectGarage(shir, SHIR_PHONE, 200);
     }
 
     @Test
-    void aPasskeySessionNeedsTheRequestToComeThroughTheTailnet() throws Exception {
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+    void aPasskeySessionNeedsTheRequestToCarryItsBrowserKeyOverHttps() throws Exception {
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
 
         mvc.perform(get("/api/doors").session(session)).andExpect(status().isUnauthorized());
         assertThat(session.isInvalid()).isTrue();
@@ -356,7 +408,7 @@ abstract class AccessFlowContract {
 
     @Test
     void revokingTheDeviceEndsItsSession() throws Exception {
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         expectGarage(session, SHIR_PHONE, 200);
 
         mvc.perform(delete("/admin/devices/" + SHIR_PHONE.nodeId()).header(LocalAdmin.HEADER, adminSecret()))
@@ -365,14 +417,14 @@ abstract class AccessFlowContract {
         mvc.perform(post("/api/open").session(session).with(from(SHIR_PHONE)).with(csrf())).andExpect(status().isUnauthorized());
         assertThat(session.isInvalid()).isTrue();
         // Signing in again with the passkey doesn't help: the device needs a new invite.
-        assertThat(TestTailnet.signIn(context, new MockHttpSession(), "shir", "c2hpcnMta2V5", SHIR_PHONE)).isEqualTo("device not authorized");
+        assertThat(TestBrowsers.signIn(context, new MockHttpSession(), "shir", "c2hpcnMta2V5", SHIR_PHONE)).isEqualTo("device not authorized");
         assertThat(activity.recent(10)).isEmpty();
         assertThat(store.device(SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.status()).isEqualTo(SecurityStore.Status.REVOKED));
     }
 
     @Test
     void aRevokedDeviceIsReleasedOnlyExplicitly() throws Exception {
-        TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         mvc.perform(post("/admin/devices/" + SHIR_PHONE.nodeId() + "/release").header(LocalAdmin.HEADER, adminSecret()))
                 .andExpect(jsonPath("$.released").value(false)); // active: revoke first
         mvc.perform(delete("/admin/devices/" + SHIR_PHONE.nodeId()).header(LocalAdmin.HEADER, adminSecret()));
@@ -382,7 +434,7 @@ abstract class AccessFlowContract {
 
     @Test
     void revokingThePasskeyEndsItsSession() throws Exception {
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         expectGarage(session, SHIR_PHONE, 200);
 
         mvc.perform(delete("/admin/credentials/c2hpcnMta2V5").header(LocalAdmin.HEADER, adminSecret())).andExpect(jsonPath("$.revoked").value(true));
@@ -394,8 +446,8 @@ abstract class AccessFlowContract {
 
     @Test
     void revokingAMemberEndsEverythingTheyHave() throws Exception {
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
-        MockHttpSession hubby = TestTailnet.signedInOn(context, "hubby", "aHViYnlzLWtleQ", HUBBY_PHONE);
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession hubby = TestBrowsers.signedInOn(context, "hubby", "aHViYnlzLWtleQ", HUBBY_PHONE);
         String pendingToken = invite("shir", "Shir's iPad")[1];
 
         mvc.perform(delete("/admin/members/shir").header(LocalAdmin.HEADER, adminSecret()))
@@ -411,12 +463,12 @@ abstract class AccessFlowContract {
 
     @Test
     void aRevokedMemberIsRefusedEvenBeforeCleanup() throws Exception {
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         store.revokeMember("shir"); // the base record only: devices and passkeys still say ACTIVE
 
         expectGarage(session, SHIR_PHONE, 401);
         assertThat(store.device(SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.status()).isEqualTo(SecurityStore.Status.ACTIVE));
-        assertThat(TestTailnet.signIn(context, new MockHttpSession(), "shir", "c2hpcnMta2V5", SHIR_PHONE)).isEqualTo("member revoked");
+        assertThat(TestBrowsers.signIn(context, new MockHttpSession(), "shir", "c2hpcnMta2V5", SHIR_PHONE)).isEqualTo("member revoked");
     }
 
     @Test
@@ -448,7 +500,7 @@ abstract class AccessFlowContract {
 
     /* ---------- real WebAuthn: real keys and signatures through Spring's verification ---------- */
 
-    protected String optionsJson(String path, MockHttpSession session, TestTailnet.Phone phone) throws Exception {
+    protected String optionsJson(String path, MockHttpSession session, TestBrowsers.Phone phone) throws Exception {
         return mvc.perform(post(path).session(session).with(from(phone)).with(csrf())).andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
     }
@@ -458,7 +510,7 @@ abstract class AccessFlowContract {
      * Returns the HTTP status; a refusal must be a clean {@code 400 {"success":false}} (RegistrationErrorFilter),
      * so an exception escaping fails the test.
      */
-    protected int realRegistration(SoftAuthenticator passkey, MockHttpSession enrolling, TestTailnet.Phone phone) throws Exception {
+    protected int realRegistration(SoftAuthenticator passkey, MockHttpSession enrolling, TestBrowsers.Phone phone) throws Exception {
         String body = passkey.register(optionsJson("/webauthn/register/options", enrolling, phone), "iCloud Keychain");
         MvcResult r = mvc.perform(post("/webauthn/register").session(enrolling).with(from(phone)).with(csrf())
                 .contentType(MediaType.APPLICATION_JSON).content(body)).andReturn();
@@ -469,7 +521,7 @@ abstract class AccessFlowContract {
     }
 
     /** The phone's browser signing in with a passkey: options, then the assertion. Returns the HTTP status. */
-    protected int realSignIn(SoftAuthenticator passkey, MockHttpSession session, TestTailnet.Phone phone) throws Exception {
+    protected int realSignIn(SoftAuthenticator passkey, MockHttpSession session, TestBrowsers.Phone phone) throws Exception {
         String body = passkey.assertion(optionsJson("/webauthn/authenticate/options", session, phone));
         return mvc.perform(post("/login/webauthn").session(session).with(from(phone)).with(csrf())
                 .contentType(MediaType.APPLICATION_JSON).content(body)).andReturn().getResponse().getStatus();
@@ -607,7 +659,7 @@ abstract class AccessFlowContract {
 
     @Test
     void pathVariantsCantGiveASignedInMemberPasskeyOptions() throws Exception {
-        MockHttpSession family = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession family = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         for (String path : new String[] {"/webauthn/register/options/", "/webauthn/register/", "/webauthn/register;x=y"}) {
             MvcResult r = mvc.perform(post(path).session(family).with(from(SHIR_PHONE)).with(csrf())
                     .contentType(MediaType.APPLICATION_JSON).content("{}")).andReturn();
@@ -691,7 +743,7 @@ abstract class AccessFlowContract {
 
     @Test
     void springsPasskeyDeletionIsNotAllowed() throws Exception {
-        MockHttpSession family = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession family = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
 
         mvc.perform(delete("/webauthn/register/c2hpcnMta2V5").session(family).with(from(SHIR_PHONE)).with(csrf()))
                 .andExpect(status().isMethodNotAllowed());
@@ -704,13 +756,13 @@ abstract class AccessFlowContract {
 
     @Test
     void aPasskeyRememberedInTheSessionIsNotUsedToCompleteASignIn() {
-        TestTailnet.enrollNewPasskey(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        TestBrowsers.enrollNewPasskey(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         MockHttpSession session = new MockHttpSession();
         session.setAttribute(AccessSession.SIGNED_IN_CREDENTIAL, "c2hpcnMta2V5"); // left by some other request
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/login/webauthn");
+        MockHttpServletRequest request = TestBrowsers.request(context, "POST", "/login/webauthn");
         request.setSession(session);
         from(SHIR_PHONE).postProcessRequest(request);
-        var auth = new org.springframework.security.web.webauthn.authentication.WebAuthnAuthentication(TestTailnet.user(store, "shir"),
+        var auth = new org.springframework.security.web.webauthn.authentication.WebAuthnAuthentication(TestBrowsers.user(store, "shir"),
                 java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_FAMILY")));
 
         assertThat(context.getBean(PasskeySignInSuccessHandler.class).complete(request, auth)).isEqualTo("sign-in without a known passkey");
@@ -721,7 +773,7 @@ abstract class AccessFlowContract {
 
     @Test
     void aDeviceTiedToAnotherMemberIsRefusedUntilReleasedAndTheInviteStaysGood() throws Exception {
-        TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         store.revokeDevice(SHIR_PHONE.nodeId());
         String[] invite = invite("hubby", "Hubby's iPhone");
 
@@ -783,11 +835,11 @@ abstract class AccessFlowContract {
     @Test
     void someoneElsesSyncedPasskeyDuringAnEnrollmentIsRefusedAndChangesNothing() throws Exception {
         // Shir is set up; her passkey syncs to the other phone too (shared iCloud Keychain).
-        MockHttpSession shir = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession shir = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         MockHttpSession enrolling = redeem(invite("hubby", "Hubby's iPhone")[1], HUBBY_PHONE);
 
         // On that phone, Face ID offers Shir's passkey: "Passkey sign-in refused for shir: device not authorized".
-        assertThat(TestTailnet.signIn(context, enrolling, "shir", "c2hpcnMta2V5", HUBBY_PHONE)).isEqualTo("device not authorized");
+        assertThat(TestBrowsers.signIn(context, enrolling, "shir", "c2hpcnMta2V5", HUBBY_PHONE)).isEqualTo("device not authorized");
         assertThat(store.device(HUBBY_PHONE.nodeId())).isEmpty();
         assertThat(store.passkeysOf("hubby")).isEmpty();
         expectGarage(enrolling, HUBBY_PHONE, 401);
@@ -803,10 +855,12 @@ abstract class AccessFlowContract {
     void administrationIsLocalAndNeedsTheSecret() throws Exception {
         mvc.perform(get("/admin/access")).andExpect(status().isForbidden());
         mvc.perform(get("/admin/access").header(LocalAdmin.HEADER, "wrong")).andExpect(status().isForbidden());
-        // Through tailscale serve, even with the secret, even signed in as family.
-        MockHttpSession family = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        // Through the reverse proxy, even with the secret, even signed in as family.
+        MockHttpSession family = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         mvc.perform(get("/admin/access").session(family).with(from(SHIR_PHONE)).header(LocalAdmin.HEADER, adminSecret())).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/access").header(LocalAdmin.HEADER, adminSecret()).header("X-Forwarded-For", "100.64.0.11")).andExpect(status().isForbidden());
+        for (String header : new String[] {"X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host", "Forwarded", "Via"}) {
+            mvc.perform(get("/admin/access").header(LocalAdmin.HEADER, adminSecret()).header(header, "127.0.0.1")).andExpect(status().isForbidden());
+        }
 
         mvc.perform(get("/admin/access").header(LocalAdmin.HEADER, adminSecret()))
                 .andExpect(status().isOk())

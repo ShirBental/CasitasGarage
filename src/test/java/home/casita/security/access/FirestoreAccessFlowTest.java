@@ -1,7 +1,7 @@
 package home.casita.security.access;
 
-import static home.casita.security.access.TestTailnet.SHIR_PHONE;
-import static home.casita.security.access.TestTailnet.from;
+import static home.casita.security.access.TestBrowsers.SHIR_PHONE;
+import static home.casita.security.access.TestBrowsers.from;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -33,7 +33,7 @@ import home.casita.security.store.SecurityStore;
  * outage, and the security events a real enrollment and sign-in leave behind.
  */
 @SpringBootTest
-@Import({TestTailnet.Config.class, FirestoreEmulator.Config.class})
+@Import({TestBrowsers.Config.class, FirestoreEmulator.Config.class})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class FirestoreAccessFlowTest extends AccessFlowContract {
 
@@ -67,7 +67,7 @@ class FirestoreAccessFlowTest extends AccessFlowContract {
 
     @Test
     void duringAnOutageEverySessionIsRefused() throws Exception {
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         expectGarage(session, SHIR_PHONE, 200);
 
         firestore.down(true);
@@ -101,12 +101,12 @@ class FirestoreAccessFlowTest extends AccessFlowContract {
 
     @Test
     void anOutageDuringSignInGivesNoSession() {
-        TestTailnet.enrollNewPasskey(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        TestBrowsers.enrollNewPasskey(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         MockHttpSession session = new MockHttpSession();
 
         // The test's own lookup of Shir goes through; then the sign-in's consistent read of member, passkey and device fails.
         firestore.failBefore("BatchGetDocuments", 1_000, 1);
-        String refusal = TestTailnet.signIn(context, session, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        String refusal = TestBrowsers.signIn(context, session, "shir", "c2hpcnMta2V5", SHIR_PHONE);
         firestore.reset();
 
         assertThat(refusal).isEqualTo("security store unavailable");
@@ -137,7 +137,7 @@ class FirestoreAccessFlowTest extends AccessFlowContract {
 
     @Test
     void aMemberRevocationWhoseCleanupFailsStillRefusesThemAndCanBeRerun() throws Exception {
-        MockHttpSession session = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", SHIR_PHONE);
 
         firestore.failBefore("RunQuery", 1_000); // the member record is updated, then the cleanup's first query fails
         mvc.perform(delete("/admin/members/shir").header(LocalAdmin.HEADER, adminSecret()))

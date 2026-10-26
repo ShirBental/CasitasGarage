@@ -33,17 +33,17 @@ import org.springframework.web.context.WebApplicationContext;
 
 import home.casita.security.access.Invitations;
 import home.casita.security.access.LocalAdmin;
-import home.casita.security.access.TestTailnet;
+import home.casita.security.access.TestBrowsers;
 
 /**
  * Cache-Control by kind of response, through the real filter chain: hashed static files for a year, pages and
  * the manifest revalidated, the API and everything about signing in never stored. And none of it changes who
  * may fetch what, or the security headers. Signed-in requests come from Shir's authorized phone through
- * tailscale serve, signed in with a passkey (so they pass AccessCheckFilter); the passkey page from a phone
+ * the reverse proxy, signed in with a passkey (so they pass AccessCheckFilter); the passkey page from a phone
  * in enrollment, the only session that page is for.
  */
 @SpringBootTest(properties = "casita.security.family=shir,hubby")
-@Import(TestTailnet.Config.class)
+@Import(TestBrowsers.Config.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class CacheHeadersTest {
 
@@ -71,7 +71,7 @@ class CacheHeadersTest {
     @Autowired
     private Invitations invitations;
     @Autowired
-    private TestTailnet.FakeWhois whois;
+    private TestBrowsers.Browsers browsers;
 
     private MockMvc mvc;
 
@@ -81,19 +81,19 @@ class CacheHeadersTest {
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
-        FAMILY = on(TestTailnet.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestTailnet.SHIR_PHONE), TestTailnet.SHIR_PHONE);
+        FAMILY = on(TestBrowsers.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestBrowsers.SHIR_PHONE), TestBrowsers.SHIR_PHONE);
     }
 
     @AfterEach
     void forgetEnrollments() throws IOException {
         Files.deleteIfExists(DATA.resolve("security.json"));
-        whois.reset();
+        browsers.reset();
     }
 
-    private static RequestPostProcessor on(MockHttpSession session, TestTailnet.Phone phone) {
+    private static RequestPostProcessor on(MockHttpSession session, TestBrowsers.Phone phone) {
         return request -> {
             request.setSession(session);
-            return TestTailnet.from(phone).postProcessRequest(request);
+            return TestBrowsers.from(phone).postProcessRequest(request);
         };
     }
 
@@ -101,9 +101,9 @@ class CacheHeadersTest {
     private RequestPostProcessor enrolling() throws Exception {
         String token = invitations.create("hubby", "Hubby's iPhone").token();
         var redeemed = mvc.perform(post("/login/ott").param("token", token).with(csrf())
-                .with(TestTailnet.from(TestTailnet.HUBBY_PHONE))).andReturn();
+                .with(TestBrowsers.from(TestBrowsers.HUBBY_PHONE))).andReturn();
         assertThat(redeemed.getResponse().getRedirectedUrl()).isEqualTo("/passkey");
-        return on((MockHttpSession) redeemed.getRequest().getSession(), TestTailnet.HUBBY_PHONE);
+        return on((MockHttpSession) redeemed.getRequest().getSession(), TestBrowsers.HUBBY_PHONE);
     }
 
     private MockHttpServletResponse fetch(RequestBuilder request) throws Exception {
