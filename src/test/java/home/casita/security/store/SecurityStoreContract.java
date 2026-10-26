@@ -27,6 +27,7 @@ import home.casita.security.access.TestBrowsers;
 import home.casita.security.store.SecurityStore.EnrollmentClaim;
 import home.casita.security.store.SecurityStore.Invitation;
 import home.casita.security.store.SecurityStore.InvitationStatus;
+import home.casita.security.store.SecurityStore.ShortcutToken;
 import home.casita.security.store.SecurityStore.Status;
 
 /**
@@ -68,6 +69,15 @@ abstract class SecurityStoreContract {
     protected EnrollmentClaim consume(Invitation i, TestBrowsers.Phone phone) {
         Invitation c = store.consume(i.tokenHash(), phone.nodeId(), phone.name(), random(), random()).orElseThrow();
         return new EnrollmentClaim(c.tokenHash(), c.inviteId(), c.enrollmentId(), c.memberId(), c.label(), c.nodeId(), c.nodeName());
+    }
+
+    /** A new ACTIVE Shortcut token for the member, stored; a random hash and id, 30 days. */
+    protected ShortcutToken shortcutToken(String member) {
+        Instant now = clock.instant();
+        ShortcutToken t = new ShortcutToken(HexFormat.of().formatHex((random() + random()).getBytes()).substring(0, 64),
+                "st-" + random().substring(0, 12), member, member + "'s phone", "ford", "OPEN", Status.ACTIVE, now, now.plus(Duration.ofDays(30)), null);
+        store.createShortcutToken(t);
+        return t;
     }
 
     protected PublicKeyCredentialUserEntity user(String member) {
@@ -527,7 +537,9 @@ abstract class SecurityStoreContract {
     void revokingAMemberIsOneBaseRecordAndCleanupFollows() {
         enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
         Invitation open = invite("shir");
+        ShortcutToken shirs = shortcutToken("shir");
         enrolled("hubby", "aHViYnlzLWtleQ", TestBrowsers.HUBBY_PHONE);
+        ShortcutToken hubbys = shortcutToken("hubby");
 
         assertThat(store.revokeMember("shir")).isTrue();
         // Before any cleanup: the member record alone refuses everything.
@@ -538,7 +550,10 @@ abstract class SecurityStoreContract {
         assertThat(cleanup.devices()).isEqualTo(1);
         assertThat(cleanup.passkeys()).isEqualTo(1);
         assertThat(cleanup.invitations()).isEqualTo(1);
-        assertThat(store.cleanUpMember("shir")).isEqualTo(new SecurityStore.Cleanup(0, 0, 0)); // repeatable
+        assertThat(cleanup.shortcutTokens()).isEqualTo(1);
+        assertThat(store.cleanUpMember("shir")).isEqualTo(new SecurityStore.Cleanup(0, 0, 0, 0)); // repeatable
+        assertThat(store.shortcutView(shirs.tokenHash()).token()).get().satisfies(t -> assertThat(t.revoked()).isTrue());
+        assertThat(store.shortcutView(hubbys.tokenHash()).token()).get().satisfies(t -> assertThat(t.revoked()).isFalse());
         assertThat(store.consume(open.tokenHash(), TestBrowsers.SHIR_IPAD.nodeId(), "ipad", "r", "e")).isEmpty();
         assertThat(store.device(TestBrowsers.HUBBY_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("hubby")).isTrue());
     }
@@ -571,8 +586,17 @@ abstract class SecurityStoreContract {
         enrolled("hubby", "aHViYnlzLWtleQ", TestBrowsers.HUBBY_PHONE);
         Invitation pending = invite("shir");
         store.revokeDevice(TestBrowsers.HUBBY_PHONE.nodeId());
+        ShortcutToken kept = shortcutToken("shir");
+        ShortcutToken revoked = shortcutToken("hubby");
+        store.revokeShortcutToken(revoked.tokenId());
 
         SecurityStore after = restarted();
+
+        assertThat(after.shortcutView(kept.tokenHash()).token()).contains(kept);
+        assertThat(after.shortcutView(revoked.tokenHash()).token()).get().satisfies(t -> {
+            assertThat(t.status()).isEqualTo(Status.REVOKED);
+            assertThat(t.revokedAt()).isNotNull();
+        });
 
         assertThat(after.device(TestBrowsers.SHIR_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("shir")).isTrue());
         assertThat(after.device(TestBrowsers.HUBBY_PHONE.nodeId())).get().satisfies(d -> assertThat(d.status()).isEqualTo(Status.REVOKED));
@@ -605,6 +629,94 @@ abstract class SecurityStoreContract {
     void aNewInvitationNeedsAFreshHash() {
         Invitation i = invite("shir");
         assertThatThrownBy(() -> store.createInvitation(i)).isInstanceOf(IllegalStateException.class);
+    }
+
+    /* ---------- Shortcut tokens ---------- */
+
+    @Test
+    void aShortcutTokenIsFoundByItsHashTogetherWithItsMember() {
+        ShortcutToken t = shortcutToken("shir");
+
+        SecurityStore.ShortcutView view = store.shortcutView(t.tokenHash());
+        assertThat(view.token()).contains(t);
+        assertThat(view.member()).get().satisfies(m -> {
+            assertThat(m.id()).isEqualTo("shir");
+            assertThat(m.active()).isTrue();
+        });
+        assertThat(store.shortcutTokenById(t.tokenId())).contains(t);
+        assertThat(store.shortcutTokensOf("shir")).containsExactly(t);
+        assertThat(store.shortcutTokensOf("hubby")).isEmpty();
+        assertThat(store.shortcutView("0".repeat(64))).satisfies(v -> {
+            assertThat(v.token()).isEmpty();
+            assertThat(v.member()).isEmpty();
+        });
+        assertThat(store.shortcutTokenById("st-000000000000")).isEmpty();
+    }
+
+    @Test
+    void aShortcutTokenNeedsAnActiveMemberAFreshHashAndAFreshId() {
+        ShortcutToken t = shortcutToken("shir");
+        assertThatThrownBy(() -> store.createShortcutToken(t)).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> store.createShortcutToken(new ShortcutToken("f".repeat(64), t.tokenId(), "shir", "x", "ford", "OPEN",
+                Status.ACTIVE, clock.instant(), clock.instant().plus(Duration.ofDays(1)), null))).isInstanceOf(IllegalStateException.class);
+        assertThat(store.shortcutView("f".repeat(64)).token()).isEmpty();
+
+        store.revokeMember("hubby");
+        assertThatThrownBy(() -> shortcutToken("hubby")).isInstanceOf(IllegalStateException.class);
+        assertThat(store.shortcutTokensOf("hubby")).isEmpty();
+        assertThatThrownBy(() -> shortcutToken("nobody")).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void expiryIsDecidedInCodeAndTheStoreKeepsTheRecord() {
+        ShortcutToken t = shortcutToken("shir");
+        clock.advance(Duration.ofDays(30));
+        assertThat(store.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> {
+            assertThat(stored.expired(clock.instant())).isTrue();
+            assertThat(stored.status()).isEqualTo(Status.ACTIVE);
+        });
+    }
+
+    @Test
+    void revokingAShortcutTokenSticksAndSaysSoAgain() {
+        ShortcutToken t = shortcutToken("shir");
+        ShortcutToken other = shortcutToken("shir");
+
+        assertThat(store.revokeShortcutToken(t.tokenId())).isTrue();
+        assertThat(store.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> {
+            assertThat(stored.revoked()).isTrue();
+            assertThat(stored.revokedAt()).isEqualTo(clock.instant());
+        });
+        assertThat(store.revokeShortcutToken(t.tokenId())).isTrue(); // already revoked: still revoked
+        assertThat(store.shortcutView(other.tokenHash()).token()).get().satisfies(stored -> assertThat(stored.revoked()).isFalse());
+        assertThat(store.revokeShortcutToken("st-000000000000")).isFalse();
+        assertThat(store.shortcutTokensOf("shir")).hasSize(2); // revoking never deletes
+    }
+
+    @Test
+    void concurrentRevocationsOfOneTokenAllSeeItRevoked() throws Exception {
+        ShortcutToken t = shortcutToken("shir");
+        List<Boolean> results = concurrently(8, () -> store.revokeShortcutToken(t.tokenId()));
+        assertThat(results).containsOnly(true);
+        assertThat(store.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> assertThat(stored.revoked()).isTrue());
+    }
+
+    @Test
+    void concurrentCreationsOfOneHashStoreItOnce() throws Exception {
+        String hash = "a".repeat(64);
+        java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
+        List<Boolean> results = concurrently(8, () -> {
+            ShortcutToken t = new ShortcutToken(hash, "st-" + String.format("%012x", next.getAndIncrement()), "shir", "phone", "ford", "OPEN",
+                    Status.ACTIVE, clock.instant(), clock.instant().plus(Duration.ofDays(1)), null);
+            try {
+                store.createShortcutToken(t);
+                return true;
+            } catch (IllegalStateException e) {
+                return false;
+            }
+        });
+        assertThat(results).containsOnlyOnce(true);
+        assertThat(store.shortcutTokensOf("shir")).hasSize(1);
     }
 
     protected PublicKeyCredentialUserEntity entity(String member, Bytes handle) {

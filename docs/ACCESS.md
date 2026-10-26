@@ -95,7 +95,7 @@ that browser has no key, it needs its own invite). This is the price of not havi
 
 ```bash
 casita-access list                          # members, their browsers (device ids b-...) and passkeys, open invites
-casita-access revoke-device b-1a2b...       # that browser
+casita-access revoke-device b-1a2b...       # that browser; lists the member's Shortcut tokens, which it doesn't revoke
 casita-access release-device b-1a2b...      # after revoking: lets another member's invite enroll it
 casita-access revoke-passkey <credential>   # that passkey, on every device it synced to
 casita-access revoke-member hubby           # all his browsers, passkeys and invites
@@ -104,6 +104,20 @@ casita-access revoke-invite i-1a2b3c4d      # unused, or an enrollment in progre
 
 `revoke-invite` says exactly what happened; anything but `"revoked": true` prints `FAILED` and exits 1. Revocation
 takes effect on the next request of every affected session, and is in Firestore before the command returns.
+
+## Siri and Shortcuts
+
+Shortcuts can't use passkeys or the browser key, so they get **Shortcut tokens**: per phone, hashed, kept in Firestore
+with the rest of the security state, revocable, open Ford only, on their own `/shortcut/**` chain that never reads a cookie or session (`docs/SHORTCUTS.md`). A token is a
+bearer secret and proves nothing about who holds the phone or whether it is unlocked.
+
+```bash
+casita-access shortcut-token shir "Shir's iPhone"   # the token is shown once
+casita-access shortcut-tokens
+casita-access revoke-shortcut-token st-1a2b3c4d5e6f
+```
+
+`revoke-member` also revokes that member's Shortcut tokens.
 
 ## Restarts, outages and the device key
 

@@ -42,7 +42,8 @@ not for scale: there are a handful of people, devices and doors.
 3. **Nothing is deleted to revoke.** Revocation is a conditional status update, so a revoked
    record can't come back by accident, including when a later write is replayed.
 4. **No secrets in DynamoDB.** It holds invitation token *hashes*, passkey *public* keys, and no session ids.
-5. **Never mixed.** Either all four security tables are in DynamoDB, or all are in the one file. The enrollment
+5. **Never mixed.** Either all the security tables (members, passkeys, devices, invitations and Shortcut tokens) are
+   in DynamoDB, or all are in the one file. (Firestore, docs/FIRESTORE.md, follows the same rule.) The enrollment
    transaction (below) spans all four. Splitting them between DynamoDB and files would break its
    atomicity, so `casita.storage.type` switches all four together.
 
@@ -350,6 +351,17 @@ everyone out. Invitations, passkeys, devices and members are in DynamoDB:
 | `/casita/admin-secret` | `<data-dir>/admin.secret` |
 | `/casita/meross/email`, `/casita/meross/password` | `config/meross.local.json` / environment variables |
 
+### `casita-shortcut-tokens`
+
+| Key | |
+|---|---|
+| PK `tokenHash` (S) | Hex SHA-256 of the token (`casita_st_` + 256 random bits; docs/SHORTCUTS.md). A Shortcut request starts from the token, so the hash is the base-table key |
+
+Attributes: `tokenId` (`st-` + 48 random bits), `memberId`, `label`, `door`, `action`, `status` (`ACTIVE` \| `REVOKED`),
+`createdAt`, `expiresAt`, `revokedAt`. Indexes (KEYS_ONLY, finding only): `byTokenId`, `byMember`. Creation is one
+conditional put (`attribute_not_exists(tokenHash)`); revocation a conditional status update. No TTL: revoked and
+expired tokens stay listed. An AWS deployment needs this table before it runs a release with Shortcut tokens.
+
 ## IAM (instance profile), least privilege
 
 | Table | Actions |
@@ -358,7 +370,8 @@ everyone out. Invitations, passkeys, devices and members are in DynamoDB:
 | passkeys | `GetItem`, `PutItem` and `ConditionCheckItem` (inside the transaction), `UpdateItem`, `Query` (index) |
 | devices | `GetItem`, `PutItem` (inside the transaction), `UpdateItem`, `Query` (index) |
 | invitations | `GetItem`, `PutItem`, `UpdateItem`, `Query` (indexes) |
-| all four | `DescribeTable` (the start-up check), `TransactGetItems`/`TransactWriteItems` (granted through the item actions they contain) |
+| shortcut-tokens | `GetItem`, `PutItem`, `UpdateItem`, `Query` (indexes) |
+| all five | `DescribeTable` (the start-up check), `TransactGetItems`/`TransactWriteItems` (granted through the item actions they contain) |
 
 There's no `DeleteItem` and no `Scan`; `ssm:GetParameter` on `/casita/*` and `kms:Decrypt` come
 when Parameter Store does. Tables are created by infrastructure code reviewed separately; Casita

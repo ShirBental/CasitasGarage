@@ -556,6 +556,79 @@ class FirestoreSecurityStoreTest extends SecurityStoreContract {
         assertThat(store.revokeInvitation(i.inviteId())).isEqualTo(SecurityStore.RevokeOutcome.REVOKED);
     }
 
+    /* ---------- Shortcut tokens ---------- */
+
+    @Test
+    void aShortcutTokenIsOneDocumentByItsHashWithNothingSecretInItsEvents() throws Exception {
+        SecurityStore.ShortcutToken t = shortcutToken("shir");
+        DocumentSnapshot doc = db.collection("shortcutTokens").document("t_" + t.tokenHash()).get().get(5, TimeUnit.SECONDS);
+
+        assertThat(doc.exists()).isTrue();
+        assertThat(doc.getData()).doesNotContainKey("token").containsEntry("tokenId", t.tokenId()).containsEntry("status", "ACTIVE")
+                .containsEntry("door", "ford").containsEntry("action", "OPEN");
+        store.revokeShortcutToken(t.tokenId());
+
+        List<QueryDocumentSnapshot> events = db.collection("securityEvents").whereEqualTo("shortcutTokenId", t.tokenId()).get()
+                .get(5, TimeUnit.SECONDS).getDocuments();
+        assertThat(events).extracting(e -> e.getString("type")).containsExactlyInAnyOrder("SHORTCUT_TOKEN_CREATED", "SHORTCUT_TOKEN_REVOKED");
+        for (QueryDocumentSnapshot e : events) {
+            assertThat(e.getId()).doesNotContain(t.tokenHash());
+            assertThat(e.getData().values()).doesNotContain(t.tokenHash());
+        }
+    }
+
+    @Test
+    void aShortcutTokenWhoseCreationAnswerWasLostIsStoredOnce() throws Exception {
+        faults.loseResponse("Commit", 1);
+        SecurityStore.ShortcutToken t = shortcutToken("shir"); // no exception: the rerun found its own write
+
+        assertThat(store.shortcutView(t.tokenHash()).token()).contains(t);
+        assertThat(db.collection("securityEvents").whereEqualTo("type", "SHORTCUT_TOKEN_CREATED").get().get(5, TimeUnit.SECONDS).size())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void aShortcutTokenRevocationWhoseAnswerWasLostIsTheTruth() throws Exception {
+        SecurityStore.ShortcutToken t = shortcutToken("shir");
+        faults.loseResponse("Commit", 1);
+
+        assertThat(store.revokeShortcutToken(t.tokenId())).isTrue();
+        assertThat(store.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> assertThat(stored.revoked()).isTrue());
+        assertThat(db.collection("securityEvents").whereEqualTo("type", "SHORTCUT_TOKEN_REVOKED").get().get(5, TimeUnit.SECONDS).size())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void duringAnOutageShortcutTokensAreUnavailableNeverValid() {
+        SecurityStore.ShortcutToken t = shortcutToken("shir");
+        FaultyFirestore f = new FaultyFirestore();
+        FirestoreSecurityStore impatient = impatient(f);
+        f.down(true);
+
+        for (Runnable call : List.<Runnable>of(
+                () -> impatient.shortcutView(t.tokenHash()),
+                () -> impatient.shortcutTokensOf("shir"),
+                () -> impatient.shortcutTokenById(t.tokenId()),
+                () -> impatient.revokeShortcutToken(t.tokenId()),
+                () -> impatient.createShortcutToken(new SecurityStore.ShortcutToken("b".repeat(64), "st-00000000000b", "shir", "x", "ford",
+                        "OPEN", Status.ACTIVE, clock.instant(), clock.instant().plus(Duration.ofDays(1)), null)))) {
+            assertThatThrownBy(call::run).isInstanceOf(StoreUnavailableException.class);
+        }
+        assertThat(store.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> assertThat(stored.revoked()).isFalse());
+        assertThat(store.shortcutView("b".repeat(64)).token()).isEmpty();
+    }
+
+    @Test
+    void aTokenRevokedFromOneClientIsRefusedByTheNextReadFromAnother() {
+        SecurityStore.ShortcutToken t = shortcutToken("shir");
+        SecurityStore other = restarted();
+        assertThat(other.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> assertThat(stored.revoked()).isFalse());
+
+        store.revokeShortcutToken(t.tokenId());
+
+        assertThat(other.shortcutView(t.tokenHash()).token()).get().satisfies(stored -> assertThat(stored.revoked()).isTrue());
+    }
+
     /* ---------- security events ---------- */
 
     @Test

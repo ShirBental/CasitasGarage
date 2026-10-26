@@ -44,12 +44,18 @@ while [ $# -gt 0 ]; do
   esac
 done
 if [ $stdin_hdr = yes ]; then grep -q "Bearer $FAKE_TOKEN" || echo "BAD-AUTH-HEADER" >> "$FAKE_LOG"; fi
+# answer FILE: 200 with the fixture, or 404 if there is none.
+answer() { if [ -f "$FAKE_STATE/$1" ]; then cat "$FAKE_STATE/$1" > "$out"; code=200; else printf '{"error":{"code":404,"status":"NOT_FOUND"}}' > "$out"; code=404; fi; }
 if [ "$method" != GET ]; then
-  echo "MUTATE curl $method $url" >> "$FAKE_LOG"; printf '{}' > "$out"; code=200
+  echo "MUTATE curl $method $url" >> "$FAKE_LOG"; code=200
+  case "$url" in */rulesets) printf '{"name":"projects/bentals-casita/rulesets/new-1"}' > "$out" ;; *) printf '{}' > "$out" ;; esac
 else
   echo "READ curl GET $url" >> "$FAKE_LOG"
-  if [ -f "$FAKE_STATE/schema.doc" ]; then cat "$FAKE_STATE/schema.doc" > "$out"; code=200
-  else printf '{"error":{"code":404,"status":"NOT_FOUND"}}' > "$out"; code=404; fi
+  case "$url" in
+    */releases/cloud.firestore) if [ -f "$FAKE_STATE/rules_release.fail" ]; then printf 'denied' > "$out"; code=403; else answer rules_release.json; fi ;;
+    */rulesets/*) answer rules_ruleset.json ;;
+    *) answer schema.doc ;;
+  esac
 fi
 [ -n "$w" ] && printf '%s' "$code"
 exit 0
@@ -90,7 +96,7 @@ J
 # compliant: everything watson needs, already there and as intended.
 compliant() {
   fresh
-  printf '%s\n' firestore.googleapis.com iap.googleapis.com >> "$st/services_list.txt"
+  printf '%s\n' firestore.googleapis.com iap.googleapis.com firebaserules.googleapis.com >> "$st/services_list.txt"
   cat > "$st/compute_instances_list.json" <<J
 [{"name":"watson","zone":"$C/zones/us-central1-a","machineType":"$C/zones/us-central1-a/machineTypes/e2-micro","status":"RUNNING",
   "networkInterfaces":[{"network":"$C/global/networks/watson-net","subnetwork":"$C/regions/us-central1/subnetworks/watson-subnet"}],
@@ -116,10 +122,14 @@ PY
   echo "{\"name\":\"projects/$P/roles/casitaFirestoreRuntime\",\"stage\":\"GA\",\"includedPermissions\":[\"datastore.databases.getMetadata\",\"datastore.entities.create\",\"datastore.entities.get\",\"datastore.entities.list\",\"datastore.entities.update\"]}" \
     > "$st/iam_roles_describe_casitaFirestoreRuntime.json"
   edit "projects_get-iam-policy_$P.json" "d['bindings'].append({'role':'projects/$P/roles/casitaFirestoreRuntime','members':['serviceAccount:$SA']})"
-  echo "{\"name\":\"projects/$P/databases/(default)\",\"locationId\":\"us-central1\",\"type\":\"FIRESTORE_NATIVE\",\"deleteProtectionState\":\"DELETE_PROTECTION_ENABLED\"}" \
+  echo "{\"name\":\"projects/$P/databases/(default)\",\"locationId\":\"us-central1\",\"type\":\"FIRESTORE_NATIVE\",\"deleteProtectionState\":\"DELETE_PROTECTION_ENABLED\",\"pointInTimeRecoveryEnablement\":\"POINT_IN_TIME_RECOVERY_ENABLED\"}" \
     > "$st/firestore_databases_describe.json"
   echo '{"fields":{"schemaVersion":{"integerValue":"1"}}}' > "$st/schema.doc"
+  echo "{\"name\":\"projects/$P/releases/cloud.firestore\",\"rulesetName\":\"projects/$P/rulesets/abc-1\"}" > "$st/rules_release.json"
+  rules_as "$(cat "$here/../firestore.rules")"
 }
+# rules_as TEXT: the released ruleset's content.
+rules_as() { python3 -I -c 'import json,sys; json.dump({"name":"projects/x/rulesets/abc-1","source":{"files":[{"name":"firestore.rules","content":sys.argv[1]}]}}, open(sys.argv[2],"w"))' "$1" "$st/rules_ruleset.json"; }
 # edit FILE PYTHON: change one fixture's JSON (bound to d).
 edit() { python3 -I -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); $2; json.dump(d, open(p,'w'))" "$st/$1"; }
 
@@ -180,10 +190,12 @@ expect_mutations \
   "gcloud iam service-accounts create" "gcloud iam roles create" "gcloud projects add-iam-policy-binding" \
   "gcloud firestore databases create" "gcloud firestore fields ttls update" "gcloud firestore fields ttls update" \
   "gcloud firestore indexes fields update" "gcloud firestore indexes fields update" "gcloud firestore indexes fields update" \
-  "curl PATCH" \
+  "curl PATCH" "curl POST" "curl POST" \
   "gcloud compute networks create" "gcloud compute networks subnets create" "gcloud compute firewall-rules create" \
   "gcloud compute instances create"
-grep -q '^MUTATE gcloud .*services enable firestore.googleapis.com iap.googleapis.com$' "$log" || bad "enabled more than the missing APIs"
+grep -q '^MUTATE gcloud .*services enable firestore.googleapis.com iap.googleapis.com firebaserules.googleapis.com$' "$log" || bad "enabled more than the missing APIs"
+grep -q '^MUTATE gcloud .*firestore databases create .*--delete-protection --enable-pitr' "$log" || bad "database created without delete protection and PITR"
+[ "$(grep '^MUTATE curl POST' "$log" | sed 's/.*projects\/bentals-casita\///')" = "$(printf 'rulesets\nreleases')" ] || bad "rules: not a ruleset, then its release"
 grep -q '^MUTATE curl PATCH .*meta/schema?currentDocument.exists=false$' "$log" || bad "schema write isn't create-only"
 # Subcommands only (flags such as --delete-protection removed): nothing deleted, no IAM policy replaced, no key made.
 mutations | sed -E 's/ --[^ ]+//g' | grep -qE ' (delete|undelete|remove-iam-policy-binding|set-iam-policy)( |$)| keys create' &&
@@ -219,7 +231,8 @@ scenario "everything already there and as intended: reused, nothing created or c
 compliant; run_script "$work/watson.conf"
 expect_code 0; expect_no_mutation; expect_out "(nothing to create)"; expect_no_out "PROBLEM"; expect_no_out "CREATE "
 expect_out "OK       VM watson in us-central1-a"; expect_out "OK       Custom role projects/$P/roles/casitaFirestoreRuntime: exactly"
-expect_out "OK       Firestore (default): Native mode, us-central1, delete protection on"
+expect_out "OK       Firestore (default): Native mode, us-central1, delete protection on, point-in-time recovery on"
+expect_out "OK       Firestore Security Rules: deny all, as firestore.rules"
 expect_out "OK       Firewall watson-net-allow-iap-ssh: tcp:22 from 35.235.240.0/20 only"
 run_script "$work/watson.conf" --apply
 expect_code 0; expect_no_mutation
@@ -287,10 +300,41 @@ drift "Firestore in another location" "location us-east1, expected us-central1" 
 drift "Firestore without delete protection" "delete protection DELETE_PROTECTION_DISABLED" \
   edit firestore_databases_describe.json "d['deleteProtectionState']='DELETE_PROTECTION_DISABLED'"
 drift "Firestore in Datastore mode" "mode DATASTORE_MODE" edit firestore_databases_describe.json "d['type']='DATASTORE_MODE'"
+drift "Firestore without point-in-time recovery" "point-in-time recovery POINT_IN_TIME_RECOVERY_DISABLED" \
+  edit firestore_databases_describe.json "d['pointInTimeRecoveryEnablement']='POINT_IN_TIME_RECOVERY_DISABLED'"
+drift "Firestore with PITR unset" "point-in-time recovery unset" edit firestore_databases_describe.json "d.pop('pointInTimeRecoveryEnablement')"
+open_rules() { rules_as "rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if true; } } }"; }
+drift "Security Rules that allow everything" "differ from firestore.rules" open_rules
+expiring() { rules_as "rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if request.time < timestamp.date(2026, 11, 1); } } }"; }
+drift "Firebase test-mode rules" "differ from firestore.rules" expiring
+rules_denied() { rm "$st/rules_release.json"; touch "$st/rules_release.fail"; }
+drift "rules release unreadable" "Couldn't read the Firestore rules release: HTTP 403" rules_denied
+foreign() { edit rules_release.json "d['rulesetName']='projects/other/rulesets/x'"; }
+drift "rules release pointing at another project" "Couldn't read the released Firestore ruleset" foreign
 schema2() { echo '{"fields":{"schemaVersion":{"integerValue":"2"}}}' > "$st/schema.doc"; }
 drift "schema marker another version" "schemaVersion 2, expected 1" schema2
 denied() { rm "$st/compute_instances_list.json"; echo "ERROR: (gcloud.compute.instances.list) PERMISSION_DENIED: Required 'compute.instances.list'" > "$st/compute_instances_list.fail"; }
 drift "a read refused (permission)" "Couldn't read VM instances: ERROR: (gcloud.compute.instances.list) PERMISSION_DENIED" denied
+
+scenario "no Firestore rules released yet: only the rules are created, ruleset then release"
+compliant; rm "$st/rules_release.json" "$st/rules_ruleset.json"
+run_script "$work/watson.conf"
+expect_code 0; expect_no_mutation; expect_out "CREATE   Firestore Security Rules: deny all (firestore.rules)"
+run_script "$work/watson.conf" --apply
+expect_code 0; expect_mutations "curl POST" "curl POST"; expect_out "Firestore rules released (projects/bentals-casita/rulesets/new-1)"
+grep -q '^MUTATE curl POST .*/v1/projects/bentals-casita/rulesets$' "$log" || bad "ruleset not created first"
+grep -q '^MUTATE curl POST .*/v1/projects/bentals-casita/releases$' "$log" || bad "release not created"
+done_scenario
+
+scenario "released rules equal to firestore.rules but formatted differently: accepted"
+compliant; rules_as "rules_version = '2';
+service cloud.firestore { match /databases/{database}/documents { match /{document=**} {
+    // reformatted
+    allow read, write: if false;
+} } }"
+run_script "$work/watson.conf" --apply
+expect_code 0; expect_no_mutation; expect_out "OK       Firestore Security Rules: deny all"
+done_scenario
 
 scenario "public HTTPS rule exactly as provision-public.sh makes it: accepted"
 compliant

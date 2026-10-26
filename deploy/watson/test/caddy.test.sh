@@ -78,9 +78,11 @@ check "plain http redirects to https" '[ "$code" = 308 ] && [ "${loc#https://loc
 
 get "https://localhost:$H/login/ott?token=SECRET-INVITE-TOKEN&x=1" -H 'Cookie: JSESSIONID=SECRET-SESSION; __Host-casita-device=SECRET-KEY' \
   -H 'X-XSRF-TOKEN: SECRET-CSRF' >/dev/null
+curl -sk --max-time 5 -X POST "https://localhost:$H/shortcut/v1/doors/ford/open" -H 'Authorization: Bearer casita_st_SECRET-SHORTCUT' >/dev/null
 sleep 0.5
 check "the access log was written" '[ -s "$work/access.log" ]'
-check "the access log has no invite token, cookie or CSRF token" '! grep -q SECRET "$work/access.log"'
+check "the access log has no invite token, cookie, CSRF token or Shortcut token" '! grep -q SECRET "$work/access.log"'
+check "a Shortcut request is logged (without its token)" 'grep -q "/shortcut/v1/doors/ford/open" "$work/access.log"'
 check "the access log shows the token as REDACTED" 'grep -q "token=REDACTED" "$work/access.log"'
 check "Caddy doesn't announce itself" '[ -z "$(get -D - -o /dev/null "https://localhost:$H/healthz" | grep -i "^server:")" ]'
 
