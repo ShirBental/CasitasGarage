@@ -275,7 +275,9 @@ class ShortcutApiTest {
         mvc.perform(open(token)).andExpect(status().isAccepted());
         mvc.perform(delete("/admin/shortcut-tokens/" + idOf(created)).header(LocalAdmin.HEADER, adminSecret()));
         mvc.perform(open(token)).andExpect(status().isUnauthorized());
-        mvc.perform(open(shahars)).andExpect(status().isAccepted()); // nobody else's
+        // Nobody else's: Shahar's token still authenticates. (Ford is still moving from Shir's open, so the garage's own
+        // rule answers busy; a refused token would be 401.)
+        mvc.perform(open(shahars)).andExpect(status().isConflict()).andExpect(jsonPath("$.outcome").value("BUSY"));
     }
 
     @Test
