@@ -138,7 +138,7 @@ Rotate the same way: create a new token, put it in the Shortcut, revoke the old 
 | **Siri on a locked phone** | Siri can run Shortcuts from the lock screen, and Apple doesn't document that "Get Contents of URL" requires unlocking: assume it doesn't. Anyone within earshot of the phone may be able to say the phrase. A bearer token can't tell | See *Locked phones* below. Casita adds no fake check for this |
 | **Token copied** (screenshot, backup, shared Shortcut, iCloud sync of Shortcuts) | Whoever has it can open Ford from anywhere until it expires or is revoked | Ford and open only; 6 commands per 10 minutes per token; every use logged with the token's id; revoke at once with `casita-access`; 180-day default life. **Never share the Shortcut**: shared Shortcuts carry their headers |
 | **Replay / repeated requests** | The token is the same on every request; resending opens again if the door is closed | HTTPS only (nothing to capture in transit); `GarageService` refuses while a movement is unchecked, refuses when the door isn't closed, holds after a stuck move; per-token and per-client rate limits. No nonce: Shortcuts can't sign requests |
-| **Compromised phone** | Same as a copied token, plus the browser's session | Revoke the token (`revoke-shortcut-token`) **and** the browser (`revoke-device`): they are separate credentials, and revoking the browser does **not** revoke the token. Or revoke the member (`revoke-member`), which revokes both |
+| **Compromised phone** | Same as a copied token, plus the browser's session | Revoke the token (`revoke-shortcut-token`) **and** the browser (`revoke-device`): they are separate credentials. `revoke-device` doesn't revoke tokens (nothing ties a token to a browser: a Shortcut sends only its token), but lists the member's active ones so you can pick the phone's by its label and id. Or revoke the member (`revoke-member`), which revokes both |
 | **Other doors, closing, admin** | Not reachable: the token's door and action are checked against the path; `/api/**` ignores tokens; `/admin/**` is local-only with its own secret, and Caddy answers 404 for it | Tests cover each |
 | **Guessing** | 256 random bits | Rate limits keep the endpoint from being hammered, not guessing |
 | **Leaks through logs** | — | Tokens are never logged (only ids); Caddy drops the Authorization header from its access log (it also redacts it by default); error answers are fixed text |
@@ -171,10 +171,9 @@ repaired.
 - **Kill switch:** revoke every token (`casita-access shortcut-tokens`, then `revoke-shortcut-token` each), or
   `revoke-member`, which revokes all of that member's tokens with everything else.
 - **Backups:** tokens are in Firestore with the rest of the security state: replicated, with delete protection on the
-  database, and losing the VM loses nothing. **Point-in-Time Recovery is not enabled** by `provision-gcp.sh`; check with
-  `gcloud firestore databases describe --database='(default)' --format='value(pointInTimeRecoveryEnablement)'`.
-  If the database is ever restored to an earlier time (PITR or an import), every revocation since then is undone, for
-  tokens, devices, passkeys and members alike: revoke them again before Casita serves requests.
+  database and point-in-time recovery (7 days; docs/FIRESTORE.md, *Recovery*, for its cost), and losing the VM loses
+  nothing. If the database is ever restored to an earlier time (PITR or an import), every revocation since then is
+  undone, for tokens, devices, passkeys and members alike: revoke them again before Casita serves requests.
 - **Audit:** creating and revoking a token writes a `securityEvents` record in the same commit (docs/FIRESTORE.md), kept
   400 days. Each use is one journal line (persistent journal, capped at 200 MB): for a command, the token id, member,
   label, door, outcome, control and client address in one line, so the line is itself the link between the token and

@@ -1,0 +1,12 @@
+rules_version = '2';
+// Casita's Firestore Security Rules: no direct client access at all (docs/FIRESTORE.md).
+// Casita reaches Firestore only through a server client library with IAM, which these rules don't apply to. They
+// apply only to Firebase mobile and web clients, and Casita has none. provision-gcp.sh releases this file when the
+// project has no Firestore rules yet, and refuses to go on if the released rules differ.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

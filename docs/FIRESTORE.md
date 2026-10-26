@@ -139,14 +139,37 @@ The runtime service account needs `datastore.entities.get`, `list`, `create`, `u
 `datastore.databases.getMetadata`. It needs **no `delete`**: nothing in this code deletes a document. Shortcut tokens
 need nothing more (the same four entity permissions, on one more collection). The
 emulator doesn't enforce IAM, so this is a provisioning check, not a test. No service-account keys. Org policy
-`iam.disableServiceAccountKeyCreation` on the project. Security Rules: `allow read, write: if false;` (intended;
-`provision-gcp.sh` doesn't set them, so check them in the console's Firestore *Rules* tab. Server client libraries
-with IAM, as Casita uses, aren't subject to them; they matter only for Firebase client SDKs).
+`iam.disableServiceAccountKeyCreation` on the project.
 
-**Recovery:** the database is created with delete protection; **Point-in-Time Recovery is not enabled** by provisioning.
-Check: `gcloud firestore databases describe --database='(default)' --format='value(pointInTimeRecoveryEnablement,deleteProtectionState)'`.
-Enable (billed for the retained versions): `gcloud firestore databases update --database='(default)' --enable-pitr`.
-A restore to an earlier time undoes every revocation since then: revoke again before Casita serves requests.
+**Security Rules: deny all, in version control** (`deploy/watson/firestore.rules`: `allow read, write: if false;`).
+Casita's server client library uses IAM and "bypasses all Firestore Security Rules" (Google's words); rules apply only to
+Firebase mobile and web clients, and Casita has none. Deny-all closes that door for good. `provision-gcp.sh` reads the
+rules released as `cloud.firestore` (Firebase Rules API, `firebaserules.googleapis.com`, enabled with the others):
+
+- none released: `--apply` creates a ruleset from `firestore.rules` and releases it (create-only);
+- released and equal to `firestore.rules` (ignoring comments and whitespace): OK;
+- released and different (Firebase's "test mode" rules, say): **PROBLEM**, and the run stops; it never replaces them.
+
+Check by hand: Firebase console (or Google Cloud console) → Firestore → **Rules**; or
+`curl -H "Authorization: Bearer $(gcloud auth print-access-token)" https://firebaserules.googleapis.com/v1/projects/PROJECT/releases/cloud.firestore`
+and then the `rulesetName` it names.
+
+**Recovery: point-in-time recovery (PITR) on, and delete protection on**, both set when `provision-gcp.sh` creates the
+database (`--delete-protection --enable-pitr`). For an existing database the script never changes it: a database without
+PITR is a PROBLEM, fixed deliberately with `gcloud firestore databases update --database='(default)' --enable-pitr`.
+Check: `gcloud firestore databases describe --database='(default)' --format='value(pointInTimeRecoveryEnablement,deleteProtectionState,versionRetentionPeriod)'`
+(`POINT_IN_TIME_RECOVERY_ENABLED DELETE_PROTECTION_ENABLED 604800s`).
+
+- **What it keeps:** every version of every document for 7 days (`versionRetentionPeriod: 604800s`), readable at a past
+  time or restorable; plus, from enabling, nothing earlier (`earliestVersionTime`).
+- **Cost:** PITR storage "doesn't have a free tier" and needs billing enabled, even when the database reports
+  `freeTier: true` (that covers ordinary reads, writes and storage). It is billed as the database's size, measured daily
+  and averaged, times the PITR unit price per GB-month (on the Firestore pricing page). Casita's database is kilobytes,
+  so the charge rounds to cents a month at most; reads made against old versions are billed as ordinary reads.
+- **Restoring undoes revocations.** A restore (or an import) brings back every member, device, passkey, invitation and
+  Shortcut token as it was then, including ones revoked since. Revoke them again before Casita serves requests.
+- **Turning it off:** `gcloud firestore databases update --database='(default)' --no-enable-pitr` (up to a day of PITR
+  storage may still be charged).
 
 ## Tests
 

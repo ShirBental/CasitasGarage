@@ -95,7 +95,7 @@ that browser has no key, it needs its own invite). This is the price of not havi
 
 ```bash
 casita-access list                          # members, their browsers (device ids b-...) and passkeys, open invites
-casita-access revoke-device b-1a2b...       # that browser
+casita-access revoke-device b-1a2b...       # that browser; lists the member's Shortcut tokens, which it doesn't revoke
 casita-access release-device b-1a2b...      # after revoking: lets another member's invite enroll it
 casita-access revoke-passkey <credential>   # that passkey, on every device it synced to
 casita-access revoke-member hubby           # all his browsers, passkeys and invites

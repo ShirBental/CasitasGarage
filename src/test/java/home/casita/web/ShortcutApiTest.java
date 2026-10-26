@@ -256,6 +256,43 @@ class ShortcutApiTest {
     /* ---------- administration ---------- */
 
     @Test
+    void revokingABrowserListsItsMembersActiveShortcutTokensButLeavesThemToTheAdmin() throws Exception {
+        MockHttpSession session = TestBrowsers.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestBrowsers.SHIR_PHONE);
+        String created = mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, adminSecret())
+                .param("member", "shir").param("label", "Shir's iPhone")).andReturn().getResponse().getContentAsString();
+        String token = JsonPath.read(created, "$.token");
+        String shahars = newToken("shahar");
+        assertThat(session).isNotNull();
+
+        mvc.perform(delete("/admin/devices/" + TestBrowsers.SHIR_PHONE.nodeId()).header(LocalAdmin.HEADER, adminSecret()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revoked").value(true))
+                .andExpect(jsonPath("$.shortcutTokensStillActive.length()").value(1))
+                .andExpect(jsonPath("$.shortcutTokensStillActive[0].id").value(idOf(created)))
+                .andExpect(jsonPath("$.shortcutTokensStillActive[0].label").value("Shir's iPhone"))
+                .andExpect(jsonPath("$.next").exists());
+        // Separate credentials: the token is the admin's to revoke, by id.
+        mvc.perform(open(token)).andExpect(status().isAccepted());
+        mvc.perform(delete("/admin/shortcut-tokens/" + idOf(created)).header(LocalAdmin.HEADER, adminSecret()));
+        mvc.perform(open(token)).andExpect(status().isUnauthorized());
+        mvc.perform(open(shahars)).andExpect(status().isAccepted()); // nobody else's
+    }
+
+    @Test
+    void revokingABrowserWhoseMemberHasNoTokensSaysSo() throws Exception {
+        TestBrowsers.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestBrowsers.SHIR_PHONE);
+        mvc.perform(delete("/admin/devices/" + TestBrowsers.SHIR_PHONE.nodeId()).header(LocalAdmin.HEADER, adminSecret()))
+                .andExpect(jsonPath("$.revoked").value(true))
+                .andExpect(jsonPath("$.shortcutTokensStillActive.length()").value(0))
+                .andExpect(jsonPath("$.next").doesNotExist());
+        mvc.perform(delete("/admin/devices/b-0000000000000000000000000000dead").header(LocalAdmin.HEADER, adminSecret()))
+                .andExpect(jsonPath("$.revoked").value(false))
+                .andExpect(jsonPath("$.shortcutTokensStillActive").doesNotExist());
+    }
+
+
+
+    @Test
     void theTokenIsShownOnceAndNeverListed() throws Exception {
         String created = mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, adminSecret())
                         .param("member", "shir").param("label", "Shir's iPhone").param("days", "30"))

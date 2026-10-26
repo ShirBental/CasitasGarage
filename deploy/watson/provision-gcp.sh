@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Provision watson's GCP resources: APIs, Casita's service account and no-delete role, the (default) Firestore
-# database with its schema marker, a private network, and the e2-micro VM.
+# database (delete protection, point-in-time recovery) with its schema marker and deny-all Security Rules
+# (firestore.rules), a private network, and the e2-micro VM.
 #
 #   deploy/watson/provision-gcp.sh deploy/watson/watson.conf            # dry run: reads, checks, prints the plan
 #   deploy/watson/provision-gcp.sh deploy/watson/watson.conf --apply    # creates what's missing, after the same checks
@@ -13,7 +14,8 @@
 # Both modes: what exists is checked against watson.conf by provision_check.py. A security- or cost-relevant
 #   mismatch (a VM named watson in another zone, a VM on another network or with another service account, an
 #   extra firewall rule or a widened one, a role with other permissions, extra roles on the service account,
-#   a service-account key, Firestore in another location or mode or without delete protection, ...) is a
+#   a service-account key, Firestore in another location or mode or without delete protection or PITR, Security
+#   Rules other than firestore.rules, ...) is a
 #   PROBLEM: the run stops before changing anything. This script never replaces, updates or deletes a resource
 #   that exists, never creates a key, and never touches billing.
 # --apply: enables the missing APIs, reads and checks everything again, then creates only what is missing.
@@ -44,10 +46,14 @@ command -v python3 >/dev/null || { echo "python3 is needed (for reading gcloud's
 SA_EMAIL="$SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com"
 ROLE_NAME="projects/$PROJECT_ID/roles/$ROLE_ID"
 PERMS=datastore.entities.get,datastore.entities.list,datastore.entities.create,datastore.entities.update,datastore.databases.getMetadata
-APIS=compute.googleapis.com,firestore.googleapis.com,iap.googleapis.com,iam.googleapis.com,cloudresourcemanager.googleapis.com
+APIS=compute.googleapis.com,firestore.googleapis.com,iap.googleapis.com,iam.googleapis.com,cloudresourcemanager.googleapis.com,firebaserules.googleapis.com
 IAP_RANGE=35.235.240.0/20
 FW_RULE="$NETWORK-allow-iap-ssh"
 DOC_URL="https://firestore.googleapis.com/v1/projects/$PROJECT_ID/databases/(default)/documents/meta/schema"
+# Firestore Security Rules for the (default) database: the release named cloud.firestore points at a ruleset.
+RULES_API="https://firebaserules.googleapis.com/v1/projects/$PROJECT_ID"
+RULES_FILE="$here/firestore.rules"
+[ -f "$RULES_FILE" ] || { echo "$RULES_FILE is missing" >&2; exit 2; }
 # Never answer gcloud's "enable this API and retry?" prompt, in either mode.
 export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 G=(gcloud --project="$PROJECT_ID" --quiet)
@@ -68,6 +74,17 @@ fetch() {
 
 # token_header: the Authorization header for curl, on stdin (never on a command line, never printed).
 token_header() { printf 'Authorization: Bearer %s\n' "$(gcloud auth print-access-token)"; }
+
+# get NAME URL: a REST GET as you (token on stdin). 200 -> NAME.json, 404 -> NAME.absent, anything else -> NAME.error.
+get() {
+  local name="$1" url="$2" code
+  code="$(token_header | curl -sS -o "$inv/$name.body" -w '%{http_code}' -H @- -H "x-goog-user-project: $PROJECT_ID" "$url" 2>/dev/null || echo 000)"
+  case "$code" in
+    200) mv "$inv/$name.body" "$inv/$name.json" ;;
+    404) mv "$inv/$name.body" "$inv/$name.absent" ;;
+    *) { echo "HTTP $code"; head -c 300 "$inv/$name.body" 2>/dev/null; } > "$inv/$name.error"; rm -f "$inv/$name.body" ;;
+  esac
+}
 
 # inventory: read everything that can be read without enabling an API. Read-only.
 inventory() {
@@ -102,6 +119,17 @@ inventory() {
       esac
     fi
   fi
+  if has firebaserules.googleapis.com; then
+    # The released Firestore rules, and the ruleset they point at: two GETs.
+    get rules-release "$RULES_API/releases/cloud.firestore"
+    if [ -f "$inv/rules-release.json" ]; then
+      ruleset="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("rulesetName",""))' "$inv/rules-release.json" 2>/dev/null || true)"
+      case "$ruleset" in
+        "projects/$PROJECT_ID/rulesets/"*) get rules-ruleset "https://firebaserules.googleapis.com/v1/$ruleset" ;;
+        *) echo "the cloud.firestore release names no ruleset of this project" > "$inv/rules-ruleset.error" ;;
+      esac
+    fi
+  fi
   if has compute.googleapis.com; then
     # Every VM of that name, in every zone: a second watson must never be created.
     fetch instances "${G[@]}" compute instances list --format=json   # every zone; matched by exact name in the check
@@ -125,6 +153,7 @@ check() {
   WATSON_PROJECT_ID="$PROJECT_ID" WATSON_REGION="$REGION" WATSON_ZONE="$ZONE" WATSON_FIRESTORE_LOCATION="$FIRESTORE_LOCATION" \
   WATSON_VM_NAME="$VM_NAME" WATSON_NETWORK="$NETWORK" WATSON_SUBNET="$SUBNET" WATSON_SUBNET_RANGE="$SUBNET_RANGE" \
   WATSON_SA_EMAIL="$SA_EMAIL" WATSON_ROLE_ID="$ROLE_ID" WATSON_PERMS="$PERMS" WATSON_APIS="$APIS" WATSON_HTTPS_TAG="${HTTPS_TAG:-casita-https}" \
+  WATSON_RULES_FILE="$RULES_FILE" \
     python3 -I "$here/provision_check.py" "$inv"
 }
 
@@ -180,8 +209,9 @@ if is binding absent; then any=yes
   run "${G[@]}" projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$SA_EMAIL" --role="$ROLE_NAME" --condition=None
 fi
 if is firestore absent; then any=yes
+  # Point-in-time recovery: 7 days of versions, billed by database size (no free tier; docs/FIRESTORE.md).
   run "${G[@]}" firestore databases create --database='(default)' --location="$FIRESTORE_LOCATION" --type=firestore-native \
-    --delete-protection
+    --delete-protection --enable-pitr
   # TTL policies (cleanup only; decided by nothing) and index exemptions for the byte fields.
   run "${G[@]}" firestore fields ttls update ttl --collection-group=invitations --enable-ttl --async
   run "${G[@]}" firestore fields ttls update expiresAt --collection-group=securityEvents --enable-ttl --async
@@ -197,6 +227,23 @@ if is schema absent; then any=yes
       -H "x-goog-user-project: $PROJECT_ID" -H 'Content-Type: application/json' \
       -d '{"fields":{"schemaVersion":{"integerValue":"1"}}}' > /dev/null
     echo "  meta/schema created"
+  fi
+fi
+if is rules absent; then any=yes
+  # Create-only: a new ruleset from firestore.rules, then the cloud.firestore release pointing at it. Only when the
+  # project has no Firestore rules release at all; released rules that differ stop the run instead (check).
+  echo "  \$ curl -X POST '$RULES_API/rulesets' (firestore.rules), then -X POST '$RULES_API/releases' {name: cloud.firestore}   (as you; token on stdin)"
+  if [ "$mode" = "--apply" ]; then
+    python3 -I -c 'import json,sys; print(json.dumps({"source":{"files":[{"name":"firestore.rules","content":open(sys.argv[1]).read()}]}}))' \
+      "$RULES_FILE" > "$inv/ruleset-request.json"
+    token_header | curl --fail-with-body -sS -X POST "$RULES_API/rulesets" -H @- -H "x-goog-user-project: $PROJECT_ID" \
+      -H 'Content-Type: application/json' -d @"$inv/ruleset-request.json" > "$inv/ruleset-created.json"
+    created="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$inv/ruleset-created.json")"
+    case "$created" in "projects/$PROJECT_ID/rulesets/"*) ;; *) echo "unexpected ruleset name: $created" >&2; exit 1 ;; esac
+    token_header | curl --fail-with-body -sS -X POST "$RULES_API/releases" -H @- -H "x-goog-user-project: $PROJECT_ID" \
+      -H 'Content-Type: application/json' \
+      -d "{\"name\":\"projects/$PROJECT_ID/releases/cloud.firestore\",\"rulesetName\":\"$created\"}" > /dev/null
+    echo "  Firestore rules released ($created)"
   fi
 fi
 if is network absent; then any=yes

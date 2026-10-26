@@ -236,11 +236,29 @@ class AdminController {
         return at < 0 ? Optional.empty() : Optional.of(link.substring(at + "token=".length())).filter(t -> !t.isBlank());
     }
 
+    /**
+     * Revokes one browser. Its member's Shortcut tokens are separate credentials and stay active: nothing ties a token
+     * to a browser (a Shortcut sends only its token, never the browser key), so they are listed for the admin to revoke
+     * by id, or all at once with revoke-member. Never guessed from labels.
+     */
     @DeleteMapping("/devices/{nodeId}")
     Map<String, Object> revokeDevice(@PathVariable String nodeId) {
+        Optional<String> member = store.device(nodeId).map(SecurityStore.Device::memberId);
         boolean revoked = store.revokeDevice(nodeId);
         log.info("Device {} revoked: {}", nodeId, revoked);
-        return Map.of("revoked", revoked);
+        Map<String, Object> answer = new LinkedHashMap<>();
+        answer.put("revoked", revoked);
+        if (member.isPresent()) {
+            Instant now = clock.instant();
+            List<Map<String, String>> active = store.shortcutTokensOf(member.get()).stream().filter(t -> !t.revoked() && !t.expired(now))
+                    .map(t -> Map.of("id", t.tokenId(), "label", t.label())).toList();
+            answer.put("shortcutTokensStillActive", active);
+            if (!active.isEmpty()) {
+                answer.put("next", "Shortcut tokens aren't tied to a browser and still work: if this phone has one, "
+                        + "casita-access revoke-shortcut-token <id> (or revoke-member for everything)");
+            }
+        }
+        return answer;
     }
 
     /** A revoked node may then be enrolled for any member (through a new invite). */

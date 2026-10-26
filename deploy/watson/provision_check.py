@@ -68,7 +68,7 @@ def services():
 enabled = services()
 if enabled is None:
     out("PROBLEM", "Couldn't list the project's enabled APIs, so nothing could be checked.")
-    state.update(dict.fromkeys(["sa", "role", "binding", "firestore", "schema", "network", "subnet", "firewall", "vm"], "unknown"))
+    state.update(dict.fromkeys(["sa", "role", "binding", "firestore", "schema", "rules", "network", "subnet", "firewall", "vm"], "unknown"))
 else:
     missing = [a for a in C["apis"].split(",") if a not in enabled]
     for a in C["apis"].split(","):
@@ -185,7 +185,7 @@ if api("firestore.googleapis.com"):
     s, db = read("firestore")
     if not unreadable("firestore", "the Firestore database", s, db):
         if s == "absent":
-            out("CREATE", "Firestore (default): Native mode, %s, delete protection on" % C["firestore_location"])
+            out("CREATE", "Firestore (default): Native mode, %s, delete protection on, point-in-time recovery on" % C["firestore_location"])
             state["firestore"] = "absent"
             state["schema"] = "absent"
         else:
@@ -197,10 +197,14 @@ if api("firestore.googleapis.com"):
                 bad.append("mode %s, expected FIRESTORE_NATIVE" % db.get("type"))
             if db.get("deleteProtectionState") != "DELETE_PROTECTION_ENABLED":
                 bad.append("delete protection %s, expected DELETE_PROTECTION_ENABLED" % db.get("deleteProtectionState"))
+            if db.get("pointInTimeRecoveryEnablement") != "POINT_IN_TIME_RECOVERY_ENABLED":
+                bad.append("point-in-time recovery %s, expected POINT_IN_TIME_RECOVERY_ENABLED (enable it deliberately: gcloud "
+                           "firestore databases update --database='(default)' --enable-pitr; billed, docs/FIRESTORE.md)"
+                           % (db.get("pointInTimeRecoveryEnablement") or "unset"))
             if bad:
                 out("PROBLEM", "Firestore (default): " + "; ".join(bad) + ".")
             else:
-                out("OK", "Firestore (default): Native mode, %s, delete protection on" % C["firestore_location"])
+                out("OK", "Firestore (default): Native mode, %s, delete protection on, point-in-time recovery on" % C["firestore_location"])
             ss, doc = read("schema")
             if ss == "present":
                 version = ((doc or {}).get("fields", {}).get("schemaVersion", {}) or {}).get("integerValue")
@@ -220,10 +224,47 @@ if api("firestore.googleapis.com"):
                 out("NOTE", "meta/schema not checked (no access token): --apply checks it before writing")
                 state["schema"] = "unknown"
 else:
-    out("CREATE", "Firestore (default): Native mode, %s, delete protection on (Firestore API not enabled: checked after --apply)"
+    out("CREATE", "Firestore (default): Native mode, %s, delete protection on, point-in-time recovery on (Firestore API not enabled: "
+        "checked after --apply)"
         % C["firestore_location"])
     out("CREATE", "Schema marker meta/schema {schemaVersion: 1} (create-only)")
     state["firestore"] = state["schema"] = "absent"
+
+# ---------- Firestore Security Rules ----------
+def normalized(text):
+    """Rules text without comments and with whitespace collapsed: a reformatted file compares equal, a changed rule doesn't."""
+    kept = [l.split("//", 1)[0] for l in (text or "").splitlines()]
+    return " ".join(" ".join(kept).split())
+
+
+with open(C["rules_file"]) as f:
+    WANT_RULES = normalized(f.read())
+
+if api("firebaserules.googleapis.com"):
+    s, release = read("rules-release")
+    if not unreadable("rules", "the Firestore rules release", s, release):
+        if s == "absent":
+            out("CREATE", "Firestore Security Rules: deny all (firestore.rules), released as cloud.firestore (create-only)")
+            state["rules"] = "absent"
+        elif s == "unchecked":
+            out("NOTE", "Firestore Security Rules not checked (no access token): --apply checks them before writing")
+            state["rules"] = "unknown"
+        else:
+            rs, ruleset = read("rules-ruleset")
+            if not unreadable("rules", "the released Firestore ruleset", rs, ruleset):
+                files = ((ruleset or {}).get("source") or {}).get("files") or []
+                got = normalized("\n".join(f.get("content", "") for f in files))
+                if rs == "present" and got == WANT_RULES:
+                    out("OK", "Firestore Security Rules: deny all, as firestore.rules")
+                    state["rules"] = "present"
+                else:
+                    out("PROBLEM", "Firestore Security Rules released as cloud.firestore (%s) differ from firestore.rules. This script "
+                        "won't replace them: review them in the console, then release firestore.rules deliberately."
+                        % (release or {}).get("rulesetName", "?"))
+                    state["rules"] = "unknown"
+else:
+    out("CREATE", "Firestore Security Rules: deny all (firestore.rules) (Firebase Rules API not enabled: checked after --apply)")
+    state["rules"] = "absent"
 
 # ---------- network, firewall, VM ----------
 if api("compute.googleapis.com"):
