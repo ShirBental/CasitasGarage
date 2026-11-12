@@ -9,7 +9,7 @@
 #   bin/casita-access release-device <node id>           # a revoked node may then be enrolled for anyone
 #   bin/casita-access revoke-passkey <credential id>
 #   bin/casita-access revoke-member <member>               # all their devices, passkeys, invites and Shortcut tokens
-#   bin/casita-access shortcut-token <member> "<device label>" [days] [ford|toyota]   # Siri: opens that one door; shown once
+#   bin/casita-access shortcut-token <member> "<device label>" [days [ford|toyota]]   # Siri: opens one door; days first
 #   bin/casita-access shortcut-tokens                      # lists them (never the tokens themselves)
 #   bin/casita-access revoke-shortcut-token <token id>     # st-..., from 'shortcut-tokens'
 #

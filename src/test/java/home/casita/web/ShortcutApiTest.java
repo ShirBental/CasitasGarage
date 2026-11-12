@@ -181,7 +181,7 @@ class ShortcutApiTest {
     }
 
     @Test
-    void onlyFordAndOnlyOpen() throws Exception {
+    void aFordTokenOnlyOpensFord() throws Exception {
         String token = newToken("shir");
         String bearer = "Bearer " + token;
 
@@ -346,7 +346,7 @@ class ShortcutApiTest {
     }
 
     @Test
-    void onlyForAnActiveFamilyMemberFordAndAtMostAYear() throws Exception {
+    void onlyForAnActiveFamilyMemberOneDoorAndAtMostAYear() throws Exception {
         String admin = adminSecret();
         mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "mallory").param("label", "x"))
                 .andExpect(status().isBadRequest());
