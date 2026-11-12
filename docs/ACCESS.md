@@ -53,7 +53,8 @@ verification on every sign-in, and revocation of either at any time.
 - **Rate limits** on the public sign-in, invite and passkey-setup endpoints (`AuthRateLimitFilter`): 30 requests per
   client address and 300 in total per 10 minutes by default (`casita.security.rate-limit.*`); beyond that, 429.
 - CSRF protection (Spring's single-page-app mode), a strict content security policy, HSTS, and `Secure`, `HttpOnly`,
-  `SameSite=Lax` session cookies are unchanged. Sessions live in memory and end after a week idle or on restart.
+  `SameSite=Lax` session cookies are unchanged. Sessions live in memory and end after a week idle or on restart; an
+  enrolled browser then signs itself back in without Face ID for a limited time (see "Staying signed in").
 
 ## How Casita knows the client and the browser
 
@@ -119,12 +120,45 @@ casita-access revoke-shortcut-token st-1a2b3c4d5e6f
 
 `revoke-member` also revokes that member's Shortcut tokens.
 
+## Staying signed in
+
+Each phone is enrolled once (an invite, then Face ID). After that, Face ID is needed **once every 30 days** per
+browser, not on every visit and not after a restart:
+
+- **After each Face ID sign-in** the browser gets a second cookie, `__Host-casita-signin` (`Secure`, `HttpOnly`,
+  `SameSite=Lax`, host-only): a *remembered sign-in* for that member, the passkey they used and that browser's key,
+  signed with its own server secret, `<data-dir>/remember.key` (owner-only, created on first start).
+- **When the browser has no session** (Casita restarted, or the session ended after a week idle), its next request
+  signs it back in silently, with a new session id, if, read from Firestore right then: the member is in
+  `casita.security.family` and active, the passkey is active and theirs, the browser key verifies, is the one the cookie
+  was issued to, and is authorized for that member. That is the same check every signed-in request gets
+  (`AccessCheckFilter`), which then runs on it again. Opening and closing doors then needs nothing more.
+- **Limits:** at most `casita.security.remember.max-age` (30 days) after the last Face ID, never extended by use; and
+  it lapses after `idle` (14 days) unused. Each use re-issues the cookie with a new idle deadline. Max 90 days.
+  `max-age: 0` turns it off (every session starts with Face ID, as before).
+- **Revocation is immediate:** `revoke-device`, `revoke-passkey` and `revoke-member` refuse the next request, remove the
+  cookie, and leave the browser on the sign-in page. Signing out in the app removes it too.
+- **Kill switch for every browser at once:** delete `/var/lib/casita/remember.key` and restart Casita. Everyone then
+  signs in with Face ID once; browser keys, passkeys and enrollments are untouched.
+- **Outages:** if Firestore can't be read, nobody is signed in (fail closed), but the cookie is kept, so the browser
+  signs itself back in once Firestore is back.
+- **Audit:** every restore is a journal line (`Remembered sign-in: shir on browser b-1a2b3c4d, last passkey sign-in
+  <time>`), every refusal too, with its reason; door commands are recorded under the member as before.
+
+**What it is, honestly:** a bearer cookie in the same cookie jar as the browser key. It is device-scoped (useless with
+another browser's key, and checked against that browser's authorization on every use), time-limited, and revocable,
+but it is not hardware-bound and not single-use: two copies of the same cookie jar can't be told apart, exactly as with
+the browser key and session cookie today. A copied jar works until 30 days after the last Face ID, or until the
+browser, passkey or member is revoked. Single-use rotation with reuse detection would need a server-side record per
+remembered sign-in in Firestore; not done here.
+
 ## Restarts, outages and the device key
 
-Sessions live in memory: a restart signs everyone out (Face ID signs them back in). Members, passkeys, browser
+Sessions live in memory: a restart ends them all, and enrolled browsers sign themselves back in (above). Members, passkeys, browser
 authorizations and invitations are in Firestore. `device.key` lives in the data directory on the VM: **if it is lost
 or replaced, every browser key stops verifying and every browser needs a new invite** (passkeys and members are
-unaffected). Back it up with the VM's disk, or accept re-enrolling.
+unaffected). Back it up with the VM's disk, or accept re-enrolling. Losing `remember.key` only means one Face ID
+sign-in per browser.
 
 ## Limits, honestly
 

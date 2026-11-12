@@ -36,10 +36,19 @@ public class PasskeySignInSuccessHandler implements AuthenticationSuccessHandler
     private final AccessDecisions decisions;
     private final AuthenticationSuccessHandler next = new HttpMessageConverterAuthenticationSuccessHandler();
 
+    private final RememberedSignIns remembered;
+
     public PasskeySignInSuccessHandler(SecurityStore store, DeviceIdentityResolver devices, AccessDecisions decisions) {
+        this(store, devices, decisions, null);
+    }
+
+    /** @param remembered gives the browser a remembered sign-in after each passkey sign-in; null for none */
+    public PasskeySignInSuccessHandler(SecurityStore store, DeviceIdentityResolver devices, AccessDecisions decisions,
+                                       RememberedSignIns remembered) {
         this.store = store;
         this.devices = devices;
         this.decisions = decisions;
+        this.remembered = remembered;
     }
 
     @Override
@@ -59,7 +68,14 @@ public class PasskeySignInSuccessHandler implements AuthenticationSuccessHandler
         // The browser key this session is bound to: renewed, so a browser in daily use never loses it.
         HttpSession session = request.getSession(false);
         if (session != null && session.getAttribute(AccessSession.BINDING) instanceof AccessSession.Binding binding) {
-            devices.resolve(request).filter(d -> d.nodeId().equals(binding.nodeId())).ifPresent(d -> devices.renew(request, response, d));
+            devices.resolve(request).filter(d -> d.nodeId().equals(binding.nodeId())).ifPresent(d -> {
+                devices.renew(request, response, d);
+                // Face ID just now, on this browser: it may sign itself back in for a while (RememberedSignIns).
+                if (remembered != null && request.isSecure()) {
+                    remembered.issue(binding.member(), binding.credentialId(), binding.nodeId())
+                            .ifPresent(c -> response.addHeader(org.springframework.http.HttpHeaders.SET_COOKIE, c.toString()));
+                }
+            });
         }
         next.onAuthenticationSuccess(request, response, authentication);
     }

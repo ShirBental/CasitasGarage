@@ -37,9 +37,17 @@ public class AccessCheckFilter extends OncePerRequestFilter {
     private final DeviceIdentityResolver devices;
     private final AccessDecisions decisions;
 
+    private final boolean forgetRemembered;
+
     public AccessCheckFilter(DeviceIdentityResolver devices, AccessDecisions decisions) {
+        this(devices, decisions, false);
+    }
+
+    /** @param forgetRemembered whether a refused session also removes the browser's remembered sign-in cookie */
+    public AccessCheckFilter(DeviceIdentityResolver devices, AccessDecisions decisions, boolean forgetRemembered) {
         this.devices = devices;
         this.decisions = decisions;
+        this.forgetRemembered = forgetRemembered;
     }
 
     @Override
@@ -56,6 +64,10 @@ public class AccessCheckFilter extends OncePerRequestFilter {
             HttpSession session = request.getSession(false);
             if (session != null) session.invalidate();
             SecurityContextHolder.clearContext();
+            // Revoked or moved: the browser's remembered sign-in goes too. (Store unreachable: kept, for when it is back.)
+            if (forgetRemembered && !AccessDecisions.STORE_UNAVAILABLE.equals(refusal) && !response.isCommitted()) {
+                response.addHeader(org.springframework.http.HttpHeaders.SET_COOKIE, RememberedSignIns.cleared().toString());
+            }
             // Continue as anonymous: /api answers 401, pages go to the sign-in page.
             request.setAttribute("casita.accessRefusal", refusal);
         }
