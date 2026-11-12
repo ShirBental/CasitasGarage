@@ -144,7 +144,7 @@ class AdminController {
     /* ---------- Shortcut tokens (docs/SHORTCUTS.md) ---------- */
 
     /**
-     * A new Shortcut token for one member's device: open the Ford door, nothing else. The answer is the only place the
+     * A new Shortcut token for one member's device: open one door ({@code ford}, the default, or {@code toyota}), nothing else. The answer is the only place the
      * token ever appears: it isn't logged or kept (only its hash is). Copy it into the Shortcut, then clear the terminal.
      */
     @PostMapping("/shortcut-tokens")

@@ -90,8 +90,12 @@ class ShortcutApiTest {
 
     /** Through casita-access's endpoint, on the server. @return the token, shown this once */
     private String newToken(String member) throws Exception {
+        return newToken(member, "ford");
+    }
+
+    private String newToken(String member, String door) throws Exception {
         String body = mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, adminSecret())
-                        .param("member", member).param("label", member + "'s iPhone"))
+                        .param("member", member).param("label", member + "'s iPhone").param("door", door))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         return JsonPath.read(body, "$.token");
     }
@@ -143,6 +147,37 @@ class ShortcutApiTest {
                 .andExpect(jsonPath("$.door").value("Ford"))
                 .andExpect(jsonPath("$.doorState").value("OPENING"))
                 .andExpect(jsonPath("$.confirmed").value(false));
+    }
+
+    @Test
+    void aToyotaTokenOpensToyotaOnlyAndEachDoorsTokenIsRevokedOnItsOwn() throws Exception {
+        String ford = newToken("shir");
+        String toyota = newToken("shir", "toyota");
+
+        mvc.perform(post("/shortcut/v1/doors/toyota/open").with(phone()).header("Authorization", "Bearer " + toyota))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.door").value("Toyota"))
+                .andExpect(jsonPath("$.outcome").value("MOVING"));
+        // The Toyota token can't touch Ford, nor close or resume Toyota.
+        mvc.perform(open(toyota)).andExpect(status().isForbidden());
+        mvc.perform(get("/shortcut/v1/doors/ford").with(phone()).header("Authorization", "Bearer " + toyota)).andExpect(status().isForbidden());
+        mvc.perform(post("/shortcut/v1/doors/toyota/close").with(phone()).header("Authorization", "Bearer " + toyota))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/shortcut/v1/doors/toyota/resume").with(phone()).header("Authorization", "Bearer " + toyota))
+                .andExpect(status().isForbidden());
+        assertThat(activity.recent(10)).singleElement().satisfies(e -> {
+            assertThat(e.door()).isEqualTo("Toyota");
+            assertThat(e.who()).isEqualTo("shir via Shortcut");
+        });
+
+        // Revoking the phone's Toyota token leaves its Ford token working.
+        String list = mvc.perform(get("/admin/shortcut-tokens").header(LocalAdmin.HEADER, adminSecret()))
+                .andReturn().getResponse().getContentAsString();
+        String toyotaId = JsonPath.<java.util.List<String>>read(list, "$[?(@.door == 'toyota')].id").get(0);
+        mvc.perform(delete("/admin/shortcut-tokens/" + toyotaId).header(LocalAdmin.HEADER, adminSecret())).andExpect(status().isOk());
+        mvc.perform(get("/shortcut/v1/doors/toyota").with(phone()).header("Authorization", "Bearer " + toyota))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(open(ford)).andExpect(status().isAccepted()).andExpect(jsonPath("$.door").value("Ford"));
     }
 
     @Test
@@ -316,7 +351,9 @@ class ShortcutApiTest {
         mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "mallory").param("label", "x"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "shir").param("label", "x")
-                .param("door", "toyota")).andExpect(status().isBadRequest());
+                .param("door", "garage")).andExpect(status().isBadRequest());
+        mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "shir").param("label", "x")
+                .param("door", "ford,toyota")).andExpect(status().isBadRequest());
         mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "shir").param("label", "x")
                 .param("days", "366")).andExpect(status().isBadRequest());
         mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "shir").param("label", "x")
