@@ -137,7 +137,13 @@ browser, not on every visit and not after a restart:
   it lapses after `idle` (14 days) unused. Each use re-issues the cookie with a new idle deadline. Max 90 days.
   `max-age: 0` turns it off (every session starts with Face ID, as before).
 - **Revocation is immediate:** `revoke-device`, `revoke-passkey` and `revoke-member` refuse the next request, remove the
-  cookie, and leave the browser on the sign-in page. Signing out in the app removes it too.
+  cookie, and leave the browser on the sign-in page. A browser revoked and later authorized again through a new invite
+  never accepts a cookie issued before that new authorization (a copy that prompted the revocation stays dead). Signing
+  out in the app removes the cookie **from that browser only**: a copy elsewhere keeps working until it expires or
+  something is revoked. After a suspected theft, revoke the browser (or delete `remember.key`), don't just sign out.
+- **A restored session never outlives its remembered sign-in:** 30 days after the last Face ID it ends, however often
+  it is used, and the next visit needs Face ID. A browser used daily within one session has its cookie's idle deadline
+  renewed once a day.
 - **Kill switch for every browser at once:** delete `/var/lib/casita/remember.key` and restart Casita. Everyone then
   signs in with Face ID once; browser keys, passkeys and enrollments are untouched.
 - **Outages:** if Firestore can't be read, nobody is signed in (fail closed), but the cookie is kept, so the browser
@@ -163,7 +169,10 @@ sign-in per browser.
 ## Limits, honestly
 
 - An enrolled browser key is a bearer secret. Someone with the phone unlocked and the member's passkey (Face ID or
-  passcode) gets in; someone who steals only the cookie still needs the passkey and its user verification.
+  passcode) gets in. Someone who copies the browser key alone still needs the passkey and its user verification; but
+  someone who copies the **whole cookie jar** (browser key and remembered sign-in) gets door access without Face ID for
+  up to 30 days after the member's last Face ID, across restarts, until the browser, passkey or member is revoked
+  (`max-age: 0` restores the old behavior, where a copied jar lasted only as long as the session).
 - iCloud Keychain syncs passkeys by design; the browser key is what limits where they work.
 - No attestation (`attestation: none`), no fingerprinting, no claim of physical-device verification.
 - Clearing Safari's website data removes the browser key: that browser needs a new invite.

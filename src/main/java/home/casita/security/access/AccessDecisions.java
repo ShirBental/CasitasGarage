@@ -34,6 +34,11 @@ public class AccessDecisions {
     }
 
     /** A passkey session: member, passkey, device authorization and the device itself. */
+    /** Now, by the clock access decisions use. */
+    public java.time.Instant now() {
+        return clock.instant();
+    }
+
     public String passkeySession(String member, AccessSession.Binding binding, DeviceIdentity device) {
         if (!family.contains(member)) return "not in the family";
         if (binding == null) return "sign-in not completed";

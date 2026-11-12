@@ -139,7 +139,7 @@ public final class RememberedSignIns {
         return ResponseCookie.from(COOKIE, value).path("/").secure(true).httpOnly(true).sameSite("Lax").maxAge(seconds).build();
     }
 
-    private Instant now() {
+    Instant now() {
         return clock.instant();
     }
 

@@ -195,6 +195,43 @@ class RememberedSignInTest {
     }
 
     @Test
+    void aBrowserRevokedAndAuthorizedAgainNeverAcceptsACookieFromBefore() throws Exception {
+        Cookie old = remembered(); // e.g. the copy that made someone revoke the phone
+        mvc.perform(delete("/admin/devices/" + TestBrowsers.SHIR_PHONE.nodeId()).header(LocalAdmin.HEADER, adminSecret()));
+        Thread.sleep(1100); // the cookie keeps whole seconds
+        TestBrowsers.enrollExistingPasskey(context, "shir", PASSKEY, TestBrowsers.SHIR_PHONE); // a new invite, same browser
+
+        removesTheRememberedSignIn(mvc.perform(fromPhone(get("/api/doors"), old)).andExpect(status().isUnauthorized()));
+        mvc.perform(fromPhone(get("/api/doors"), remembered())).andExpect(status().isOk()); // one issued after Face ID now works
+    }
+
+    @Test
+    void aRestoredSessionEndsWhenItsRememberedSignInDoesHoweverOftenItIsUsed() throws Exception {
+        MvcResult first = mvc.perform(fromPhone(get("/api/doors"), remembered())).andExpect(status().isOk()).andReturn();
+        MockHttpSession session = (MockHttpSession) first.getRequest().getSession(false);
+        session.setAttribute(AccessSession.REMEMBERED_UNTIL, java.time.Instant.now().minusSeconds(1)); // 30 days after Face ID
+
+        mvc.perform(get("/api/doors").session(session).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE))).andExpect(status().isUnauthorized());
+        assertThat(session.isInvalid()).isTrue();
+    }
+
+    @Test
+    void aBrowserInDailyUseRenewsItsRememberedSignInAtMostOnceADay() throws Exception {
+        Cookie cookie = remembered();
+        MvcResult first = mvc.perform(fromPhone(get("/api/doors"), cookie)).andExpect(status().isOk()).andReturn();
+        MockHttpSession session = (MockHttpSession) first.getRequest().getSession(false);
+
+        MvcResult sameDay = mvc.perform(get("/api/doors").session(session).cookie(cookie).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE)))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(setCookies(sameDay)).noneMatch(c -> c.startsWith(RememberedSignIns.COOKIE));
+
+        session.setAttribute(AccessSession.REMEMBER_RENEWED, java.time.Instant.now().minus(java.time.Duration.ofDays(2)));
+        MvcResult later = mvc.perform(get("/api/doors").session(session).cookie(cookie).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE)))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(setCookies(later)).anySatisfy(c -> assertThat(c).startsWith(RememberedSignIns.COOKIE + "=v1."));
+    }
+
+    @Test
     void anAlteredOrForeignCookieIsRefusedAndRemoved() throws Exception {
         Cookie cookie = remembered();
         Cookie altered = new Cookie(RememberedSignIns.COOKIE, cookie.getValue().substring(0, cookie.getValue().length() - 3) + "AAA");

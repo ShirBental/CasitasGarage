@@ -60,7 +60,7 @@ class RememberedSignInsTest {
             assertThat(c.verifiedAt()).isEqualTo(clock.instant());
             assertThat(c.expiresAt()).isEqualTo(clock.instant().plus(Duration.ofDays(30)));
         });
-        assertThat(Files.getPosixFilePermissions(dir.resolve("remember.key")).toString()).isEqualTo("[OWNER_READ, OWNER_WRITE]");
+        assertThat(java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(dir.resolve("remember.key")))).isEqualTo("rw-------");
     }
 
     @Test

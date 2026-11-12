@@ -16,6 +16,10 @@ public final class AccessSession {
     /** The enrollment in progress: a {@link home.casita.security.store.SecurityStore.EnrollmentClaim}. */
     public static final String ENROLLMENT = "casita.enrollment";
     public static final String BINDING = "casita.binding";
+    /** A session restored from a remembered sign-in: the {@link java.time.Instant} it must end by (last Face ID + max-age). */
+    public static final String REMEMBERED_UNTIL = "casita.rememberedUntil";
+    /** When this session last renewed its browser's remembered sign-in cookie (an {@link java.time.Instant}). */
+    public static final String REMEMBER_RENEWED = "casita.rememberRenewed";
     /** Request attribute: the passkey this sign-in request's assertion just verified (set while Spring verifies it). */
     public static final String SIGNED_IN_CREDENTIAL = "casita.signedInCredential";
     /** Request attribute: the device verified for an invite redemption, before the invite is consumed. */

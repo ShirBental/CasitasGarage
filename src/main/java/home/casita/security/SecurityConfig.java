@@ -258,7 +258,7 @@ class SecurityConfig {
                 // No session, but a remembered sign-in from this enrolled browser: restore it, checked against the store.
                 .addFilterBefore(new RememberedSignInFilter(remembered, devices, decisions, store, "ROLE_" + ROLE), AuthorizationFilter.class)
                 // Every signed-in request: member, passkey, device authorization and device, again.
-                .addFilterBefore(new AccessCheckFilter(devices, decisions, true), AuthorizationFilter.class)
+                .addFilterAfter(new AccessCheckFilter(devices, decisions, true), RememberedSignInFilter.class)
                 .exceptionHandling(e -> e
                         .defaultAuthenticationEntryPointFor(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED), path.matcher("/api/**"))
                         .defaultAuthenticationEntryPointFor(new HttpStatusEntryPoint(HttpStatus.FORBIDDEN), path.matcher("/admin/**"))

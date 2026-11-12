@@ -69,9 +69,29 @@ public class RememberedSignInFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String value = signIns.enabled() && request.isSecure() && !signedIn() ? cookie(request) : null;
-        if (value != null) restore(request, response, value);
+        String value = signIns.enabled() && request.isSecure() ? cookie(request) : null;
+        if (value != null) {
+            if (!signedIn()) restore(request, response, value);
+            else renewInUse(request, response, value);
+        }
         chain.doFilter(request, response);
+    }
+
+    /**
+     * A browser in daily use within one long session: keep its remembered sign-in from lapsing for idleness (at most
+     * once a day). Only the session's own sign-in (same member, passkey and browser) is renewed, never past its expiry.
+     */
+    private void renewInUse(HttpServletRequest request, HttpServletResponse response, String value) {
+        HttpSession session = request.getSession(false);
+        if (session == null || !(session.getAttribute(AccessSession.BINDING) instanceof AccessSession.Binding binding)) return;
+        java.time.Instant now = signIns.now();
+        if (session.getAttribute(AccessSession.REMEMBER_RENEWED) instanceof java.time.Instant last
+                && now.isBefore(last.plus(java.time.Duration.ofDays(1)))) return;
+        Optional<RememberedSignIns.Claim> claim = signIns.verify(value).filter(c -> c.member().equals(binding.member())
+                && c.credentialId().equals(binding.credentialId()) && c.nodeId().equals(binding.nodeId()));
+        if (claim.isEmpty()) return;
+        session.setAttribute(AccessSession.REMEMBER_RENEWED, now);
+        response.addHeader(HttpHeaders.SET_COOKIE, signIns.renew(claim.get()).toString());
     }
 
     private void restore(HttpServletRequest request, HttpServletResponse response, String value) {
@@ -92,10 +112,18 @@ public class RememberedSignInFilter extends OncePerRequestFilter {
         if (refusal == null) {
             try {
                 member = store.member(claim.member()).filter(m -> m.active() && m.userHandle() != null);
+                if (member.isEmpty()) {
+                    refusal = "member revoked";
+                } else {
+                    // A browser revoked and later authorized again (a new invite) starts over: a cookie from before
+                    // its current authorization, such as a copy that prompted the revocation, is never accepted.
+                    java.time.Instant authorizedAt = store.device(claim.nodeId()).map(SecurityStore.Device::authorizedAt).orElse(null);
+                    // (Whole seconds: the cookie keeps seconds.)
+                    if (authorizedAt == null || claim.verifiedAt().isBefore(authorizedAt.truncatedTo(java.time.temporal.ChronoUnit.SECONDS))) refusal = "issued before the browser's current authorization";
+                }
             } catch (StoreUnavailableException e) {
                 refusal = AccessDecisions.STORE_UNAVAILABLE;
             }
-            if (refusal == null && member.isEmpty()) refusal = "member revoked";
         }
         if (AccessDecisions.STORE_UNAVAILABLE.equals(refusal)) {
             log.warn("Remembered sign-in for {} on {} not restored: security store unavailable", claim.member(), device.get().nodeName());
@@ -110,6 +138,8 @@ public class RememberedSignInFilter extends OncePerRequestFilter {
         if (request.getSession(false) != null) request.changeSessionId();
         HttpSession session = request.getSession(true);
         session.setAttribute(AccessSession.BINDING, binding);
+        session.setAttribute(AccessSession.REMEMBERED_UNTIL, claim.expiresAt());
+        session.setAttribute(AccessSession.REMEMBER_RENEWED, signIns.now());
         SecurityStore.Member m = member.get();
         WebAuthnAuthentication auth = new WebAuthnAuthentication(
                 ImmutablePublicKeyCredentialUserEntity.builder().name(m.id()).id(m.userHandle()).displayName(m.id()).build(),
