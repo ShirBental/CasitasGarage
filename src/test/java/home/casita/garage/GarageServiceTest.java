@@ -819,13 +819,90 @@ class GarageServiceTest {
     }
 
     @Test
-    void afterARestartAnOpenDoorMayBeClosedWhenCheckedAfterTheTravelTime() {
+    void afterARestartTheCheckDoesntShortenTheWait() {
+        // Casita didn't see this door open, and a command from before the restart could still land: travel + lag.
         newGarage(TRAVEL, LAG);
-        door.open = true; // Casita has just started: it doesn't know how long the door has been open
+        door.open = true;
 
         assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.BUSY);
         clock.advance(TRAVEL);
+        assertThat(garage.status().canCloseIfChecked()).isFalse();
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.BUSY);
+        clock.advance(LAG);
         assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(outcomes()).containsExactly(Outcome.MOVING); // an ordinary close by then
+    }
+
+    @Test
+    void aWallButtonReversalDuringItsOwnOpenIsANewMovementTheCheckCantSkip() {
+        // Tony's case: Casita opens; the wall button closes it again, then opens it again. The open's start no longer
+        // says when the door last started moving.
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        clock.advance(Duration.ofSeconds(4));
+        door.open = true;
+        garage.status();
+        clock.advance(Duration.ofSeconds(5)); // 9 s: back to closed
+        door.open = false;
+        garage.status();
+        clock.advance(Duration.ofSeconds(3)); // 12 s: opening again
+        door.open = true;
+        garage.status();
+        clock.advance(Duration.ofSeconds(1)); // 13 s: past the open's travel time, 1 s into the new movement
+
+        assertThat(garage.status().canCloseIfChecked()).isFalse();
+        assertThat(garage.close("Hubby", true).outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(door.commands).containsExactly(true);
+
+        clock.advance(Duration.ofSeconds(14)); // 27 s: the open's check; the new movement still counts from 12 s
+        tasks.runDue();
+        clock.advance(Duration.ofSeconds(1)); // 28 s: 16 s since the new "not closed", past its travel time
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.BUSY); // unchecked: settles at 12 + 25 = 37 s
+        assertThat(garage.close("Hubby", true).outcome()).isEqualTo(Outcome.MOVING);
+    }
+
+    @Test
+    void anOpenerReportingARecentChangeRefusesTheShortcut() {
+        newGarage(TRAVEL, LAG);
+        garage.status();
+        door.open = true;
+        garage.status();
+        clock.advance(TRAVEL);
+        door.changedAt = clock.instant().minusSeconds(3); // a change Casita missed between two reads
+
+        assertThat(garage.status().canCloseIfChecked()).isFalse();
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.BUSY);
+        door.changedAt = clock.instant().minus(TRAVEL);
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.MOVING);
+    }
+
+    @Test
+    void aCheckedCloseThatCantBeSentLeavesTheCheckOnRecordAndTheDoorWaitsAsBefore() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(TRAVEL);
+        door.rejectCommands = true;
+
+        assertThat(garage.close("Hubby", true).outcome()).isEqualTo(Outcome.ERROR);
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.OPEN_INFERRED, Outcome.CHECKED, Outcome.ERROR);
+        door.rejectCommands = false;
+        // The open is over, but an unchecked close still waits for open + travel + lag.
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.BUSY);
+        clock.advance(LAG);
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.MOVING);
+    }
+
+    @Test
+    void withAGraceASettledButUncheckedOpenStillTakesACheckedCloseWithoutRecordingTheCheck() {
+        newGarage(TRAVEL, LAG); // grace 2 s: settled at 25 s, checked at 27 s
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(TRAVEL.plus(LAG).plusSeconds(1));
+
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(garage.close("Hubby", true).outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.OPEN_INFERRED, Outcome.MOVING);
     }
 
     @Test
@@ -866,7 +943,7 @@ class GarageServiceTest {
     }
 
     @Test
-    void afterResumeTheTravelTimeIsWaitedAgainEvenWhenChecked() {
+    void afterResumeTheCheckDoesntShortenTheWait() {
         newGarage(TRAVEL, LAG);
         garage.open("Shir"); // the door never moves: stuck at the check, held
         clock.advance(TRAVEL.plus(LAG).plus(GRACE));
@@ -874,9 +951,9 @@ class GarageServiceTest {
         door.open = true; // someone opened it by hand, then resumes
         garage.resume("Shir");
 
-        clock.advance(Duration.ofSeconds(9));
-        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.BUSY);
-        clock.advance(Duration.ofSeconds(1));
+        clock.advance(TRAVEL);
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.BUSY); // a lost command could still land
+        clock.advance(LAG);
         assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.MOVING);
     }
 
@@ -899,6 +976,8 @@ class GarageServiceTest {
     static final class FakeDoor implements DoorDevice {
         volatile boolean open;
         volatile boolean readFails;
+        /** What the opener says about when its reading last changed; null when it doesn't say (ours). */
+        volatile Instant changedAt;
         /** Fail before sending anything. */
         volatile boolean rejectCommands;
         /** The device gets the command, then the acknowledgement times out. */
@@ -912,7 +991,7 @@ class GarageServiceTest {
         @Override
         public Reading read() throws DoorException {
             if (readFails) throw new DoorException("offline");
-            return new Reading(open, null);
+            return new Reading(open, changedAt);
         }
 
         @Override

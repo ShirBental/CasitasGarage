@@ -89,6 +89,7 @@ const VOICE = (function () {
     notSetUp(door) { return `${door} control not set up yet`; },
     controlOff(door) { return `${door} control is off`; },
     closeOff() { return "Closing from the app is off"; },
+    lookAgain() { return "That took a while. Look at the door again, then tap Close."; },
     closeIfChecked() { return "Waiting for the sensor. At the garage? Look, then close."; },
     confirmStopped(door) {
       return `Look at the ${door} door. Is it all the way up and stopped, with the doorway clear? `

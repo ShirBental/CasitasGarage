@@ -12,7 +12,8 @@ and what is still deliberately refused.
 check = travelTime(door) + sensorLag(door) + verifyGrace
 ```
 
-1. **An open can't finish early.** A close ends as soon as the sensor reads "closed" (the only position the binary
+1. **An open can't finish early.** A close ends as soon as Casita reads "closed" (on the app's next status poll, about
+   every second after a command) (the only position the binary
    sensor proves). An open has no such signal: "not closed" proves only that the door left the closed position, so the
    open always stayed pending for the whole check window. Close was refused (`BUSY`) the whole time.
 2. **Three different waits were added together:**
@@ -54,13 +55,18 @@ A checked close goes through only when **all** of these hold, checked on the ser
 | The door's commands are on, closing from the app is allowed, nothing is held after a stuck or lost move | Rules 7 and 8 unchanged |
 | The sensor can be read right now, and reads **not closed** | The person's word never overrides a reading. A reading still at "closed" (the sensor hasn't caught up with the open) refuses: the opener itself may think the door is closed and could take a close as a button press |
 | No command of unknown outcome is pending (`UNCONFIRMED`) | It could still reach the opener late |
-| Casita's own acknowledged open was sent **at least `travelTime` ago**, or Casita has seen "not closed" for at least `travelTime` (wall button, remote, restart, resume) | Any movement Casita can know about has finished. Before that, even a checked close is `BUSY` |
+| Casita's own acknowledged open was sent **at least `travelTime` ago** and the only change Casita has seen since is the one it caused; or Casita **saw** the door change to "not closed" (wall button, remote) at least `travelTime` ago | Any movement Casita can know about has finished. A wall-button reversal during the open (closed again, then opened again) counts from the new "not closed". Before that, even a checked close is `BUSY` |
+| Not right after a restart or a resume | Casita didn't see that door open, and a command of unknown fate from before could still land: the check doesn't shorten the wait there (travel + lag, then an ordinary close) |
+| The opener doesn't report a change of its reading less than `travelTime` ago (when it reports a change time; ours reports none, `lmTime` 0) | A change Casita missed between two reads. Used only to refuse |
+| The person answered the app's question within 15 s | A dialog left open says nothing about the door now; the app asks for a fresh look instead (client side) |
 | No other close is pending | One movement at a time; a second checked close is `BUSY` |
 
 When it goes through: the pending open is closed out as `OPEN_INFERRED` (its scheduled check then does nothing), the
 person's check is recorded as `CHECKED` under their name, then the close as `MOVING`, and the close is judged exactly
 as before: `CLOSED_CONFIRMED` when the sensor reads closed, `STUCK` (and held) if it doesn't within travel + lag. The
-command still passes `MerossDoor`'s own re-read just before sending. A checked close of a door that has already
+command still passes `MerossDoor`'s own re-read just before sending. `OPEN_INFERRED` and `CHECKED` are recorded before
+the close is sent: if the send then fails (`ERROR`, or `UNCONFIRMED`), the history shows the check followed by that
+outcome, and an unchecked close still waits for the open's travel + lag. A checked close of a door that has already
 settled is an ordinary close and records no `CHECKED`.
 
 Without a check (a phone away from the garage, a Shortcut), nothing changed except the grace: Close waits for the
@@ -79,6 +85,10 @@ check at travel + lag.
      showed Toyota open before `System.All` did. Measure `sensorLag` again with them.
   3. A second sensor at the fully-open position (a tilt or reed sensor) would prove "fully open", which today is only
      inferred.
+- **Changes between two reads.** Casita knows of a change only when it reads the sensor (the app polls; a command
+  reads first). A door that leaves "closed", comes back and leaves again between two reads looks unchanged. The opener
+  would say when its reading changed (`lmTime`), but ours reports 0, so nothing catches this today; the person's look
+  is what covers it. The PUSH notifications above would.
 - **A door moved by the remote while its reading is stale** (docs/MEROSS.md, "What it shows"): unchanged, and not
   fixable by timing. The person's check covers it only when the person is at the door.
 

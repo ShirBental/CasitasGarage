@@ -7,6 +7,7 @@
   const $ = (id) => document.getElementById(id);
   const FAST_AFTER_COMMAND_MS = 30000;   // poll every second this long after a command (poller.js)
   const COMMAND_TIMEOUT_MS = 10000;
+  const CONFIRM_FRESH_MS = 15000;        // "I've looked at the door" counts only if answered within this
   const CHECKS = ["CLOSED_CONFIRMED", "OPEN_INFERRED", "STUCK", "LOST"];
   const MOVING = ["OPENING", "CLOSING", "CHECKING"];
 
@@ -213,7 +214,10 @@
     let path = commandPath(d, action);
     if (action === "close-checked") {
       // The server checks everything else again (travel time, sensor, holds); this only adds what a person can see.
+      const asked = Date.now();
       if (!window.confirm(VOICE.confirmStopped(d.name))) return;
+      // A dialog left open for a while says nothing about the door now: ask for a fresh look instead.
+      if (Date.now() - asked > CONFIRM_FRESH_MS) { showResult(d, VOICE.lookAgain()); return; }
       path = commandPath(d, "close") + "?checked=true";
     }
     const me = stateOf(keyOf(d));
