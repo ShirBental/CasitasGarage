@@ -644,6 +644,258 @@ class GarageServiceTest {
         assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
     }
 
+    /* ---------- a person at the door stands in for the sensor's delay, never the door's travel (rule 9) ---------- */
+
+    /** Ford as live mode would have it: 10 s of travel, a reading that can trail the door by 15 s. */
+    private static final Duration LAG = Duration.ofSeconds(15);
+
+    @Test
+    void afterItsOwnOpenHasTravelledACheckedCloseNeedNotWaitForTheSensorsDelay() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        clock.advance(Duration.ofSeconds(3));
+        door.open = true; // the sensor has left "closed"
+
+        clock.advance(Duration.ofSeconds(7)); // 10 s: the door has had its full travel time; the check is at 25 s
+        GarageStatus status = garage.status();
+        assertThat(status.door()).isEqualTo(DoorState.OPENING);
+        assertThat(status.canClose()).isFalse();
+        assertThat(status.canCloseIfChecked()).isTrue();
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.BUSY); // without the check: wait for the sensor
+        assertThat(door.commands).containsExactly(true);
+
+        CommandResult result = garage.close("Hubby", true);
+
+        assertThat(result.outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(door.commands).containsExactly(true, false);
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.OPEN_INFERRED, Outcome.CHECKED, Outcome.MOVING);
+        assertThat(activity.recent(2).get(1).who()).isEqualTo("Hubby");
+        assertThat(garage.status().door()).isEqualTo(DoorState.CLOSING);
+    }
+
+    @Test
+    void beforeTheTravelTimeEvenACheckedCloseIsRefused() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(Duration.ofSeconds(9)); // the door may still be opening
+
+        assertThat(garage.status().canCloseIfChecked()).isFalse();
+        CommandResult result = garage.close("Hubby", true);
+
+        assertThat(result.outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(result.message()).contains("still be opening");
+        assertThat(door.commands).containsExactly(true);
+        assertThat(outcomes()).containsExactly(Outcome.MOVING);
+    }
+
+    @Test
+    void aSensorStillReadingClosedRefusesEvenACheckedCloseAndKeepsTheOpenPending() {
+        // The person's word never overrides a reading: the opener itself may still think the door is closed.
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        clock.advance(Duration.ofSeconds(12)); // travelled, but the reading hasn't caught up
+
+        assertThat(garage.status().canCloseIfChecked()).isFalse();
+        CommandResult result = garage.close("Hubby", true);
+        assertThat(result.outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(result.message()).contains("hasn't caught up");
+        // A second open is still refused as busy: it could reach an open door as a button press.
+        assertThat(garage.open("Shir").outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(door.commands).containsExactly(true);
+
+        door.open = true; // the reading catches up at 20 s
+        clock.advance(Duration.ofSeconds(8));
+        assertThat(garage.close("Hubby", true).outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(door.commands).containsExactly(true, false);
+    }
+
+    @Test
+    void theOpensScheduledCheckDoesNothingOnceACheckedCloseEndedIt() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(TRAVEL);
+        garage.close("Hubby", true);
+        clock.advance(Duration.ofSeconds(6));
+        door.open = false;
+
+        clock.advance(Duration.ofSeconds(21));
+        tasks.runDue(); // the open's check (27 s) and the close's check (10 + 10 + 15 + 2 = 37 s) are both due now
+
+        assertThat(outcomes()).containsExactly(Outcome.MOVING, Outcome.OPEN_INFERRED, Outcome.CHECKED, Outcome.MOVING,
+                Outcome.CLOSED_CONFIRMED);
+        assertThat(garage.status().door()).isEqualTo(DoorState.CLOSED);
+        assertThat(garage.status().held()).isFalse();
+    }
+
+    @Test
+    void aCheckedCloseThatDoesntCloseEndsStuckAndHolds() {
+        // Obstruction or auto-reverse: the person's check changes nothing about how the close is judged.
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(TRAVEL);
+        garage.close("Hubby", true);
+
+        clock.advance(TRAVEL.plus(LAG).plus(GRACE));
+        tasks.runDue();
+
+        assertLatest(GarageService.CASITA, Action.CLOSE, Outcome.STUCK);
+        assertThat(garage.close("Hubby", true).outcome()).isEqualTo(Outcome.HELD);
+        assertThat(garage.status().canCloseIfChecked()).isFalse();
+        assertThat(door.commands).containsExactly(true, false);
+    }
+
+    @Test
+    void aSecondCheckedCloseIsBusyWhileTheFirstIsUnchecked() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(TRAVEL);
+
+        assertThat(garage.close("Hubby", true).outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(garage.open("Shir").outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(door.commands).containsExactly(true, false);
+    }
+
+    @Test
+    void simultaneousCheckedClosesSendOneCommand() throws Exception {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(TRAVEL);
+        door.commandDelayMillis = 50;
+
+        ExecutorService pool = Executors.newFixedThreadPool(8);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<CommandResult>> results = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            results.add(pool.submit(() -> {
+                start.await();
+                return garage.close("Hubby", true);
+            }));
+        }
+        start.countDown();
+        List<Outcome> got = new ArrayList<>();
+        for (Future<CommandResult> f : results) got.add(f.get(5, TimeUnit.SECONDS).outcome());
+        pool.shutdown();
+
+        assertThat(got).containsOnlyOnce(Outcome.MOVING);
+        assertThat(door.commands).containsExactly(true, false);
+    }
+
+    @Test
+    void anOpenOfUnknownOutcomeIsNeverEndedByACheckedClose() {
+        // The command may still reach the opener late: only the scheduled check may decide.
+        newGarage(TRAVEL, LAG);
+        door.timeoutAfterDelivery = true;
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(Duration.ofSeconds(12));
+
+        assertThat(garage.status().canCloseIfChecked()).isFalse();
+        assertThat(garage.close("Hubby", true).outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(door.commands).containsExactly(true);
+    }
+
+    @Test
+    void aDoorOpenedByTheWallButtonMayBeClosedWhenCheckedOnceItHasHadItsTravelTime() {
+        newGarage(TRAVEL, LAG);
+        garage.status();
+        door.open = true; // the wall button: Casita sees the change now
+        garage.status();
+
+        clock.advance(Duration.ofSeconds(9));
+        assertThat(garage.status().canCloseIfChecked()).isFalse();
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.BUSY);
+
+        clock.advance(Duration.ofSeconds(1));
+        assertThat(garage.status().canCloseIfChecked()).isTrue();
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.BUSY); // unchecked: still travel + lag
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(outcomes()).containsExactly(Outcome.CHECKED, Outcome.MOVING);
+    }
+
+    @Test
+    void afterARestartAnOpenDoorMayBeClosedWhenCheckedAfterTheTravelTime() {
+        newGarage(TRAVEL, LAG);
+        door.open = true; // Casita has just started: it doesn't know how long the door has been open
+
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.BUSY);
+        clock.advance(TRAVEL);
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.MOVING);
+    }
+
+    @Test
+    void aCheckedCloseOfASettledDoorIsAnOrdinaryClose() {
+        newGarage(TRAVEL, LAG);
+        door.open = true;
+        garage.status();
+        clock.advance(TRAVEL.plus(LAG));
+
+        GarageStatus status = garage.status();
+        assertThat(status.canClose()).isTrue();
+        assertThat(status.canCloseIfChecked()).isFalse();
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(outcomes()).containsExactly(Outcome.MOVING); // nothing to check: no CHECKED entry
+    }
+
+    @Test
+    void aCheckedCloseStillNeedsTheSensorAndRespectsTheSwitches() {
+        newGarage(TRAVEL, LAG);
+        door.open = true;
+        garage.status();
+        clock.advance(TRAVEL);
+        door.readFails = true;
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.UNKNOWN);
+        door.readFails = false;
+
+        newGarage(false);
+        door.open = true;
+        garage.status();
+        clock.advance(TRAVEL);
+        assertThat(garage.status().canCloseIfChecked()).isFalse();
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.DISABLED);
+
+        garage = new GarageService("Ford", door, DoorControl.OFF, activity, pushes::add, tasks, clock,
+                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", TRAVEL), Map.of("Ford", LAG)));
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.DISABLED);
+        assertThat(door.commands).isEmpty();
+    }
+
+    @Test
+    void afterResumeTheTravelTimeIsWaitedAgainEvenWhenChecked() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir"); // the door never moves: stuck at the check, held
+        clock.advance(TRAVEL.plus(LAG).plus(GRACE));
+        tasks.runDue();
+        door.open = true; // someone opened it by hand, then resumes
+        garage.resume("Shir");
+
+        clock.advance(Duration.ofSeconds(9));
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.BUSY);
+        clock.advance(Duration.ofSeconds(1));
+        assertThat(garage.close("Shir", true).outcome()).isEqualTo(Outcome.MOVING);
+    }
+
+    @Test
+    void withNoGraceTheOpenIsCheckedAtTravelTimePlusLag() {
+        door = new FakeDoor();
+        garage = new GarageService("Ford", door, DoorControl.SIMULATED, activity, pushes::add, tasks, clock,
+                new GarageProperties(TRAVEL, Duration.ZERO, true, Map.of("Ford", TRAVEL), Map.of("Ford", Duration.ofSeconds(2))));
+        garage.open("Shir");
+        door.open = true;
+
+        clock.advance(Duration.ofSeconds(11));
+        assertThat(garage.status().door()).isEqualTo(DoorState.OPENING);
+        clock.advance(Duration.ofSeconds(1)); // 12 s = 10 + 2 + 0
+        GarageStatus status = garage.status();
+        assertThat(status.door()).isEqualTo(DoorState.NOT_CLOSED);
+        assertThat(status.canClose()).isTrue();
+    }
+
     static final class FakeDoor implements DoorDevice {
         volatile boolean open;
         volatile boolean readFails;

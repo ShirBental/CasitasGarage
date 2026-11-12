@@ -103,7 +103,13 @@
     if (!d.controllable) {
       verb = VOICE.control.open;
       note = VOICE.notSetUp(d.name);
-    } else if (me.sending || MOVING.includes(d.door)) {
+    } else if (me.sending) {
+      verb = VOICE.control.busy;
+    } else if (status.canCloseIfChecked && !held) {
+      // Travelled, but the sensor's delay isn't over: closing now needs the person to look at the door first.
+      verb = VOICE.control.close; action = canAct ? "close-checked" : "";
+      note = canAct ? VOICE.closeIfChecked() : VOICE.controlOff(d.name);
+    } else if (MOVING.includes(d.door)) {
       verb = VOICE.control.busy;
     } else if (held) {
       verb = VOICE.control.open;
@@ -204,6 +210,12 @@
 
   /** One tap, one command, for one door. Its control is disabled before the request leaves. */
   async function command(d, action) {
+    let path = commandPath(d, action);
+    if (action === "close-checked") {
+      // The server checks everything else again (travel time, sensor, holds); this only adds what a person can see.
+      if (!window.confirm(VOICE.confirmStopped(d.name))) return;
+      path = commandPath(d, "close") + "?checked=true";
+    }
     const me = stateOf(keyOf(d));
     me.sending = true;
     showResult(d, "");
@@ -213,7 +225,7 @@
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), COMMAND_TIMEOUT_MS);
     try {
-      const response = await fetch(commandPath(d, action), {
+      const response = await fetch(path, {
         method: "POST",
         headers: { Accept: "application/json", ...csrfHeaders() },
         credentials: "same-origin",

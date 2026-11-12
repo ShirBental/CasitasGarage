@@ -84,16 +84,18 @@ sudo casita-door-watch 10 1     # 10 minutes, a reading every second; nothing is
 While it runs, someone at the garage opens and closes each door with the wall button or remote, twice each,
 noting the time the door starts and stops. For each door:
 
-- **travel**: from the button press to the door stopping (Ford is about 20 s);
+- **travel**: from the button press to the door stopping. Both doors are expected to take 5–10 s; start from
+  **10 s** and keep it only if every run stops within it (an earlier guide said "Ford is about 20 s": that was how
+  long the first live close test *watched* Ford, not a stopwatch measurement);
 - **sensor lag**: from the door stopping to the line where its reading changes (`<- Ford changed`). Take the
   longest seen, rounded up (Toyota's is 25 s or more).
 
 Add them to `casita.env` (whole seconds, a little above the longest measured):
 
 ```
-CASITA_GARAGE_TRAVELTIMES_FORD=22s
+CASITA_GARAGE_TRAVELTIMES_FORD=<measured, 10s expected>s
 CASITA_GARAGE_SENSORLAGS_FORD=<measured>s
-CASITA_GARAGE_TRAVELTIMES_TOYOTA=<measured>s
+CASITA_GARAGE_TRAVELTIMES_TOYOTA=<measured, 10s expected>s
 CASITA_GARAGE_SENSORLAGS_TOYOTA=<measured, 25s or more>s
 ```
 
@@ -108,7 +110,9 @@ Nothing moves.
 Start with Ford only: `CASITA_MEROSS_COMMANDCHANNELS=1`, `CASITA_MEROSS_COMMANDMODE=live`, restart,
 `casita-health`. With a person watching the door and the doorway clear:
 
-1. Ford Closed → tap Open: Opening… then Open after travel + lag + 2 s.
+1. Ford Closed → tap Open: Opening… then Open after travel + lag (+ `verify-grace`, 0 s by default). From travel time
+   on, if the reading already says not closed, Close is offered with "look at the door first" (docs/DOOR_TIMING.md):
+   tap it while watching, confirm, and it closes without waiting for the sensor's lag.
 2. Ford Open → tap Close: Closing… then Closed.
 3. Tap Open twice quickly: one command (the activity shows one).
 
