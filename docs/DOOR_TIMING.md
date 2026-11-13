@@ -46,7 +46,7 @@ changes how often it asks.
    **report** may be late: a person looking at the door can stand in for it). From travel time on, the door's status
    has `canCloseIfChecked: true`, and the app shows **Close** with the note "Waiting for the sensor. At the garage?
    Look, then close." Tapping it asks: *"Look at the Ford door. Is it all the way up and stopped, with the doorway clear?
-   Only close it if you can see it."* Confirming sends `POST /api/doors/{door}/close?checked=true`.
+   Only close it if you can see it."* Confirming sends `POST /api/doors/{door}/close?checked=true` (the older Ford-only `POST /api/close` takes the same parameter, under the same rules).
 
 A checked close goes through only when **all** of these hold, checked on the server:
 
@@ -55,7 +55,7 @@ A checked close goes through only when **all** of these hold, checked on the ser
 | The door's commands are on, closing from the app is allowed, nothing is held after a stuck or lost move | Rules 7 and 8 unchanged |
 | The sensor can be read right now, and reads **not closed** | The person's word never overrides a reading. A reading still at "closed" (the sensor hasn't caught up with the open) refuses: the opener itself may think the door is closed and could take a close as a button press |
 | No command of unknown outcome is pending (`UNCONFIRMED`) | It could still reach the opener late |
-| Casita's own acknowledged open was sent **at least `travelTime` ago** and the only change Casita has seen since is the one it caused; or Casita **saw** the door change to "not closed" (wall button, remote) at least `travelTime` ago | Any movement Casita can know about has finished. A wall-button reversal during the open (closed again, then opened again) counts from the new "not closed". Before that, even a checked close is `BUSY` |
+| Casita's own acknowledged open was sent **at least `travelTime` ago** and the only change Casita has seen since is the one it caused; or Casita **saw** the door change to "not closed" (wall button, remote) at least `travelTime` ago | Any movement Casita can know about has finished. A wall-button reversal during the open (closed again, then opened again) is refused until the open's own check, then counts from the new "not closed". Before that, even a checked close is `BUSY` |
 | Not right after a restart or a resume | Casita didn't see that door open, and a command of unknown fate from before could still land: the check doesn't shorten the wait there (travel + lag, then an ordinary close) |
 | The opener doesn't report a change of its reading less than `travelTime` ago (when it reports a change time; ours reports none, `lmTime` 0) | A change Casita missed between two reads. Used only to refuse |
 | The person answered the app's question within 15 s | A dialog left open says nothing about the door now; the app asks for a fresh look instead (client side) |
@@ -104,7 +104,8 @@ It is the signed-in member saying "I looked". It is **not** proof that anyone is
 | Casita's own open, before its travel time | refused | refused |
 | Casita's own open, after travel time, reading still "closed" | refused | refused (the opener may think it is closed) |
 | Casita's own open, after travel time, reading not closed, no other change since | refused until travel + lag | **allowed** |
-| Same, but the reading changed again since (wall-button reversal) | counts from the newest change | allowed once that change has had its travel time |
+| Same, but the reading changed again since (wall-button reversal) | counts from the newest change | refused until the open's own check (travel + lag); after that, allowed once the newest change has had its travel time |
+| Casita's open had an unknown outcome (`UNCONFIRMED`) | refused until its check; the door then counts from when Casita saw it change, not from the command | the same |
 | Door opened by wall button or remote, seen changing | refused until travel + lag after the change | allowed after travel time from the change |
 | Just after a restart or a resume (no change seen) | refused until travel + lag | refused until travel + lag |
 | The opener reports a change of its reading less than travel time ago | as above | refused |

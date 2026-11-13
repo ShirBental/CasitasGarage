@@ -189,6 +189,11 @@ class LiveDoorsTest {
         assertThat(toyota.open("Shir").outcome()).isEqualTo(Outcome.UNCONFIRMED);
         assertThat(toyota.open("Shir").outcome()).isEqualTo(Outcome.BUSY);
         advance(45);
+        // The check found it went through, but Casita can't know when a command of unknown fate reached the door: it
+        // counts from when it saw the change (now), so it isn't called settled before another travel time + lag.
+        assertThat(toyota.status().door()).isEqualTo(DoorState.OPENING);
+        assertThat(toyota.close("Shir").outcome()).isEqualTo(Outcome.BUSY);
+        advance(18 + 25);
         assertThat(toyota.status().door()).isEqualTo(DoorState.NOT_CLOSED);
         assertThat(opener.sets).containsExactly("SET channel 2 open");
     }

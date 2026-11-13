@@ -345,7 +345,11 @@ public class GarageService {
 
         if (reading.open() == m.action().wantsOpen()) {
             // The door has had the full travel time (or the sensor reports closed), so it's settled.
-            if (onlyItsOwnChange(m) && (lastSensorChange == null || lastSensorChange.isAfter(m.startedAt()))) lastSensorChange = m.startedAt();
+            // Only an acknowledged command's start stands for the door's: one of unknown fate may have reached the opener
+            // late, and the door may have started then, so Casita keeps the time it actually saw the change.
+            if (m.acknowledged() && onlyItsOwnChange(m) && (lastSensorChange == null || lastSensorChange.isAfter(m.startedAt()))) {
+                lastSensorChange = m.startedAt();
+            }
             // Always a final record, so the history never ends on MOVING. "Closed" is proven by the sensor;
             // after an open, "not closed" is all it can say.
             record(CASITA, m.action(), m.action() == Action.CLOSE ? Outcome.CLOSED_CONFIRMED : Outcome.OPEN_INFERRED);
@@ -412,7 +416,7 @@ public class GarageService {
 
     /** Whether a close could go through at all (remote close allowed, nothing held), before any timing. */
     private boolean mayCloseIfChecked() {
-        return properties.allowRemoteClose() && !held();
+        return control != DoorControl.OFF && properties.allowRemoteClose() && !held();
     }
 
     /** True once Casita has seen the sensor's current value for at least the travel time plus the sensor's lag. */

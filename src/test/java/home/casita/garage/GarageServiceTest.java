@@ -181,6 +181,10 @@ class GarageServiceTest {
         tasks.runDue();
         assertLatest(GarageService.CASITA, Action.OPEN, Outcome.OPEN_INFERRED);
         assertThat(lastPush()).contains("went through");
+        // Casita can't know when a command of unknown fate reached the door: it counts from when it saw the change
+        // (here, at the check), so the door settles only after another travel time + lag.
+        assertThat(garage.status().door()).isEqualTo(DoorState.OPENING);
+        clock.advance(TRAVEL);
         assertThat(garage.status().door()).isEqualTo(DoorState.NOT_CLOSED);
     }
 
@@ -1015,6 +1019,25 @@ class GarageServiceTest {
         assertThat(firstCheckedCloseAfterOpen(Duration.ofSeconds(22), Duration.ofSeconds(5), 3)).isEqualTo(22);
     }
 
+    @Test
+    void anOpenOfUnknownOutcomeThatLandsLateCountsFromWhenTheDoorWasSeenMoving() {
+        // Tony's case: the open's acknowledgement is lost, the command reaches the opener late (20 s), the check at 27 s
+        // sees "not closed". The door started at 20 s, not 0 s: an ordinary close must wait until 20 + 10 + 15.
+        newGarage(TRAVEL, LAG);
+        door.timeoutAfterDelivery = true;
+        assertThat(garage.open("Shir").outcome()).isEqualTo(Outcome.UNCONFIRMED);
+        door.timeoutAfterDelivery = false;
+        tick(20, garage::status);
+        door.open = true;
+        tick(7, () -> { tasks.runDue(); garage.status(); }); // seen moving at 21 s; checked at 27 s
+
+        assertLatest(GarageService.CASITA, Action.OPEN, Outcome.OPEN_INFERRED);
+        assertThat(garage.close("Hubby").outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(garage.close("Hubby", true).outcome()).isEqualTo(Outcome.BUSY); // seen moving 6 s ago: not travelled
+        clock.advance(Duration.ofSeconds(4)); // 31 s: 10 s since it was seen moving
+        assertThat(garage.close("Hubby", true).outcome()).isEqualTo(Outcome.MOVING);
+    }
+
     /** One way the door got where it is; each probe replays it from scratch up to {@code seconds}. */
     private interface Scenario {
         void play(long seconds);
@@ -1060,8 +1083,31 @@ class GarageServiceTest {
             door.open = true;
             tick(t, garage::status);
         });
+        scenarios.put("resume after a stuck open", t -> {
+            garage.open("Shir"); // never moves: stuck at 27 s, held
+            long[] now = {0};
+            tick(t, () -> {
+                now[0]++;
+                tasks.runDue();
+                if (now[0] == 28) { door.open = true; garage.resume("Shir"); }
+                garage.status();
+            });
+        });
+        scenarios.put("unconfirmed open, arriving late", t -> {
+            door.timeoutAfterDelivery = true;
+            garage.open("Shir");
+            door.timeoutAfterDelivery = false;
+            long[] now = {0};
+            tick(t, () -> { if (++now[0] == 20) door.open = true; tasks.runDue(); garage.status(); });
+        });
+        scenarios.put("opener reports a recent change", t -> {
+            garage.status();
+            door.open = true;
+            long[] now = {0};
+            tick(t, () -> { if (++now[0] == 12) door.changedAt = clock.instant(); garage.status(); });
+        });
         for (Map.Entry<String, Scenario> e : scenarios.entrySet()) {
-            for (long t = 0; t <= 40; t++) {
+            for (long t = 0; t <= 60; t++) {
                 newGarage(TRAVEL, LAG);
                 e.getValue().play(t);
                 tasks.runDue();
