@@ -346,6 +346,24 @@ abstract class SecurityStoreContract {
     }
 
     @Test
+    void reauthorizingARevokedDeviceRecordsTheNewInvite() {
+        // Remembered sign-ins are bound to Device.inviteId (RememberedSignIns): a cookie issued under the old
+        // authorization must never match the new one, in every store.
+        enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
+        String first = store.device(TestBrowsers.SHIR_PHONE.nodeId()).orElseThrow().inviteId();
+        assertThat(first).isNotNull();
+        assertThat(store.revokeDevice(TestBrowsers.SHIR_PHONE.nodeId())).isTrue();
+
+        EnrollmentClaim again = consume(invite("shir"), TestBrowsers.SHIR_PHONE);
+        assertThat(store.enroll(again, null, Bytes.fromBase64("c2hpcnMta2V5"))).isTrue();
+
+        assertThat(store.device(TestBrowsers.SHIR_PHONE.nodeId())).get().satisfies(d -> {
+            assertThat(d.activeFor("shir")).isTrue();
+            assertThat(d.inviteId()).isEqualTo(again.inviteId()).isNotEqualTo(first);
+        });
+    }
+
+    @Test
     void enrollingWithAnExistingPasskeyAuthorizesOnlyTheNode() {
         enrolled("shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
         EnrollmentClaim ipad = consume(invite("shir"), TestBrowsers.SHIR_IPAD);

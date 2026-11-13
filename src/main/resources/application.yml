@@ -22,8 +22,8 @@ server:
     use-relative-redirects: true
   servlet:
     session:
-      # Sessions live in memory: a restart signs everyone out (Face ID signs them back in). Until the
-      # design's remember-me lands, an idle session ends after a week.
+      # Sessions live in memory: a restart ends them all, and an idle one ends after a week. An enrolled browser then
+      # signs itself back in from its remembered sign-in (casita.security.remember), without Face ID.
       timeout: 7d
       cookie:
         http-only: true
@@ -66,6 +66,13 @@ casita:
     # 'development' for plain http://localhost.)
     device-identity: browser
     # device-key-file: /var/lib/casita/device.key   # default: <data-dir>/device.key
+    # Staying signed in on an enrolled browser (docs/ACCESS.md, "Staying signed in"): after Face ID, the browser may
+    # sign itself back in for up to max-age (never extended by use) if used at least every idle. Every time, the
+    # member, passkey and browser are checked against the store, so revoking any of them stops it at once.
+    # max-age 0 turns it off. Deleting <data-dir>/remember.key (then restart) ends every remembered sign-in.
+    remember:
+      max-age: 30d
+      idle: 14d
     # The public sign-in, invite and passkey-setup endpoints, per client address and in total, per window.
     rate-limit:
       per-client: 30

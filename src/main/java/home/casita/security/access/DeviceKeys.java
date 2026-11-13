@@ -52,11 +52,16 @@ public final class DeviceKeys {
         }
     }
 
-    private final byte[] key;
     private final SecureRandom random = new SecureRandom();
+    private final byte[] key;
 
     /** Reads the server secret from {@code keyFile}, creating it (owner-only, 256 random bits) if it doesn't exist. */
     public DeviceKeys(Path keyFile) {
+        this.key = loadOrCreate(keyFile, random);
+    }
+
+    /** A 256-bit server secret from {@code keyFile} (hex), created owner-only if it doesn't exist. */
+    static byte[] loadOrCreate(Path keyFile, SecureRandom random) {
         try {
             Path dir = keyFile.toAbsolutePath().getParent();
             if (!Files.exists(keyFile)) {
@@ -68,12 +73,12 @@ public final class DeviceKeys {
                 Files.writeString(keyFile, HexFormat.of().formatHex(raw) + "\n", StandardCharsets.UTF_8);
             }
             byte[] read = HexFormat.of().parseHex(Files.readString(keyFile, StandardCharsets.UTF_8).trim());
-            if (read.length < 32) throw new IllegalStateException("The device key in " + keyFile + " is shorter than 256 bits");
-            this.key = read;
+            if (read.length < 32) throw new IllegalStateException("The key in " + keyFile + " is shorter than 256 bits");
+            return read;
         } catch (IOException e) {
-            throw new UncheckedIOException("Couldn't set up the device key", e);
+            throw new UncheckedIOException("Couldn't set up the key in " + keyFile, e);
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("The device key in " + keyFile + " isn't hex", e);
+            throw new IllegalStateException("The key in " + keyFile + " isn't hex", e);
         }
     }
 

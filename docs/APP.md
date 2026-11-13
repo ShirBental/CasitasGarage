@@ -65,7 +65,7 @@ Out of scope here: a compromised server or GCP project, and the opener's physica
 
 ## Sessions and cookies
 
-- The session lives in memory: a restart signs everyone out, and Face ID signs them back in.
+- The session lives in memory: a restart ends it, and an enrolled browser signs itself back in from its remembered sign-in (docs/ACCESS.md, "Staying signed in"); Face ID at least every 30 days.
 - `server.servlet.session.timeout: 7d` (idle) until the design's remember-me lands.
 - Session cookie: `HttpOnly`, `Secure`, `SameSite=Lax`. Lax rather than Strict, so opening Casita
   from a notification or a Shortcut keeps you signed in; CSRF tokens protect every POST either way.

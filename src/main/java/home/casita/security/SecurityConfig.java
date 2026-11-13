@@ -51,6 +51,8 @@ import home.casita.security.access.LocalAdmin;
 import home.casita.security.access.PasskeySignInSuccessHandler;
 import home.casita.security.access.RegistrationErrorFilter;
 import home.casita.security.access.RedemptionGuardFilter;
+import home.casita.security.access.RememberedSignInFilter;
+import home.casita.security.access.RememberedSignIns;
 import home.casita.security.store.SecurityStore;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -129,9 +131,16 @@ class SecurityConfig {
         return events;
     }
 
+    /** Remembered sign-ins, signed with their own server secret, {@code <data-dir>/remember.key}. */
     @Bean
-    PasskeySignInSuccessHandler passkeySignIn(SecurityStore store, DeviceIdentityResolver devices, AccessDecisions decisions) {
-        return new PasskeySignInSuccessHandler(store, devices, decisions);
+    RememberedSignIns rememberedSignIns(CasitaSecurityProperties properties, RememberProperties remember, Clock clock) {
+        return new RememberedSignIns(properties.dataDir().resolve("remember.key"), remember, clock);
+    }
+
+    @Bean
+    PasskeySignInSuccessHandler passkeySignIn(SecurityStore store, DeviceIdentityResolver devices, AccessDecisions decisions,
+                                              RememberedSignIns remembered) {
+        return new PasskeySignInSuccessHandler(store, devices, decisions, remembered);
     }
 
     @Bean
@@ -180,7 +189,8 @@ class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, CasitaSecurityProperties properties, Invitations invitations, SecurityStore store,
                                             DeviceIdentityResolver devices, AccessDecisions decisions, PasskeySignInSuccessHandler passkeySignIn,
-                                            LocalAdmin localAdmin, AuthRateLimitProperties rateLimits, Clock clock) throws Exception {
+                                            LocalAdmin localAdmin, AuthRateLimitProperties rateLimits, Clock clock,
+                                            RememberedSignIns remembered) throws Exception {
         PathPatternRequestMatcher.Builder path = PathPatternRequestMatcher.withDefaults();
         return http
                 .authorizeHttpRequests(auth -> auth
@@ -245,13 +255,18 @@ class SecurityConfig {
                 // Refused passkey registrations answered 400, not an escaped exception; passkey deletion 405.
                 // (Spring places its registration filter right after AuthorizationFilter; this goes just ahead of it.)
                 .addFilterAfter(new RegistrationErrorFilter(), AuthorizationFilter.class)
+                // No session, but a remembered sign-in from this enrolled browser: restore it, checked against the store.
+                .addFilterBefore(new RememberedSignInFilter(remembered, devices, decisions, store, "ROLE_" + ROLE), AuthorizationFilter.class)
                 // Every signed-in request: member, passkey, device authorization and device, again.
-                .addFilterBefore(new AccessCheckFilter(devices, decisions), AuthorizationFilter.class)
+                .addFilterAfter(new AccessCheckFilter(devices, decisions, true), RememberedSignInFilter.class)
                 .exceptionHandling(e -> e
                         .defaultAuthenticationEntryPointFor(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED), path.matcher("/api/**"))
                         .defaultAuthenticationEntryPointFor(new HttpStatusEntryPoint(HttpStatus.FORBIDDEN), path.matcher("/admin/**"))
                         .defaultAuthenticationEntryPointFor(loginPage(), AnyRequestMatcher.INSTANCE))
-                .logout(logout -> logout.logoutSuccessUrl("/login?signed-out"))
+                // Signing out also forgets the browser's remembered sign-in: the next visit needs Face ID.
+                .logout(logout -> logout.logoutSuccessUrl("/login?signed-out")
+                        .addLogoutHandler((request, response, auth) -> response.addHeader(org.springframework.http.HttpHeaders.SET_COOKIE,
+                                RememberedSignIns.cleared().toString())))
                 .headers(headers -> headers.contentSecurityPolicy(csp -> csp.policyDirectives(CSP)))
                 .build();
     }
