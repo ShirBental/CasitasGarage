@@ -27,9 +27,13 @@ import home.casita.security.store.SecurityStore.ShortcutToken;
 import jakarta.servlet.http.HttpServletRequest;
 
 /**
- * What a Shortcut token may do (docs/SHORTCUTS.md): the one action on the one door it was created for, through the same
- * {@link GarageService} as the app, so every safety rule, hold and command mode applies unchanged. It may also read that
- * door's status, so a Shortcut can say what actually happened.
+ * What a Shortcut token may do (docs/SHORTCUTS.md): the one action (open or close) on the one door it was created for,
+ * through the same {@link GarageService} as the app, so every safety rule, hold and command mode applies unchanged. It
+ * may also read that door's status, so a Shortcut can say what actually happened.
+ *
+ * <p>A close is an ordinary close ({@link GarageService#close(String)}): a Shortcut can never say "I've looked at the
+ * door" ({@code checked}), because a voice request proves nothing about who is at the garage. A request that tries is
+ * refused and nothing is sent.
  *
  * <p>An accepted command is never reported as an open door: {@code result} says what happened to the command,
  * {@code doorState} what Casita knows about the door, and {@code confirmed} whether the sensor has settled on it.
@@ -72,18 +76,26 @@ class ShortcutController {
     @PostMapping("/{door}/{action}")
     ResponseEntity<?> command(@PathVariable String door, @PathVariable String action,
                               @AuthenticationPrincipal ShortcutToken token, HttpServletRequest request) {
+        if (request.getParameter("checked") != null) {
+            log.warn("Shortcut command refused: token {} ({}) sent 'checked', which a Shortcut can't (client {})", token.tokenId(),
+                    token.memberId(), request.getRemoteAddr());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).header("Cache-Control", "no-store").body(new Refusal("refused", "checked-not-allowed",
+                    "Siri can't tell Casita you've looked at the door, so I didn't send anything."));
+        }
         Optional<GarageService> scoped = scoped(token, door);
-        if (scoped.isEmpty() || !token.action().equalsIgnoreCase(action)) {
+        String asked = action.toLowerCase(java.util.Locale.ROOT);
+        Action wanted = "open".equals(asked) ? Action.OPEN : "close".equals(asked) ? Action.CLOSE : null;
+        if (scoped.isEmpty() || wanted == null || !wanted.name().equals(token.action())) {
             log.warn("Shortcut command refused: token {} ({}) may {} {} only, asked to {} {} (client {})", token.tokenId(), token.memberId(),
                     token.action(), token.door(), action, door, request.getRemoteAddr());
             return refusal();
         }
-        if (!Action.OPEN.name().equals(token.action())) return refusal(); // the only action a token can be created for, for now
         GarageService service = scoped.get();
-        CommandResult result = service.open(token.memberId() + " via Shortcut");
+        String who = token.memberId() + " via Shortcut";
+        CommandResult result = wanted == Action.OPEN ? service.open(who) : service.close(who);
         log.info("Shortcut command: token {} ({}, {}) {} {} -> {} (control {}, client {})", token.tokenId(), token.memberId(), token.label(),
                 token.action(), service.name(), result.outcome(), service.control().id(), request.getRemoteAddr());
-        return answer(service, result);
+        return answer(service, wanted, result);
     }
 
     @GetMapping("/{door}")
@@ -111,7 +123,8 @@ class ShortcutController {
                 .body(new Refusal("refused", "forbidden", "This Shortcut isn't allowed to do that."));
     }
 
-    private ResponseEntity<CommandAnswer> answer(GarageService service, CommandResult r) {
+    private ResponseEntity<CommandAnswer> answer(GarageService service, Action action, CommandResult r) {
+        boolean open = action == Action.OPEN;
         String name = service.name();
         boolean live = service.control().live();
         String practice = practice(service);
@@ -124,7 +137,8 @@ class ShortcutController {
                 result = "accepted";
                 status = HttpStatus.ACCEPTED;
                 checkAfter = checkAfter(name);
-                speak = practice + "Opening " + name + ". It isn't confirmed yet: I'll know once the sensor checks.";
+                speak = practice + (open ? "Opening " + name + ". It isn't confirmed yet: I'll know once the sensor checks."
+                        : "Closing " + name + ". It isn't confirmed yet: the sensor will say once it's closed.");
             }
             case UNCONFIRMED -> {
                 result = "unconfirmed";
@@ -135,7 +149,9 @@ class ShortcutController {
             case ALREADY -> {
                 result = "already";
                 status = HttpStatus.OK;
-                speak = practice + name + " isn't closed, so I didn't send anything.";
+                speak = practice + (open ? name + " isn't closed, so I didn't send anything."
+                        : name + "'s sensor says it's closed, so I didn't send anything. If you can see it open, the sensor hasn't "
+                        + "caught up yet: ask again in a little while, or use the wall button.");
             }
             case ERROR -> {
                 result = "failed";
@@ -145,7 +161,7 @@ class ShortcutController {
             default -> {
                 result = "refused";
                 status = HttpStatus.CONFLICT;
-                speak = practice + r.message();
+                speak = practice + name + ": " + r.message() + " I didn't send anything.";
             }
         }
         DoorState state = r.status() == null ? null : r.status().door();

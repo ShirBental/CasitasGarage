@@ -102,11 +102,13 @@ class ShortcutTokensTest {
     }
 
     @Test
-    void onlyOpeningFordForAtMostAYearForAnActiveMember() {
-        assertThatThrownBy(() -> tokens.create("shir", "iPhone", "toyota", Action.OPEN, Duration.ofDays(1)))
+    void onlyFordOrToyotaOneActionForAtMostAYearForAnActiveMember() {
+        assertThatThrownBy(() -> tokens.create("shir", "iPhone", "garage", Action.OPEN, Duration.ofDays(1)))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> tokens.create("shir", "iPhone", "ford", Action.CLOSE, Duration.ofDays(1)))
+        assertThatThrownBy(() -> tokens.create("shir", "iPhone", "ford,toyota", Action.OPEN, Duration.ofDays(1)))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> tokens.create("shir", "iPhone", "ford", null, Duration.ofDays(1)))
+                .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> tokens.create("shir", "iPhone", "ford", Action.OPEN, Duration.ofDays(366)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> tokens.create("shir", "iPhone", "ford", Action.OPEN, Duration.ZERO))
@@ -115,5 +117,10 @@ class ShortcutTokensTest {
         assertThatThrownBy(() -> tokens.create("shahar", "iPhone", "ford", Action.OPEN, Duration.ofDays(1)))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(tokens.list(List.of("shir", "shahar"))).isEmpty();
+
+        assertThat(tokens.create("shir", "iPhone", "toyota", Action.OPEN, Duration.ofDays(1)).token().door()).isEqualTo("toyota");
+        // Each token keeps the one action it was made with.
+        assertThat(tokens.create("shir", "iPhone", "toyota", Action.CLOSE, Duration.ofDays(1)).token().action()).isEqualTo("CLOSE");
+        assertThat(tokens.create("shir", "iPhone", "ford", Action.OPEN, Duration.ofDays(1)).token().action()).isEqualTo("OPEN");
     }
 }
