@@ -77,26 +77,44 @@ Both doors now show their real state in the app (Closed, Open, or Unknown); ever
 
 ## 4. Measure each door (read-only)
 
+Nothing here sends a command. Two terminals on watson, someone at the garage with the wall button or remote:
+
 ```bash
-sudo casita-door-watch 10 1     # 10 minutes, a reading every second; nothing is sent
+sudo casita-door-watch 15 1 | tee ~/door-watch-$(date +%F).log      # terminal 1: a reading every second, 15 min
 ```
 
-While it runs, someone at the garage opens and closes each door with the wall button or remote, twice each,
-noting the time the door starts and stops. For each door:
+```bash
+while read -r m; do echo "$(date +%T.%3N) $m"; done | tee -a ~/door-marks-$(date +%F).log   # terminal 2
+```
 
-- **travel**: from the button press to the door stopping. Both doors are expected to take 5–10 s; start from
-  **10 s** and keep it only if every run stops within it (an earlier guide said "Ford is about 20 s": that was how
-  long the first live close test *watched* Ford, not a stopwatch measurement);
-- **sensor lag**: from the door stopping to the line where its reading changes (`<- Ford changed`). Take the
-  longest seen, rounded up (Toyota's is 25 s or more).
+In terminal 2, type a mark (and Enter) the moment it happens, for example `ford open press`, `ford open stop`. Both
+logs use watson's clock, so they line up. For each door, at least three runs each way:
 
-Add them to `casita.env` (whole seconds, a little above the longest measured):
+- **press**: the button is pressed;
+- **stop**: the door has stopped (fully up, or fully down);
+- **change**: terminal 1's line `<- Ford changed` (or Toyota).
+
+Then, per door, taking the longest of all its runs in both directions:
+
+- **travel** = stop − press, rounded **up** to a whole second, plus 1 s. Use what was measured, whatever it is; don't
+  round down to an expected value. (An earlier guide said "Ford is about 20 s": that was how long the first live
+  close test *watched* Ford, not a measurement.)
+- **sensor lag** = change − stop (0 if the reading changed before the stop), rounded up, plus the reading interval
+  (1 s). Toyota's has been seen at 25 s or more.
+- If a reading is still `CLOSED` when the door is fully up, write down for how long: that is the case Close stays
+  refused (docs/DOOR_TIMING.md).
+
+With the release candidate installed, the first line printed is the opener's own per-door settings
+(`Appliance.GarageDoor.MultipleConfig`, numbers only, read with a GET). Write them down; the installed older release
+doesn't print them. Changing them is a device setting: approval and a supervised test.
+
+Add the results to `casita.env`:
 
 ```
-CASITA_GARAGE_TRAVELTIMES_FORD=<measured, 10s expected>s
+CASITA_GARAGE_TRAVELTIMES_FORD=<measured>s
 CASITA_GARAGE_SENSORLAGS_FORD=<measured>s
-CASITA_GARAGE_TRAVELTIMES_TOYOTA=<measured, 10s expected>s
-CASITA_GARAGE_SENSORLAGS_TOYOTA=<measured, 25s or more>s
+CASITA_GARAGE_TRAVELTIMES_TOYOTA=<measured>s
+CASITA_GARAGE_SENSORLAGS_TOYOTA=<measured>s
 ```
 
 ## 5. Dry run
