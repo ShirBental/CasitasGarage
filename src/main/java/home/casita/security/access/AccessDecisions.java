@@ -19,6 +19,10 @@ import home.casita.security.store.StoreUnavailableException;
  */
 public class AccessDecisions {
 
+    /** The refusal when the security store can't be read: signed out for now, but nothing about the browser is wrong. */
+    public static final String STORE_UNAVAILABLE = "security store unavailable";
+
+
     private final SecurityStore store;
     private final List<String> family;
     private final Clock clock;
@@ -30,6 +34,11 @@ public class AccessDecisions {
     }
 
     /** A passkey session: member, passkey, device authorization and the device itself. */
+    /** Now, by the clock access decisions use. */
+    public java.time.Instant now() {
+        return clock.instant();
+    }
+
     public String passkeySession(String member, AccessSession.Binding binding, DeviceIdentity device) {
         if (!family.contains(member)) return "not in the family";
         if (binding == null) return "sign-in not completed";
@@ -39,7 +48,7 @@ public class AccessDecisions {
         try {
             view = store.accessView(member, Bytes.fromBase64(binding.credentialId()), binding.nodeId());
         } catch (StoreUnavailableException e) {
-            return "security store unavailable";
+            return STORE_UNAVAILABLE;
         }
         if (view.member().isEmpty() || !view.member().get().active()) return "member revoked";
         if (view.passkey().isEmpty() || !view.passkey().get().activeFor(member)) return "passkey revoked or not theirs";
