@@ -18,19 +18,19 @@ production that window adds three things:
 
 The exact values on watson are in `/etc/casita/casita.env` (not in git); read them before deploying (section 7).
 
-**Fix (#15).** The wait is split into **travel time**, which is never skipped, and **sensor lag**, which a person who
-has looked at the door may skip ("Close after a look"). Grace is now 0 s. With a prompt Meross reading, Close works at
-**the door's travel time** instead of travel + lag + 2 s (for example 10 s instead of 37 s with a 10 s travel time and
-25 s lag; the real numbers come from section 6). When Close is allowed and when it is refused is
-tabled in docs/DOOR_TIMING.md ("Exactly when Close is allowed"). The app offers Close exactly in the allowed cases,
-which a test checks for every second from 0 to 60 s of eight scenarios.
+**Fix (#15), revised 2026-11-13 after Shir's reclassification.** A stop or reversal is a reliability problem, not a
+safety incident. The opener's photo eyes and auto-reverse handle the hazard, and Casita never touches them. So the
+sensor's reporting delay no longer gates the next command:
+- **Rule 9:** after Casita's own open, Close (Siri, or the app from anywhere) works from the door's **travel time**. It
+  is never sent against a "closed" reading, never before travel time after the last movement Casita knows of, and
+  never after a restart without the full settle.
+- **Rule 10:** a close is confirmed only if the sensor still says "closed" at its check. A stopped, reversed or stale
+  close ends `STUCK` (held, family told) or `SUPERSEDED` (an Open came first), and is never reported as closed.
 
-**What `checked=true` is not.** It is not proof that anyone is present or that the doorway is clear. Any signed-in
-member can send it, including a browser that signed itself back in from far away. Its effect is therefore limited to the
-one wait that is about reporting, not movement. The worst case of a false "I looked" is a close reaching a door that a
-remote started moving within the last lag seconds without the reading showing it: the same risk an ordinary close
-already carries with a stale reading. The opener's photo eyes and auto-reverse still apply, and a close that doesn't
-finish ends `STUCK` and holds.
+docs/DOOR_TIMING.md has:
+- each restriction classified as a physical hazard or a wrong outcome;
+- every plausible failure, with how it's detected;
+- the remaining limits.
 
 **Remaining limitations (binary sensor).**
 - If Meross still reports "closed" after the door is up (seen once on Toyota), Close stays refused until the reading
@@ -68,7 +68,7 @@ finish ends `STUCK` and holds.
 
 **CI on PR #18, final RC code: CI_RESULT_PLACEHOLDER**
 
-`mvn verify` locally on the final RC code (macOS, Java 21): LOCAL_RESULT_PLACEHOLDER.
+`mvn verify` locally on the final RC code (`cec9e4d`; macOS, Java 21): 804 tests, 0 failures, 0 errors, 13 skipped (7 live Meross, 5 Firestore start-up without the emulator, 1 staging start-up). The Firestore store and access-flow suites run only in CI.
 
 Earlier, before Siri close: CI on `eb07df1` (run 43456394466) 914 tests, 0 failures, 7 skipped.
 
@@ -111,10 +111,9 @@ drafts #7–#11 are already integrated into `release/watson-staging-rc`; leave t
 |---|---|---|
 | `CASITA_GARAGE_TRAVELTIMES_FORD`, `_TOYOTA` | The measured value per door (section 6 rounding; no value assumed) | After the measurement (section 6) |
 | `CASITA_GARAGE_SENSORLAGS_FORD`, `_TOYOTA` | The measured longest lag | Same |
-| `CASITA_GARAGE_VERIFYGRACE` | Remove if set (default is now 0 s) | With the above |
+| `CASITA_GARAGE_VERIFYGRACE` | Remove if set (default 2 s; it now delays only the check, never the next command) | With the above |
 | `CASITA_SECURITY_REMEMBER_MAXAGE` / `_IDLE` | None (defaults 30d / 14d); `0s` turns remembering off | Only to change |
 | `CASITA_MEROSS_COMMANDCHANNELS` | Unchanged; Toyota (`1,2`) only after its supervised test | Separately |
-| `CASITA_GARAGE_SETTLEBYSIGHT_*` (rule 10) | **None: leave unset** (off for both doors) | Only after section 10's supervised test and approval |
 
 New on first start: `/var/lib/casita/remember.key` (owner-only). Back it up with the disk or accept one Face ID per
 browser if it's lost.
@@ -139,11 +138,16 @@ Steps 1–2 are read-only. Steps 3 on send live commands and need Shir's approva
      the RC is installed). Record it; change nothing.
    - Details: deploy/watson/LIVE_DOORS.md step 4.
 2. **Configure.** Set the four values in section 5, `sudo systemctl restart casita`, `casita-health`.
-3. **Ford, live.** Open from the app while watching. Before travel time, Close is refused. At travel time, Close shows
-   "Waiting for the sensor…". Tap, confirm while looking: it closes, history shows "Shir saw Ford open and stopped".
-4. **Ford.** Two quick Opens: one command. Open, then reverse with the wall button mid-travel: Close after a look is
-   refused until the new movement has had its travel time.
-5. **Stale "closed".** If seen in step 1: Close is refused until the reading changes; nothing is sent.
+3. **Ford, live.** Open from the app while watching. Before travel time, Close is refused. At travel time it closes
+   (no look needed). The history shows the open inferred, then the close, confirmed at its check.
+4. **Ford.**
+   - Two quick Opens: one command.
+   - Open, then reverse with the wall button mid-travel: Close is refused until the new movement has had its travel
+     time.
+   - **Close with something in the photo eyes' beam** (a box): the opener reverses, and Casita reports `STUCK`, never
+     closed.
+   - **Does the opener beep or flash before a remote close?** That is the one real hazard item.
+5. **Stale "closed".** If seen in step 1: Close is refused until the reading changes, and nothing is sent.
 6. **Sign-in.** Restart Casita: the phone opens without Face ID. Revoke a test browser: it goes to sign-in at once.
 7. **Siri, four phrases.** `casita-access shortcut-phone` per phone, the four Shortcuts (docs/SHORTCUTS.md step 2), then
    step 4 there: open, close too soon (refused, spoken reason), close after travel + lag (closes), close a closed door
@@ -208,55 +212,39 @@ Before: `sudo grep -E 'TRAVELTIMES|SENSORLAGS|VERIFYGRACE|COMMAND' /etc/casita/c
 Open items that are not code: the hardware validation (section 6), and Shir's approval for the merges, the deployment
 and each settings change.
 
-## 10. Siri open and close (added 2026-11-13)
+## 10. Siri open and close (added 2026-11-13; door rules revised the same day)
 
 **What it does.** Four Shortcuts per iPhone: "Open Ford Garage", "Close Ford Garage", "Open Toyota Garage", "Close
 Toyota Garage". Hands-free, over cellular, with no Face ID, browser or app. Each is its own token, one per phone, door
 and action, each revocable on its own. `casita-access shortcut-phone <member> "<label>"` makes all four. Tokens made
-before this stay open-only: the action is fixed at creation, and nothing changes it.
+before this stay open-only: the action is fixed at creation, and nothing changes it. A Shortcut can't send `checked`
+(400). Siri's close is the same `GarageService.close()` as the app's Close button, so the app and Siri follow one set
+of rules.
 
-**Safety.** Siri's close is `GarageService.close(who)`, the same ordinary close as the app's Close button. A Shortcut
-can't send `checked` (400, nothing sent). Every lock applies: an unchecked movement, a door that may be moving, a hold,
-an unknown outcome, an unreadable sensor, a door switched off, and a sensor that says closed. Each refusal is spoken
-with the reason and that nothing was sent.
+**How it went.**
+1. **First design:** "settle by sight" let a close follow once Casita *saw* the reading change. Tony found blocker B1:
+   a reading stale at "closed" when the open is sent makes the open a press that closes the door, and its catch-up
+   looks like the open's own change. It shipped off.
+2. **Shir's reclassification:** a stop or reversal is a reliability problem, so the protection moved from waiting to
+   detection:
+   - The close goes at the door's travel time after Casita's open.
+   - It is confirmed only at its check, if the reading still says "closed".
+   - Otherwise it ends `STUCK` (held, family told) or `SUPERSEDED` (an Open came first). It is never called closed.
+   - B1 now ends `STUCK`, with "closed, then opened again".
+3. **Tony's review of the revision** found one more blocker: an Open during an unconfirmed close reported it closed.
+   Fixed with `SUPERSEDED`. TONY_CONFIRMATION_PLACEHOLDER
 
-**The sensor-watch question (Shir's critical concern), and the answer.**
-- A closed/not-closed sensor can't prove a door has stopped. A rule that closed one travel time after Casita *saw* the
-  reading change (rule 10, "settle by sight") would hold for Casita's own open. But Tony found (B1) that a reading stale
-  at "closed" when the open is sent makes the open a press that closes the door. The reading's late catch-up then looks
-  exactly like the open's own change, and a close at seen + travel would open the door while the log said closed.
-- So rule 10 **ships off for both doors** (`casita.garage.settle-by-sight`, empty), and doors without it aren't even
-  watched. Siri and the app from away keep the conservative wait: the open's check at **travel + lag** (+ grace, 0 s).
-  With the default config, door behaviour is exactly rules 1–9: the same for the app and Siri.
-- Tests: `byDefaultSiriWaitsTheFullTravelTimePlusLagAfterAnOpen`, `byDefaultAStaleClosedCatchUpIsNeverTakenForTheOpensOwnChange`,
-  `withoutSettleBySightNothingIsWatched`, and `anOrdinaryCloseIsOfferedExactlyWhenTheServerWouldSendIt` and the checked
-  variant over 10 scenarios × 61 s, with the switch both off and on. The scenarios: Siri with nobody asking, wall-button
-  reversal, stale reading, restart, resume, unconfirmed open, an opener-reported change, and a missed change. Also
-  `theWatchNeverChecksACloseEarly` (touch-down auto-reverse ends `STUCK`). Concurrent commands: the existing
-  concurrency tests (eight simultaneous closes send one command).
-- These run against a fake door, which models the reading, not a physical door separate from it. That is why the
-  switch is off until a supervised test shows, per door: its reading never leaves "closed" later than the door is fully
-  open; a press while opening stops it; and for Casita's own command, motion starts no earlier than the acknowledgement
-  and the reading changes no earlier than motion (docs/DOOR_TIMING.md, "What a door needs"). Toyota, as observed, fails
-  the first.
+**Acceptance (automated, against a fake door and a simulated opener whose reading trails the door):**
+- Siri's close after Siri's open works at the travel time: 10 s in the tests, versus 37 s before.
+- An open after a close that reads "closed" works at once.
+- Toyota's lagging reading: the close works the moment the reading leaves "closed" (25 s in the simulator).
+- The simulator counts no command reaching a moving door at the configured travel time.
+- With an understated travel time, the close is reported `STUCK`, not closed.
 
-**Reviews of the combined code.**
-- **Natasha (security): no blockers.** Scopes, independent revocation, no upgrade path, `checked` refused, no token on
-  `/api/**` or `/admin/**`, nothing secret logged or on a command line, fail-closed unchanged, and no way to switch
-  rule 10 on except operator configuration plus a restart. Her should-fixes are fixed:
-  - the replay and closing-onto-someone wording;
-  - two task threads;
-  - the watch's read-skip and error handling;
-  - any failure to read at a check now counts as `LOST` (held, told).
-- **Tony (door safety): blocker B1 fixed by the default-off switch; no blockers; safe with the default config.** His
-  should-fixes are fixed:
-  - the watch only for switched-on doors, never checking a close early;
-  - door names validated;
-  - `canClose` false for a door switched off;
-  - the docs on what the sensor can't tell;
-  - DESIGN.md hardware prerequisite 9;
-  - the renamed test.
+**Natasha (security): no blockers** on the Siri scopes, the `checked` refusal and enrollment. The revision changes door
+timing only, not authentication: no token, scope or endpoint changed.
 
-**Hardware still to check (with approval, someone watching):** section 6 step 7 for each phone, Siri on a locked phone
-(Apple doesn't document it for "Get Contents of URL"), cellular, and how long a Siri close after a Siri open waits with
-the measured travel + lag.
+**Hardware still to check (with approval, someone watching):**
+- section 6 steps 1–5 and 7, including whether the opener warns before a remote close and the photo-eye test;
+- Siri on a locked phone and over cellular;
+- that every run stops within the measured travel time.
