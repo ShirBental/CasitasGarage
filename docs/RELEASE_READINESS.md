@@ -66,9 +66,9 @@ docs/DOOR_TIMING.md has:
 
 ## 3. Test results
 
-**CI on PR #18, final RC code: CI_RESULT_PLACEHOLDER**
+**CI on PR #18:** runs on the head commit, which is this document's commit on top of the code at `807e49c`. The result is in the PR's checks and in `.avengers/tasks.md` (T21). The Firestore store and access-flow suites run only there.
 
-`mvn verify` locally on the final RC code (`cec9e4d`; macOS, Java 21): 804 tests, 0 failures, 0 errors, 13 skipped (7 live Meross, 5 Firestore start-up without the emulator, 1 staging start-up). The Firestore store and access-flow suites run only in CI.
+`mvn verify` locally on the final RC code (`807e49c`; macOS, Java 21): 808 tests, 0 failures, 0 errors, 13 skipped (7 live Meross, 5 Firestore start-up without the emulator, 1 staging start-up). The Firestore store and access-flow suites run only in CI.
 
 Earlier, before Siri close: CI on `eb07df1` (run 43456394466) 914 tests, 0 failures, 7 skipped.
 
@@ -232,7 +232,8 @@ of rules.
    - Otherwise it ends `STUCK` (held, family told) or `SUPERSEDED` (an Open came first). It is never called closed.
    - B1 now ends `STUCK`, with "closed, then opened again".
 3. **Tony's review of the revision** found one more blocker: an Open during an unconfirmed close reported it closed.
-   Fixed with `SUPERSEDED`. TONY_CONFIRMATION_PLACEHOLDER
+   Fixed with `SUPERSEDED`. Tony's confirmation: "approve for release. No blockers." His one should-fix (supersede
+   the close only once the Open has actually been sent) is in `0b547cd`, with a test.
 
 **Acceptance (automated, against a fake door and a simulated opener whose reading trails the door):**
 - Siri's close after Siri's open works at the travel time: 10 s in the tests, versus 37 s before.
