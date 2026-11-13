@@ -27,15 +27,17 @@ Everything below follows from that.
 
 A Siri close is an **ordinary close**, through the same `GarageService.close()` as the app's Close button, never the
 app's "Close after a look". A voice request proves nothing about who is at the garage, so a Shortcut can't send
-`checked`: a request that tries is refused (400) and nothing is sent. Every rule applies unchanged:
+`checked`: a request that tries is refused (400) and nothing is sent. Siri and the app's Close button follow the same
+door rules, in the same code:
 
 - It refuses while a movement is unchecked or the door may be moving, while held after a stuck or lost move, when the
   sensor can't be read, when the door's commands or remote closing are off, and when the sensor says closed.
-- Right after an open, it waits until the door has stopped. Casita watches the sensor during its own open, even with
-  nobody asking. Once it has seen the reading leave "closed", the door has stopped one travel time later, so a close
-  works from then on, without the configured worst-case sensor lag. With a prompt Meross reading that is about
-  **travel time + 2 s** after the open. If the reading stays "closed" (Meross hasn't caught up), Close waits for it.
-  (docs/DOOR_TIMING.md, "Without a look".)
+- Right after an open, it waits for the open's check at **travel time + sensor lag** (per door, as measured). That is
+  the conservative wait: a closed/not-closed sensor can't prove a door has stopped, so Casita doesn't guess sooner. If
+  the reading is still "closed" then, the open ends `STUCK` and the door is held. A shorter wait ("settle by sight") exists but is off
+  for both doors, and can be switched on for a door only after its supervised test and with Shir's approval
+  (docs/DOOR_TIMING.md, "Without a look"). In practice: arriving, the door is long settled by the time you have parked
+  and got out; leaving, ask once you have driven out, and if it's too soon Siri says so.
 - When it refuses, Siri says why and that nothing was sent. For example:
   - "Ford: The door may still be opening. Give it a few more seconds. I didn't send anything."
   - "Ford's sensor says it's closed, so I didn't send anything. If you can see it open, the sensor hasn't caught up
