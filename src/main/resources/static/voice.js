@@ -89,6 +89,12 @@ const VOICE = (function () {
     notSetUp(door) { return `${door} control not set up yet`; },
     controlOff(door) { return `${door} control is off`; },
     closeOff() { return "Closing from the app is off"; },
+    lookAgain() { return "That took a while. Look at the door again, then tap Close."; },
+    closeIfChecked() { return "Waiting for the sensor. At the garage? Look, then close."; },
+    confirmStopped(door) {
+      return `Look at the ${door} door. Is it all the way up and stopped, with the doorway clear? `
+        + "Only close it if you can see it.";
+    },
 
     /** After a command: only what needs saying. Success waits for the sensor check. */
     unconfirmed() { return "No confirmation from the door. Checking the sensor."; },
@@ -116,6 +122,7 @@ const VOICE = (function () {
         case "LOST": return `Lost sight of ${door}`;
         case "HELD": return `${who}'s ${did} held for a check`;
         case "RESUMED": return `${who} checked on ${door}`;
+        case "CHECKED": return `${who} saw ${door} open and stopped`;
         case "ALREADY": return e.action === "OPEN" ? `${door} was already not closed` : `${door} was already closed`;
         case "BUSY": return `${who} asked while ${door} was busy`;
         case "DISABLED": return "Closing from the app is off";

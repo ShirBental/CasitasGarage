@@ -48,7 +48,7 @@ class GaragePropertiesTest {
             assertThat(context.getStartupFailure()).isNull();
             GarageProperties props = context.getBean(GarageProperties.class);
             assertThat(props.travelTime()).isEqualTo(Duration.ofSeconds(10));
-            assertThat(props.verifyGrace()).isEqualTo(Duration.ofSeconds(2));
+            assertThat(props.verifyGrace()).isEqualTo(Duration.ZERO);
         });
     }
 

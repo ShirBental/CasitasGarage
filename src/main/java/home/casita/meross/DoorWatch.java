@@ -24,7 +24,28 @@ public final class DoorWatch {
 
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
 
+    static final String NS_MULTIPLE_CONFIG = "Appliance.GarageDoor.MultipleConfig";
+
     private DoorWatch() {}
+
+    /**
+     * One line per door channel from a {@code GET Appliance.GarageDoor.MultipleConfig} answer: only the numeric settings
+     * (durations in ms, switches), never anything else the opener may include.
+     */
+    static String describeConfig(Map<String, Object> answer) {
+        Object config = answer == null ? null : answer.get("config");
+        java.util.List<?> entries = config instanceof java.util.List<?> list ? list : config == null ? java.util.List.of() : java.util.List.of(config);
+        StringBuilder out = new StringBuilder("Opener door settings (" + NS_MULTIPLE_CONFIG + "):");
+        if (entries.isEmpty()) return out.append(" none reported").toString();
+        for (Object entry : entries) {
+            if (!(entry instanceof Map<?, ?> m)) continue;
+            out.append("\n  channel ").append(m.get("channel") instanceof Number n ? n : "?").append(":");
+            new java.util.TreeMap<>(m).forEach((k, v) -> {
+                if (!"channel".equals(k) && v instanceof Number) out.append(' ').append(k).append('=').append(v);
+            });
+        }
+        return out.toString();
+    }
 
     public static void main(String[] args) throws Exception {
         long minutes = args.length > 0 ? Long.parseLong(args[0]) : 10;
@@ -55,6 +76,12 @@ public final class DoorWatch {
         doors.put("Ford", MerossDoor.readOnly(transport, uuid, 1));
         doors.put("Toyota", MerossDoor.readOnly(transport, uuid, 2));
 
+        // Read-only: the opener's own per-door timers, which may be why its reading trails the door (docs/DOOR_TIMING.md).
+        try {
+            System.out.println(describeConfig(transport.get(doors.get("Ford").uuid(), NS_MULTIPLE_CONFIG)));
+        } catch (Exception e) {
+            System.out.println("The opener didn't answer " + NS_MULTIPLE_CONFIG + " (" + e.getMessage() + "); watching anyway.");
+        }
         System.out.println("Watching Ford (channel 1) and Toyota (channel 2) over " + transportName + ", every " + every.toSeconds()
                 + " s for " + minutes + " min. Read-only: nothing is sent to the doors. Ctrl-C stops.");
         Map<String, String> last = new LinkedHashMap<>();

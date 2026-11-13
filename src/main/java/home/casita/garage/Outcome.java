@@ -35,5 +35,10 @@ public enum Outcome {
     /** A movement ended {@link #STUCK} or {@link #LOST} and nobody has resumed yet; nothing was sent. */
     HELD,
     /** Someone checked the door after a stuck or lost movement, and commands are allowed again. */
-    RESUMED
+    RESUMED,
+    /**
+     * Someone looked at the door and said it was fully open and stopped, so their close didn't wait for the sensor's
+     * delay (never for the door's travel time). Recorded just before that close's own entry.
+     */
+    CHECKED
 }

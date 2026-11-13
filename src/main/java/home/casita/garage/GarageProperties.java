@@ -25,7 +25,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 @ConfigurationProperties("casita.garage")
 public record GarageProperties(
         @DefaultValue("10s") Duration travelTime,
-        @DefaultValue("2s") Duration verifyGrace,
+        @DefaultValue("0s") Duration verifyGrace,
         @DefaultValue("true") boolean allowRemoteClose,
         Map<String, Duration> travelTimes,
         Map<String, Duration> sensorLags) {
