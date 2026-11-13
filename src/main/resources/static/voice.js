@@ -104,6 +104,7 @@ const VOICE = (function () {
         case "CLOSED_CONFIRMED": return "✓ Sensor confirmed closed";
         case "OPEN_INFERRED": return "✓ Sensor confirmed not closed";
         case "STUCK": return e.action === "OPEN" ? "It didn't open. Please look at the door." : "It didn't close. Please look at the door.";
+        case "SUPERSEDED": return "Opened again before the close was confirmed.";
         default: return "Lost sight of the door. Please look at it.";
       }
     },
@@ -119,6 +120,7 @@ const VOICE = (function () {
         case "OPEN_INFERRED": return `Sensor: ${door} not closed`;
         case "CLOSED_CONFIRMED": return `Sensor: ${door} closed`;
         case "STUCK": return `${door} didn't ${did}`;
+        case "SUPERSEDED": return `${door} read closed, opened again before it was confirmed`;
         case "LOST": return `Lost sight of ${door}`;
         case "HELD": return `${who}'s ${did} held for a check`;
         case "RESUMED": return `${who} checked on ${door}`;

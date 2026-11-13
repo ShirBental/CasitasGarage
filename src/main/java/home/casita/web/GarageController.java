@@ -99,9 +99,8 @@ class GarageController {
     }
 
     /**
-     * {@code ?checked=true}: the signed-in user has just looked at the door and seen it fully open and stopped. That lets
-     * the close skip the wait for the sensor's delay, never the door's travel time or any other safety rule
-     * ({@link GarageService#close(String, boolean)}); {@code canCloseIfChecked} in the door's status says when it applies.
+     * {@code ?checked=true}: the signed-in user says they looked at the door. Recorded with the close; it changes no
+     * timing ({@link GarageService#close(String, boolean)}).
      */
     @PostMapping("/doors/{door}/close")
     CommandResult close(@PathVariable String door, @RequestParam(defaultValue = "false") boolean checked, Principal user) {
