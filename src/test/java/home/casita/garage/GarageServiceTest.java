@@ -1300,16 +1300,26 @@ class GarageServiceTest {
     }
 
     @Test
-    void theWatchChecksACloseAsSoonAsItReadsClosed() {
-        newGarage(TRAVEL, LAG);
+    void theWatchNeverChecksACloseEarly() {
+        // A close is judged at its check, so a door that touches down and auto-reverses ends STUCK and holds.
+        newGarage(TRAVEL, LAG, true);
         doorSettledOpen();
         clock.advance(LAG);
         assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
-        tick(5, () -> { tasks.runDue(); });
-        door.open = false;
+        tick(6, tasks::runDue);
+        door.open = false; // touch-down
         tick(2, tasks::runDue);
-        assertLatest(GarageService.CASITA, Action.CLOSE, Outcome.CLOSED_CONFIRMED);
-        assertThat(garage.open("Shir").outcome()).isEqualTo(Outcome.MOVING); // nothing pending any more
+        door.open = true;  // auto-reverse
+        clock.advance(TRAVEL.plus(LAG).plus(GRACE));
+        tasks.runDue();
+        assertLatest(GarageService.CASITA, Action.CLOSE, Outcome.STUCK);
+    }
+
+    @Test
+    void withoutSettleBySightNothingIsWatched() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        assertThat(tasks.size()).isEqualTo(1); // only the check
     }
 
     @Test
@@ -1330,7 +1340,7 @@ class GarageServiceTest {
 
     @Test
     void theWatchDoesntReadAgainRightAfterSomeoneElseDid() {
-        newGarage(TRAVEL, LAG);
+        newGarage(TRAVEL, LAG, true);
         garage.open("Shir");
         int[] reads = {0};
         DoorDevice counting = new DoorDevice() {
@@ -1338,7 +1348,7 @@ class GarageServiceTest {
             @Override public void command(boolean open) throws DoorException { door.command(open); }
         };
         garage = new GarageService("Ford", counting, DoorControl.SIMULATED, activity, pushes::add, tasks, clock,
-                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", TRAVEL), Map.of("Ford", LAG)));
+                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", TRAVEL), Map.of("Ford", LAG), java.util.Set.of("Ford")));
         garage.open("Shir");
         reads[0] = 0;
         clock.advance(Duration.ofMillis(1500));
@@ -1353,7 +1363,7 @@ class GarageServiceTest {
 
     @Test
     void anUnexpectedErrorDuringTheWatchDoesntEndIt() {
-        newGarage(TRAVEL, LAG);
+        newGarage(TRAVEL, LAG, true);
         boolean[] fail = {false};
         int[] reads = {0};
         DoorDevice flaky = new DoorDevice() {
@@ -1365,7 +1375,7 @@ class GarageServiceTest {
             @Override public void command(boolean open) throws DoorException { door.command(open); }
         };
         garage = new GarageService("Ford", flaky, DoorControl.SIMULATED, activity, pushes::add, tasks, clock,
-                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", TRAVEL), Map.of("Ford", LAG)));
+                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", TRAVEL), Map.of("Ford", LAG), java.util.Set.of("Ford")));
         garage.open("Shir");
         fail[0] = true;
         int before = reads[0];
@@ -1375,17 +1385,42 @@ class GarageServiceTest {
     }
 
     @Test
+    void anUnexpectedErrorAtTheCheckIsALostSightAndHolds() {
+        newGarage(TRAVEL, LAG);
+        boolean[] fail = {false};
+        DoorDevice flaky = new DoorDevice() {
+            @Override public Reading read() throws DoorException {
+                if (fail[0]) throw new IllegalStateException("bug");
+                return door.read();
+            }
+            @Override public void command(boolean open) throws DoorException { door.command(open); }
+        };
+        garage = new GarageService("Ford", flaky, DoorControl.SIMULATED, activity, pushes::add, tasks, clock,
+                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", TRAVEL), Map.of("Ford", LAG)));
+        garage.open("Shir");
+        fail[0] = true;
+        clock.advance(TRAVEL.plus(LAG).plus(GRACE));
+        tasks.runDue();
+        assertLatest(GarageService.CASITA, Action.OPEN, Outcome.LOST);
+        fail[0] = false;
+        assertThat(garage.status().held()).isTrue();
+    }
+
+    @Test
     void settleBySightIsOffUnlessListedPerDoor() {
         assertThat(new GarageProperties(TRAVEL, GRACE, true).settlesBySight("Ford")).isFalse();
         GarageProperties ford = new GarageProperties(TRAVEL, GRACE, true, Map.of(), Map.of(), java.util.Set.of("Ford"));
         assertThat(ford.settlesBySight("Ford")).isTrue();
         assertThat(ford.settlesBySight("ford")).isTrue();
         assertThat(ford.settlesBySight("Toyota")).isFalse();
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> new GarageProperties(TRAVEL, GRACE, true, Map.of(), Map.of(), java.util.Set.of("Frod")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("settle-by-sight");
     }
 
     @Test
     void theWatchStopsWithTheMovement() {
-        newGarage(TRAVEL, LAG);
+        newGarage(TRAVEL, LAG, true);
         garage.open("Shir");
         door.open = true;
         tick(40, tasks::runDue);

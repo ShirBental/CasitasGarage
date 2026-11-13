@@ -69,7 +69,15 @@ public record GarageProperties(
         }
         sensorLags = Map.copyOf(lags);
         TreeSet<String> sight = new TreeSet<>();
-        if (settleBySight != null) settleBySight.forEach(door -> sight.add(DoorRoster.Door.key(door)));
+        if (settleBySight != null) {
+            settleBySight.forEach(door -> {
+                String key = DoorRoster.Door.key(door);
+                if (!Set.of("ford", "toyota").contains(key)) {
+                    throw new IllegalArgumentException("casita.garage.settle-by-sight: Ford or Toyota only, but was " + door);
+                }
+                sight.add(key);
+            });
+        }
         settleBySight = Set.copyOf(sight);
     }
 
