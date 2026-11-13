@@ -1,4 +1,4 @@
-# Release readiness: door wait, staying signed in, Siri for Toyota
+# Release readiness: door wait, staying signed in, Siri open and close for Ford and Toyota
 
 Release candidate: `release/rc-door-auth-siri`, which is `feat/public-https` plus #15, #16 and #17 (draft PR #18 runs CI on it).
 **Nothing is merged into a release branch or deployed, no production setting is changed, and no live command has been
@@ -66,12 +66,11 @@ finish ends `STUCK` and holds.
 
 ## 3. Test results
 
-**CI on PR #18, final RC code (`eb07df1`, run 43456394466, with the Firestore emulator): 914 tests, 0 failures,
-0 errors, 7 skipped (the live Meross tests only). BUILD SUCCESS.** It included `FirestoreSecurityStoreTest` 76,
-`FirestoreAccessFlowTest` 60, `FirestoreStartupVerifyTest` 5 and `StagingStartupTest` 13, all passing. Later RC
-commits change docs only; their CI run is linked on PR #18.
+**CI on PR #18, final RC code: CI_RESULT_PLACEHOLDER**
 
-`mvn verify` locally (macOS, Java 21): 778 tests, 0 failures, 0 errors, 13 skipped.
+`mvn verify` locally on the final RC code (macOS, Java 21): LOCAL_RESULT_PLACEHOLDER.
+
+Earlier, before Siri close: CI on `eb07df1` (run 43456394466) 914 tests, 0 failures, 7 skipped.
 
 | Skipped | Count | Why | Runs where |
 |---|---|---|---|
@@ -115,6 +114,7 @@ drafts #7–#11 are already integrated into `release/watson-staging-rc`; leave t
 | `CASITA_GARAGE_VERIFYGRACE` | Remove if set (default is now 0 s) | With the above |
 | `CASITA_SECURITY_REMEMBER_MAXAGE` / `_IDLE` | None (defaults 30d / 14d); `0s` turns remembering off | Only to change |
 | `CASITA_MEROSS_COMMANDCHANNELS` | Unchanged; Toyota (`1,2`) only after its supervised test | Separately |
+| `CASITA_GARAGE_SETTLEBYSIGHT_*` (rule 10) | **None: leave unset** (off for both doors) | Only after section 10's supervised test and approval |
 
 New on first start: `/var/lib/casita/remember.key` (owner-only). Back it up with the disk or accept one Face ID per
 browser if it's lost.
@@ -145,8 +145,9 @@ Steps 1–2 are read-only. Steps 3 on send live commands and need Shir's approva
    refused until the new movement has had its travel time.
 5. **Stale "closed".** If seen in step 1: Close is refused until the reading changes; nothing is sent.
 6. **Sign-in.** Restart Casita: the phone opens without Face ID. Revoke a test browser: it goes to sign-in at once.
-7. **Siri.** docs/SHORTCUTS.md step 4: unlocked, cellular (Wi-Fi off), locked, revoke one door's token (the other keeps
-   working).
+7. **Siri, four phrases.** `casita-access shortcut-phone` per phone, the four Shortcuts (docs/SHORTCUTS.md step 2), then
+   step 4 there: open, close too soon (refused, spoken reason), close after travel + lag (closes), close a closed door
+   (refused, "sensor says closed"), cellular, locked, revoke one token (the other three keep working).
 8. **Toyota.** Its own supervised command test (docs/MEROSS.md), then `CASITA_MEROSS_COMMANDCHANNELS=1,2`, then steps
    3–5 and 7 for Toyota.
 
@@ -202,7 +203,60 @@ Before: `sudo grep -E 'TRAVELTIMES|SENSORLAGS|VERIFYGRACE|COMMAND' /etc/casita/c
 - PR states: #12 and #15–#17 open drafts with green CI; #13 closed as superseded by #15; #18 draft, CI only.
 - Natasha's and Tony's findings: all fixed in code with tests (section 2), and their accepted notes documented
   (section 8). No open security findings.
-- Since `eb07df1`: docs only (measurement steps without an assumed travel time; this section).
+- Since `eb07df1`: Siri close and the default-off rule 10 (section 10), with Natasha's and Tony's final reviews.
 
 Open items that are not code: the hardware validation (section 6), and Shir's approval for the merges, the deployment
 and each settings change.
+
+## 10. Siri open and close (added 2026-11-13)
+
+**What it does.** Four Shortcuts per iPhone: "Open Ford Garage", "Close Ford Garage", "Open Toyota Garage", "Close
+Toyota Garage". Hands-free, over cellular, with no Face ID, browser or app. Each is its own token, one per phone, door
+and action, each revocable on its own. `casita-access shortcut-phone <member> "<label>"` makes all four. Tokens made
+before this stay open-only: the action is fixed at creation, and nothing changes it.
+
+**Safety.** Siri's close is `GarageService.close(who)`, the same ordinary close as the app's Close button. A Shortcut
+can't send `checked` (400, nothing sent). Every lock applies: an unchecked movement, a door that may be moving, a hold,
+an unknown outcome, an unreadable sensor, a door switched off, and a sensor that says closed. Each refusal is spoken
+with the reason and that nothing was sent.
+
+**The sensor-watch question (Shir's critical concern), and the answer.**
+- A closed/not-closed sensor can't prove a door has stopped. A rule that closed one travel time after Casita *saw* the
+  reading change (rule 10, "settle by sight") would hold for Casita's own open. But Tony found (B1) that a reading stale
+  at "closed" when the open is sent makes the open a press that closes the door. The reading's late catch-up then looks
+  exactly like the open's own change, and a close at seen + travel would open the door while the log said closed.
+- So rule 10 **ships off for both doors** (`casita.garage.settle-by-sight`, empty), and doors without it aren't even
+  watched. Siri and the app from away keep the conservative wait: the open's check at **travel + lag** (+ grace, 0 s).
+  With the default config, door behaviour is exactly rules 1–9: the same for the app and Siri.
+- Tests: `byDefaultSiriWaitsTheFullTravelTimePlusLagAfterAnOpen`, `byDefaultAStaleClosedCatchUpIsNeverTakenForTheOpensOwnChange`,
+  `withoutSettleBySightNothingIsWatched`, and `anOrdinaryCloseIsOfferedExactlyWhenTheServerWouldSendIt` and the checked
+  variant over 10 scenarios × 61 s, with the switch both off and on. The scenarios: Siri with nobody asking, wall-button
+  reversal, stale reading, restart, resume, unconfirmed open, an opener-reported change, and a missed change. Also
+  `theWatchNeverChecksACloseEarly` (touch-down auto-reverse ends `STUCK`). Concurrent commands: the existing
+  concurrency tests (eight simultaneous closes send one command).
+- These run against a fake door, which models the reading, not a physical door separate from it. That is why the
+  switch is off until a supervised test shows, per door: its reading never leaves "closed" later than the door is fully
+  open; a press while opening stops it; and for Casita's own command, motion starts no earlier than the acknowledgement
+  and the reading changes no earlier than motion (docs/DOOR_TIMING.md, "What a door needs"). Toyota, as observed, fails
+  the first.
+
+**Reviews of the combined code.**
+- **Natasha (security): no blockers.** Scopes, independent revocation, no upgrade path, `checked` refused, no token on
+  `/api/**` or `/admin/**`, nothing secret logged or on a command line, fail-closed unchanged, and no way to switch
+  rule 10 on except operator configuration plus a restart. Her should-fixes are fixed:
+  - the replay and closing-onto-someone wording;
+  - two task threads;
+  - the watch's read-skip and error handling;
+  - any failure to read at a check now counts as `LOST` (held, told).
+- **Tony (door safety): blocker B1 fixed by the default-off switch; no blockers; safe with the default config.** His
+  should-fixes are fixed:
+  - the watch only for switched-on doors, never checking a close early;
+  - door names validated;
+  - `canClose` false for a door switched off;
+  - the docs on what the sensor can't tell;
+  - DESIGN.md hardware prerequisite 9;
+  - the renamed test.
+
+**Hardware still to check (with approval, someone watching):** section 6 step 7 for each phone, Siri on a locked phone
+(Apple doesn't document it for "Get Contents of URL"), cellular, and how long a Siri close after a Siri open waits with
+the measured travel + lag.
