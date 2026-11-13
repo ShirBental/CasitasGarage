@@ -1375,6 +1375,28 @@ class GarageServiceTest {
     }
 
     @Test
+    void anUnexpectedErrorAtTheCheckIsALostSightAndHolds() {
+        newGarage(TRAVEL, LAG);
+        boolean[] fail = {false};
+        DoorDevice flaky = new DoorDevice() {
+            @Override public Reading read() throws DoorException {
+                if (fail[0]) throw new IllegalStateException("bug");
+                return door.read();
+            }
+            @Override public void command(boolean open) throws DoorException { door.command(open); }
+        };
+        garage = new GarageService("Ford", flaky, DoorControl.SIMULATED, activity, pushes::add, tasks, clock,
+                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", TRAVEL), Map.of("Ford", LAG)));
+        garage.open("Shir");
+        fail[0] = true;
+        clock.advance(TRAVEL.plus(LAG).plus(GRACE));
+        tasks.runDue();
+        assertLatest(GarageService.CASITA, Action.OPEN, Outcome.LOST);
+        fail[0] = false;
+        assertThat(garage.status().held()).isTrue();
+    }
+
+    @Test
     void settleBySightIsOffUnlessListedPerDoor() {
         assertThat(new GarageProperties(TRAVEL, GRACE, true).settlesBySight("Ford")).isFalse();
         GarageProperties ford = new GarageProperties(TRAVEL, GRACE, true, Map.of(), Map.of(), java.util.Set.of("Ford"));

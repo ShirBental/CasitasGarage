@@ -426,7 +426,7 @@ public class GarageService {
         if (reading == null) {
             try {
                 reading = readSensor();
-            } catch (DoorException e) {
+            } catch (DoorException | RuntimeException e) { // any failure to read is a lost sight, never a silent end
                 record(CASITA, m.action(), Outcome.LOST);
                 heldAfter = m.action();
                 notifier.send("I lost sight of the " + name + " door after "
