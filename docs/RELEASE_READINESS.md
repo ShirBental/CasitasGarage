@@ -11,7 +11,7 @@ sent. Each of those needs Shir's approval.**
 closed" proves only that the door left the closed position. So Close was refused (`BUSY`) for the whole window. In
 production that window adds three things:
 - Ford's configured travel time. The setup guide said 22 s, which was how long the first live test *watched* the door,
-  not a stopwatch time. Both doors actually move in 5–10 s.
+  not a stopwatch time. Neither door has been timed yet; the real value comes from section 6.
 - The sensor lag. Toyota's reading was once seen trailing the door by 25 s or more. This is Meross reporting late, not
   the door moving.
 - A further 2 s of grace.
@@ -19,10 +19,11 @@ production that window adds three things:
 The exact values on watson are in `/etc/casita/casita.env` (not in git); read them before deploying (section 7).
 
 **Fix (#15).** The wait is split into **travel time**, which is never skipped, and **sensor lag**, which a person who
-has looked at the door may skip ("Close after a look"). Grace is now 0 s. With a prompt Meross reading and travel time
-set to the measured 10 s, Close works at **10 s** instead of 37 s. When Close is allowed and when it is refused is
+has looked at the door may skip ("Close after a look"). Grace is now 0 s. With a prompt Meross reading, Close works at
+**the door's travel time** instead of travel + lag + 2 s (for example 10 s instead of 37 s with a 10 s travel time and
+25 s lag; the real numbers come from section 6). When Close is allowed and when it is refused is
 tabled in docs/DOOR_TIMING.md ("Exactly when Close is allowed"). The app offers Close exactly in the allowed cases,
-which a test checks for every second of five scenarios.
+which a test checks for every second from 0 to 60 s of eight scenarios.
 
 **What `checked=true` is not.** It is not proof that anyone is present or that the doorway is clear. Any signed-in
 member can send it, including a browser that signed itself back in from far away. Its effect is therefore limited to the
@@ -36,7 +37,7 @@ finish ends `STUCK` and holds.
   changes. A close sent against the opener's own "closed" state could be ignored or act as a button press, so there is
   no safe override. Smallest practical improvement, in order:
   1. Read the opener's own per-door timers. `casita-door-watch` now prints `Appliance.GarageDoor.MultipleConfig` first
-     (read-only). If they are longer than the real 10 s, shortening them is a device setting change (needs approval and
+     (read-only). If they are longer than the measured travel time, shortening them is a device setting change (needs approval and
      a supervised test).
   2. Use the opener's signed PUSH notifications, which reported Toyota open before `System.All` did.
   3. Add a sensor at the fully-open position.
@@ -65,15 +66,18 @@ finish ends `STUCK` and holds.
 
 ## 3. Test results
 
-`mvn verify` on the release candidate (local, macOS, Java 21): **778 tests, 0 failures, 0 errors, 13 skipped**.
-CI on PR #18 (with the Firestore emulator), on the RC before the final review fixes: **911 tests, 0 failures, 7 skipped**
-(the live Meross tests only). Check that the run for the final RC commit is green too before approving.
+**CI on PR #18, final RC code (`eb07df1`, run 43456394466, with the Firestore emulator): 914 tests, 0 failures,
+0 errors, 7 skipped (the live Meross tests only). BUILD SUCCESS.** It included `FirestoreSecurityStoreTest` 76,
+`FirestoreAccessFlowTest` 60, `FirestoreStartupVerifyTest` 5 and `StagingStartupTest` 13, all passing. Later RC
+commits change docs only; their CI run is linked on PR #18.
+
+`mvn verify` locally (macOS, Java 21): 778 tests, 0 failures, 0 errors, 13 skipped.
 
 | Skipped | Count | Why | Runs where |
 |---|---|---|---|
 | `MerossLiveCommandTest`, `MerossLiveCheckTest` | 7 | Talk to the real opener; only with `-Dmeross.live=true` | Never in CI; supervised, with approval |
-| `FirestoreStartupVerifyTest` | 5 | Need the Firestore emulator | CI |
-| `StagingStartupTest` (1 case) | 1 | This Mac has `config/meross.local.json` | CI |
+| `FirestoreStartupVerifyTest` | 5 | Local only: need the Firestore emulator | Ran and passed in CI |
+| `StagingStartupTest` (1 case) | 1 | Local only: this Mac has `config/meross.local.json` | Ran and passed in CI |
 
 Also not run locally (0 tests, not counted as skipped): `FirestoreSecurityStoreTest` (76 in CI) and
 `FirestoreAccessFlowTest` (60 in CI), which need the emulator. In CI they ran and passed, including the new contract
@@ -106,7 +110,7 @@ drafts #7–#11 are already integrated into `release/watson-staging-rc`; leave t
 
 | Setting (`/etc/casita/casita.env`) | Change | When |
 |---|---|---|
-| `CASITA_GARAGE_TRAVELTIMES_FORD`, `_TOYOTA` | The measured value, expected `10s` (never below what was measured) | After the measurement (section 6) |
+| `CASITA_GARAGE_TRAVELTIMES_FORD`, `_TOYOTA` | The measured value per door (section 6 rounding; no value assumed) | After the measurement (section 6) |
 | `CASITA_GARAGE_SENSORLAGS_FORD`, `_TOYOTA` | The measured longest lag | Same |
 | `CASITA_GARAGE_VERIFYGRACE` | Remove if set (default is now 0 s) | With the above |
 | `CASITA_SECURITY_REMEMBER_MAXAGE` / `_IDLE` | None (defaults 30d / 14d); `0s` turns remembering off | Only to change |
@@ -117,19 +121,34 @@ browser if it's lost.
 
 ## 6. Supervised hardware validation (someone at the garage, doorway clear)
 
-1. Read-only: `sudo casita-door-watch 10 1`. Note what it prints for MultipleConfig. Work each door twice each way with
-   the wall button. Record press → stop (travel) and stop → reading change (lag) per door and direction.
-2. Set the timings (section 5), restart, `casita-health`.
-3. Ford, live: open from the app, watching. At travel time the app shows Close with "Waiting for the sensor…". Tap,
-   confirm while watching: it closes, and the history shows "Shir saw Ford open and stopped".
-4. Ford: tap Close before travel time: refused. Tap Open twice quickly: one command.
-5. Ford: open, then press the wall button mid-travel (reversal): Close after a look is refused until the new movement
-   has had its travel time.
-6. If Meross reports "closed" after the door is up: note for how long. Close should be refused until it changes.
-7. Restart Casita: the phone opens the app without Face ID; the doors show. Revoke a test browser: it goes to sign-in at
-   once.
-8. Siri: docs/SHORTCUTS.md step 4 (unlocked, cellular, locked, revoke one door's token).
-9. Toyota: the same after its own supervised command test (docs/MEROSS.md), then `COMMANDCHANNELS=1,2`.
+Steps 1–2 are read-only. Steps 3 on send live commands and need Shir's approval and a person watching the door.
+
+1. **Measure (read-only).** On watson, two terminals:
+   ```bash
+   sudo casita-door-watch 15 1 | tee ~/door-watch-$(date +%F).log
+   ```
+   ```bash
+   while read -r m; do echo "$(date +%T.%3N) $m"; done | tee -a ~/door-marks-$(date +%F).log
+   ```
+   With the wall button, at least three runs each way per door. In terminal 2, type `ford open press`, `ford open stop`
+   (and so on) the moment each happens. Terminal 1 marks `<- Ford changed`. All times use watson's clock.
+   - Travel = longest (stop − press), rounded up, plus 1 s. Whatever was measured; don't use an assumed value.
+   - Sensor lag = longest (change − stop, 0 if earlier), rounded up, plus 1 s.
+   - A reading still `CLOSED` with the door fully up: note how long.
+   - Opener timers: the first line `Opener door settings (Appliance.GarageDoor.MultipleConfig)` (a GET; printed only once
+     the RC is installed). Record it; change nothing.
+   - Details: deploy/watson/LIVE_DOORS.md step 4.
+2. **Configure.** Set the four values in section 5, `sudo systemctl restart casita`, `casita-health`.
+3. **Ford, live.** Open from the app while watching. Before travel time, Close is refused. At travel time, Close shows
+   "Waiting for the sensor…". Tap, confirm while looking: it closes, history shows "Shir saw Ford open and stopped".
+4. **Ford.** Two quick Opens: one command. Open, then reverse with the wall button mid-travel: Close after a look is
+   refused until the new movement has had its travel time.
+5. **Stale "closed".** If seen in step 1: Close is refused until the reading changes; nothing is sent.
+6. **Sign-in.** Restart Casita: the phone opens without Face ID. Revoke a test browser: it goes to sign-in at once.
+7. **Siri.** docs/SHORTCUTS.md step 4: unlocked, cellular (Wi-Fi off), locked, revoke one door's token (the other keeps
+   working).
+8. **Toyota.** Its own supervised command test (docs/MEROSS.md), then `CASITA_MEROSS_COMMANDCHANNELS=1,2`, then steps
+   3–5 and 7 for Toyota.
 
 ## 7. Deployment and rollback
 
@@ -173,6 +192,17 @@ Before: `sudo grep -E 'TRAVELTIMES|SENSORLAGS|VERIFYGRACE|COMMAND' /etc/casita/c
   confirmed fixed. He found no path that sends a command to a door that may be moving, sends one twice, or reverses
   one. Ford and Toyota stay independent, and Shortcuts can't use `checked`. His should-fix and doc fixes are in
   (section 2).
+
+## 9. Final verification (2026-11-13)
+
+- CI on the final RC code: green (section 3).
+- Replaying the merge order: #15, #16 and #17 merge into `feat/public-https` with no conflicts, and the result is
+  identical to the RC's code (the only difference is this report, which lives only on the RC branch). #12 then merges
+  into `release/watson-staging-rc` with no conflicts.
+- PR states: #12 and #15–#17 open drafts with green CI; #13 closed as superseded by #15; #18 draft, CI only.
+- Natasha's and Tony's findings: all fixed in code with tests (section 2), and their accepted notes documented
+  (section 8). No open security findings.
+- Since `eb07df1`: docs only (measurement steps without an assumed travel time; this section).
 
 Open items that are not code: the hardware validation (section 6), and Shir's approval for the merges, the deployment
 and each settings change.
