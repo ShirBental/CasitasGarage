@@ -1052,7 +1052,53 @@ class GarageServiceTest {
 
     @Test
     void theAppOffersACheckedCloseExactlyWhenTheServerWouldSendIt() {
+        for (Map.Entry<String, Scenario> e : scenarios().entrySet()) {
+            for (long t = 0; t <= 60; t++) {
+                newGarage(TRAVEL, LAG);
+                e.getValue().play(t);
+                tasks.runDue();
+                GarageStatus status = garage.status();
+                Outcome outcome = garage.close("Shir", true).outcome();
+                boolean offered = status.canClose() || status.canCloseIfChecked();
+                assertThat(outcome == Outcome.MOVING).as(e.getKey() + " at " + t + " s: " + status + " -> " + outcome).isEqualTo(offered);
+                assertThat(status.canClose() && status.canCloseIfChecked()).as("never both").isFalse();
+            }
+        }
+    }
+
+    @Test
+    void anOrdinaryCloseIsOfferedExactlyWhenTheServerWouldSendIt() {
+        // Siri's close: no look. Offered (canClose) exactly when it would be sent, in every scenario, at every second.
+        for (Map.Entry<String, Scenario> e : scenarios().entrySet()) {
+            for (long t = 0; t <= 60; t++) {
+                newGarage(TRAVEL, LAG);
+                e.getValue().play(t);
+                tasks.runDue();
+                GarageStatus status = garage.status();
+                Outcome outcome = garage.close("Shir").outcome();
+                assertThat(outcome == Outcome.MOVING).as(e.getKey() + " at " + t + " s: " + status + " -> " + outcome).isEqualTo(status.canClose());
+            }
+        }
+    }
+
+    private Map<String, Scenario> scenarios() {
         Map<String, Scenario> scenarios = new java.util.LinkedHashMap<>();
+        scenarios.put("own open, nobody asking (Siri)", t -> {
+            garage.open("Shir");
+            long[] now = {0};
+            tick(t, () -> { if (++now[0] == 3) door.open = true; tasks.runDue(); });
+        });
+        scenarios.put("own open, nobody asking, reversal", t -> {
+            garage.open("Shir");
+            long[] now = {0};
+            tick(t, () -> {
+                now[0]++;
+                if (now[0] == 3) door.open = true;
+                if (now[0] == 8) door.open = false;
+                if (now[0] == 11) door.open = true;
+                tasks.runDue();
+            });
+        });
         scenarios.put("own open, prompt reading", t -> {
             garage.open("Shir");
             long[] now = {0};
@@ -1106,18 +1152,160 @@ class GarageServiceTest {
             long[] now = {0};
             tick(t, () -> { if (++now[0] == 12) door.changedAt = clock.instant(); garage.status(); });
         });
-        for (Map.Entry<String, Scenario> e : scenarios.entrySet()) {
-            for (long t = 0; t <= 60; t++) {
-                newGarage(TRAVEL, LAG);
-                e.getValue().play(t);
+        scenarios.put("own open, opener reports a recent change", t -> {
+            garage.open("Shir");
+            long[] now = {0};
+            tick(t, () -> {
+                now[0]++;
+                if (now[0] == 3) door.open = true;
+                if (now[0] == 12) door.changedAt = clock.instant();
                 tasks.runDue();
-                GarageStatus status = garage.status();
-                Outcome outcome = garage.close("Shir", true).outcome();
-                boolean offered = status.canClose() || status.canCloseIfChecked();
-                assertThat(outcome == Outcome.MOVING).as(e.getKey() + " at " + t + " s: " + status + " -> " + outcome).isEqualTo(offered);
-                assertThat(status.canClose() && status.canCloseIfChecked()).as("never both").isFalse();
-            }
+            });
+        });
+        return scenarios;
+    }
+
+    /* ---------- rule 10: Casita saw its own open move the reading, so it knows when the door stopped ---------- */
+
+    /** The first second, after an open at 0 s, at which an ordinary close is sent, with nobody asking for the status. */
+    private long firstOrdinaryCloseAfterOpen(Duration travel, Duration lag, long flipAt) {
+        newGarage(travel, lag);
+        garage.open("Shir");
+        for (long t = 1; t <= 120; t++) {
+            clock.advance(Duration.ofSeconds(1));
+            if (t == flipAt) door.open = true;
+            tasks.runDue();
+            if (garage.close("Shir").outcome() == Outcome.MOVING) return t;
         }
+        return -1;
+    }
+
+    @Test
+    void siriCanCloseOnceTheDoorWasSeenMovingAndHasHadItsTravelTime() {
+        // Opened by Siri, nobody looking at the app. The reading leaves "closed" at 3 s and is seen then (here by the
+        // close being tried every second), so the door stopped by 13 s. The configured lag (25 s) is a worst case it
+        // didn't need: before, the first ordinary close was at 10 + 25 + 2 s.
+        assertThat(firstOrdinaryCloseAfterOpen(TRAVEL, Duration.ofSeconds(25), 3)).isEqualTo(13);
+        assertThat(door.commands).containsExactly(true, false);
+        assertThat(activity.recent(10)).extracting(ActivityEvent::outcome)
+                .containsSubsequence(Outcome.MOVING, Outcome.OPEN_INFERRED, Outcome.MOVING);
+        assertThat(activity.recent(10)).extracting(ActivityEvent::outcome).doesNotContain(Outcome.CHECKED);
+    }
+
+    @Test
+    void beforeTheDoorWasSeenMovingAnOrdinaryCloseExplainsTheWait() {
+        newGarage(TRAVEL, Duration.ofSeconds(25));
+        garage.open("Shir");
+        tick(5, tasks::runDue);
+        CommandResult tooSoon = garage.close("Shir");
+        assertThat(tooSoon.outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(tooSoon.message()).contains("may still be opening");
+
+        tick(7, tasks::runDue); // 12 s: travelled, but the reading is still "closed"
+        CommandResult stale = garage.close("Shir");
+        assertThat(stale.outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(stale.message()).contains("sensor still says closed");
+        assertThat(door.commands).containsExactly(true);
+    }
+
+    @Test
+    void aStaleClosedReadingStillMeansTheFullWait() {
+        // Toyota-like: the reading leaves "closed" only at 25 s, so the door could have been moving until 35 s.
+        assertThat(firstOrdinaryCloseAfterOpen(TRAVEL, Duration.ofSeconds(30), 25)).isEqualTo(35);
+    }
+
+    @Test
+    void aSecondChangeDuringTheOpenMeansTheFullWait() {
+        // The wall button reversed it: Casita saw more than its own change, so its sighting proves nothing.
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        long[] now = {0};
+        tick(30, () -> {
+            now[0]++;
+            if (now[0] == 3) door.open = true;
+            if (now[0] == 5) door.open = false;
+            if (now[0] == 7) door.open = true;
+            tasks.runDue();
+            if (now[0] == 20) assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.BUSY);
+        });
+        assertThat(door.commands).containsExactly(true);
+    }
+
+    @Test
+    void theWatchAloneSeesTheChange() {
+        // Nobody asks at all until 15 s: the watch saw the change at 4 s (its reads at 2, 4, 6 s...), so 14 s was enough.
+        newGarage(TRAVEL, Duration.ofSeconds(25));
+        garage.open("Shir");
+        long[] now = {0};
+        tick(15, () -> { if (++now[0] == 3) door.open = true; tasks.runDue(); });
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
+    }
+
+    @Test
+    void theWatchSeesAReversalAfterTheOpenWasSeen() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        long[] now = {0};
+        tick(20, () -> {
+            now[0]++;
+            if (now[0] == 3) door.open = true;  // seen at 4 s
+            if (now[0] == 5) door.open = false; // seen at 6 s
+            if (now[0] == 7) door.open = true;  // seen at 8 s
+            tasks.runDue();
+        });
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(door.commands).containsExactly(true);
+    }
+
+    @Test
+    void anOpenOfUnknownOutcomeIsNotWatchedAndGetsTheFullWait() {
+        newGarage(TRAVEL, LAG);
+        door.timeoutAfterDelivery = true;
+        assertThat(garage.open("Shir").outcome()).isEqualTo(Outcome.UNCONFIRMED);
+        door.timeoutAfterDelivery = false;
+        door.open = true;
+        tick(20, tasks::runDue);
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(door.commands).containsExactly(true);
+    }
+
+    @Test
+    void theWatchChecksACloseAsSoonAsItReadsClosed() {
+        newGarage(TRAVEL, LAG);
+        doorSettledOpen();
+        clock.advance(LAG);
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
+        tick(5, () -> { tasks.runDue(); });
+        door.open = false;
+        tick(2, tasks::runDue);
+        assertLatest(GarageService.CASITA, Action.CLOSE, Outcome.CLOSED_CONFIRMED);
+        assertThat(garage.open("Shir").outcome()).isEqualTo(Outcome.MOVING); // nothing pending any more
+    }
+
+    @Test
+    void aFailedReadDuringTheWatchChangesNothing() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        door.readFails = true;
+        tick(6, tasks::runDue);
+        door.readFails = false;
+        door.open = true;
+        tick(2, tasks::runDue); // seen at 8 s
+        assertThat(garage.status().held()).isFalse();
+        tick(9, tasks::runDue);
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.BUSY); // 17 s: seen 9 s ago
+        clock.advance(Duration.ofSeconds(1));
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
+    }
+
+    @Test
+    void theWatchStopsWithTheMovement() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        door.open = true;
+        tick(40, tasks::runDue);
+        tasks.runDue();
+        assertThat(tasks.size()).isZero();
     }
 
     static final class FakeDoor implements DoorDevice {
@@ -1197,6 +1385,10 @@ class GarageServiceTest {
         @Override
         public void runAt(Instant when, Runnable task) {
             pending.add(new Task(when, task));
+        }
+
+        int size() {
+            return pending.size();
         }
 
         void runDue() {
