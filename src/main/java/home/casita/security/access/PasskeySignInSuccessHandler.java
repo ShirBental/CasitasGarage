@@ -38,17 +38,13 @@ public class PasskeySignInSuccessHandler implements AuthenticationSuccessHandler
 
     private final RememberedSignIns remembered;
 
-    public PasskeySignInSuccessHandler(SecurityStore store, DeviceIdentityResolver devices, AccessDecisions decisions) {
-        this(store, devices, decisions, null);
-    }
-
-    /** @param remembered gives the browser a remembered sign-in after each passkey sign-in; null for none */
+    /** @param remembered gives the browser a remembered sign-in after each passkey sign-in, and sets the 30-day Face ID limit */
     public PasskeySignInSuccessHandler(SecurityStore store, DeviceIdentityResolver devices, AccessDecisions decisions,
                                        RememberedSignIns remembered) {
         this.store = store;
         this.devices = devices;
         this.decisions = decisions;
-        this.remembered = remembered;
+        this.remembered = java.util.Objects.requireNonNull(remembered);
     }
 
     @Override
@@ -71,7 +67,7 @@ public class PasskeySignInSuccessHandler implements AuthenticationSuccessHandler
             devices.resolve(request).filter(d -> d.nodeId().equals(binding.nodeId())).ifPresent(d -> {
                 devices.renew(request, response, d);
                 // Face ID just now, on this browser: it may sign itself back in for a while (RememberedSignIns).
-                if (remembered != null && request.isSecure()) {
+                if (request.isSecure()) {
                     try {
                         // Bound to the browser's current authorization (the invite that authorized it).
                         String authorization = store.device(binding.nodeId()).map(SecurityStore.Device::inviteId).orElse(null);
@@ -113,7 +109,7 @@ public class PasskeySignInSuccessHandler implements AuthenticationSuccessHandler
         String refusal = decisions.passkeySession(member, binding, device.get());
         if (refusal != null) return refusal;
         session.setAttribute(AccessSession.BINDING, binding);
-        if (remembered != null) session.setAttribute(AccessSession.FACE_ID_UNTIL, remembered.faceIdUntil(decisions.now()));
+        session.setAttribute(AccessSession.FACE_ID_UNTIL, remembered.faceIdUntil(decisions.now()));
         return null;
     }
 }

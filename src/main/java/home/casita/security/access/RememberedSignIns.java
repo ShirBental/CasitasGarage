@@ -96,11 +96,20 @@ public final class RememberedSignIns {
         return signedInAt.plus(enabled() ? properties.maxAge() : FACE_ID_INTERVAL_WHEN_OFF);
     }
 
-    /** After a session was restored from {@code claim}: the same sign-in and expiry, a new idle deadline. */
+    /**
+     * When this sign-in ends under today's settings: what the cookie says, or sooner if max-age has been lowered since it
+     * was issued. A session restored from it ends then too.
+     */
+    public Instant expiry(Claim claim) {
+        return min(claim.expiresAt(), claim.verifiedAt().plus(properties.maxAge()));
+    }
+
+    /** After a session was restored from {@code claim}: the same sign-in, an expiry under today's settings, a new idle deadline. */
     public ResponseCookie renew(Claim claim) {
         Instant now = now();
+        Instant expires = expiry(claim);
         return cookie(new Claim(claim.member(), claim.credentialId(), claim.nodeId(), claim.authorization(), claim.verifiedAt(),
-                claim.expiresAt(), min(now.plus(properties.idle()), claim.expiresAt())));
+                expires, min(now.plus(properties.idle()), expires)));
     }
 
     /**
@@ -135,7 +144,7 @@ public final class RememberedSignIns {
         Instant now = now();
         if (claim.verifiedAt().isAfter(now.plus(SKEW))) return Optional.empty();
         // Under today's settings, whatever the cookie says: lowering max-age or idle shortens what was issued before.
-        Instant expires = min(claim.expiresAt(), claim.verifiedAt().plus(properties.maxAge()));
+        Instant expires = expiry(claim);
         if (!now.isBefore(expires) || !now.isBefore(claim.idleUntil())) return Optional.empty();
         if (claim.idleUntil().isAfter(now.plus(properties.idle()).plus(SKEW))) return Optional.empty();
         return Optional.of(claim);

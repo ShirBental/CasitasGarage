@@ -230,6 +230,16 @@ class RememberedSignInTest {
     }
 
     @Test
+    void aPasskeySessionWithoutAFaceIdTimeIsRefusedNotLeftUncapped() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        assertThat(TestBrowsers.signIn(context, session, "shir", PASSKEY, TestBrowsers.SHIR_PHONE)).isNull();
+        session.removeAttribute(AccessSession.FACE_ID_UNTIL);
+
+        mvc.perform(get("/api/doors").session(session).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE))).andExpect(status().isUnauthorized());
+        assertThat(session.isInvalid()).isTrue();
+    }
+
+    @Test
     void aRememberedSignInMeansNothingToTheShortcutEndpoints() throws Exception {
         // /shortcut/** has its own chain that reads no cookie: neither the browser key, the session nor this one.
         mvc.perform(fromPhone(post("/shortcut/v1/doors/ford/open"), remembered())).andExpect(status().isUnauthorized());

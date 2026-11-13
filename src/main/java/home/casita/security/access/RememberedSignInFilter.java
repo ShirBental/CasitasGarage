@@ -139,7 +139,7 @@ public class RememberedSignInFilter extends OncePerRequestFilter {
         if (request.getSession(false) != null) request.changeSessionId();
         HttpSession session = request.getSession(true);
         session.setAttribute(AccessSession.BINDING, binding);
-        session.setAttribute(AccessSession.FACE_ID_UNTIL, claim.expiresAt());
+        session.setAttribute(AccessSession.FACE_ID_UNTIL, signIns.expiry(claim));
         session.setAttribute(AccessSession.REMEMBER_RENEWED, signIns.now());
         SecurityStore.Member m = member.get();
         WebAuthnAuthentication auth = new WebAuthnAuthentication(
