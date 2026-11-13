@@ -1,6 +1,7 @@
 # Door timing: why Close used to wait ~30 s, and what changed
 
-Both doors, Ford and Toyota, finish moving in about 5–10 s. Casita used to refuse **Close** for about 30 s after
+Neither door's travel time has been measured with a stopwatch yet (estimates range from 5–10 s to the 20 s Ford was once
+watched for). Casita used to refuse **Close** for about 30 s after
 an **Open**, even with someone standing at the garage looking at a fully open, stopped door. This is why, what changed,
 and what is still deliberately refused.
 
@@ -38,8 +39,8 @@ changes how often it asks.
 
 1. **`verify-grace` defaults to 0 s** (application.yml and `GarageProperties`; PR #13). The check is at travel time +
    sensor lag.
-2. **Travel time: 10 s is the expected value for both doors**, to be confirmed with `casita-door-watch` before it is
-   set in production (deploy/watson/LIVE_DOORS.md, step 4). Live mode still refuses to start without each door's own
+2. **Travel time is whatever each door is measured at**, with `casita-door-watch` and a stopwatch, before it is set in
+   production (deploy/watson/LIVE_DOORS.md, step 4). No value is assumed; 10 s below is only an example. Live mode still refuses to start without each door's own
    measured `travel-times` and `sensor-lags`.
 3. **"I've checked the door" (rule 9 in `GarageService`).** The wait is now treated as two parts:
    `travelTime` (the door may still be **moving**: never skipped) and `sensorLag` (the door has stopped but the
@@ -120,7 +121,7 @@ The app offers Close exactly in the allowed cases. `GarageServiceTest#theAppOffe
   state is "closed" and a close may be ignored (`execute: 0`) or act as a button press. The fix is a faster or second
   signal, not an override. In order of cost:
   1. Read the opener's `Appliance.GarageDoor.MultipleConfig` (read-only) to learn each channel's configured
-     open/close duration. `casita-door-watch` now prints them first (numeric fields only), if the opener answers. If it is longer than the real 10 s, shortening it in the Meross app (if offered there) shortens
+     open/close duration. `casita-door-watch` now prints them first (numeric fields only), if the opener answers. If it is longer than the measured travel time, shortening it in the Meross app (if offered there) shortens
      the report delay. **Changing it is a device setting: needs approval and a supervised test.**
   2. Use the opener's signed PUSH notifications (already traced on `/app/<userId>/subscribe`, not used): the Meross app
      showed Toyota open before `System.All` did. Measure `sensorLag` again with them.
