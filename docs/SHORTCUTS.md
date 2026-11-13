@@ -27,15 +27,17 @@ Everything below follows from that.
 
 A Siri close is an **ordinary close**, through the same `GarageService.close()` as the app's Close button, never the
 app's "Close after a look". A voice request proves nothing about who is at the garage, so a Shortcut can't send
-`checked`: a request that tries is refused (400) and nothing is sent. Every rule applies unchanged:
+`checked`: a request that tries is refused (400) and nothing is sent. Siri and the app's Close button follow the same
+door rules, in the same code:
 
 - It refuses while a movement is unchecked or the door may be moving, while held after a stuck or lost move, when the
   sensor can't be read, when the door's commands or remote closing are off, and when the sensor says closed.
-- Right after an open, it waits until the door has stopped. Casita watches the sensor during its own open, even with
-  nobody asking. Once it has seen the reading leave "closed", the door has stopped one travel time later, so a close
-  works from then on, without the configured worst-case sensor lag. With a prompt Meross reading that is about
-  **travel time + 2 s** after the open. If the reading stays "closed" (Meross hasn't caught up), Close waits for it.
-  (docs/DOOR_TIMING.md, "Without a look".)
+- Right after an open, it waits for the open's check at **travel time + sensor lag** (per door, as measured). That is
+  the conservative wait: a closed/not-closed sensor can't prove a door has stopped, so Casita doesn't guess sooner. If
+  the reading is still "closed" then, the open ends `STUCK` and the door is held. A shorter wait ("settle by sight") exists but is off
+  for both doors, and can be switched on for a door only after its supervised test and with Shir's approval
+  (docs/DOOR_TIMING.md, "Without a look"). In practice: arriving, the door is long settled by the time you have parked
+  and got out; leaving, ask once you have driven out, and if it's too soon Siri says so.
 - When it refuses, Siri says why and that nothing was sent. For example:
   - "Ford: The door may still be opening. Give it a few more seconds. I didn't send anything."
   - "Ford's sensor says it's closed, so I didn't send anything. If you can see it open, the sensor hasn't caught up
@@ -209,9 +211,9 @@ Automated tests cover the server side only. These need the iPhone:
 |---|---|---|
 | **Siri on a locked phone** | Siri can run Shortcuts from the lock screen, and Apple doesn't document that "Get Contents of URL" requires unlocking: assume it doesn't. Anyone within earshot of the phone may be able to say a phrase, open or close. A bearer token can't tell | See *Locked phones* below. Casita adds no fake check for this |
 | **Token copied** (screenshot, backup, shared Shortcut, iCloud sync of Shortcuts) | Whoever has it can open (or, with a close token, close) that token's door from anywhere until it expires or is revoked | One door and one action; 6 commands per 10 minutes per token; every use logged with the token's id; revoke at once with `casita-access`; 180-day default life. **Never share the Shortcut**: shared Shortcuts carry their headers |
-| **Replay / repeated requests** | The token is the same on every request; resending opens again if the door is closed | HTTPS only (nothing to capture in transit); `GarageService` refuses while a movement is unchecked, refuses when the door isn't closed, holds after a stuck move; per-token and per-client rate limits. No nonce: Shortcuts can't sign requests |
+| **Replay / repeated requests** | The token is the same on every request; resending opens again if the door is closed, and a close token closes again once the door has settled open | HTTPS only (nothing to capture in transit); `GarageService` refuses while a movement is unchecked, refuses when the door isn't closed, holds after a stuck move; per-token and per-client rate limits. No nonce: Shortcuts can't sign requests |
 | **Compromised phone** | Same as a copied token, plus the browser's session | Revoke the token (`revoke-shortcut-token`) **and** the browser (`revoke-device`): they are separate credentials. `revoke-device` doesn't revoke tokens (nothing ties a token to a browser: a Shortcut sends only its token), but lists the member's active ones so you can pick the phone's by its label and id. Or revoke the member (`revoke-member`), which revokes both |
-| **Closing onto someone** | A close token closes from anywhere, with nobody looking, like the app's Close from away | Only a door Casita has seen settle open, never one that may be moving; the opener's photo eyes and auto-reverse; a close that doesn't finish holds the door. A phone that shouldn't close gets only open tokens |
+| **Closing onto someone** | A close token closes from anywhere, with nobody looking, like the app's Close from away | Only a door whose sensor has read not closed long enough to count as settled (including since Casita started, when it didn't see the door open), never one Casita knows may be moving; the opener's photo eyes and auto-reverse; a close that doesn't finish holds the door. A phone that shouldn't close gets only open tokens |
 | **Other doors, other actions, admin** | Not reachable: the token's door and action are checked against the path; `checked` is refused; `/api/**` ignores tokens; `/admin/**` is local-only with its own secret, and Caddy answers 404 for it | Tests cover each |
 | **Guessing** | 256 random bits | Rate limits keep the endpoint from being hammered, not guessing |
 | **Leaks through logs** | — | Tokens are never logged (only ids); Caddy drops the Authorization header from its access log (it also redacts it by default); error answers are fixed text |
