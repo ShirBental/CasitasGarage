@@ -127,6 +127,22 @@ h1, h2 { font-weight: 600; margin: 0; }
 .companion.is-excited:has(.excited:not([hidden])) #companion-art { opacity: 0; transition: opacity 180ms step-end; }  /* to excited: idle leaves when the fade ends */
 .hairline { height: 1px; background: var(--hairline); }
 
+/* Efraim: the provided art, unchanged (723 x 241, transparent; the mouse spans x 235-526, y 9-233 in every
+   frame). A box his size crops the empty canvas away, and he sits on the hairline above History at its right
+   end. He lives in the spare space below the doors, and that space is never shorter than he is, so he never
+   covers a door, its button or any text. Taps pass through him. Still frame for reduced motion. */
+.home { --efraim-h: 56px; }
+.spare.below { position: relative; min-height: calc(var(--efraim-h) + 4px); }
+.efraim {
+  position: absolute; right: 6px; bottom: -1px; overflow: hidden; pointer-events: none;
+  width: calc(var(--efraim-h) * 292 / 225); height: var(--efraim-h);
+}
+.efraim img {
+  position: absolute; max-width: none; height: auto; width: calc(var(--efraim-h) * 723 / 225);
+  left: calc(var(--efraim-h) * -235 / 225); top: calc(var(--efraim-h) * -9 / 225);
+}
+.efraim .still { display: none; }
+
 /* ET phone home: in place of both doors, with nothing to press. */
 .offline { flex: 1; display: flex; flex-direction: column; justify-content: center; padding-bottom: 8vh; }
 .offline .state { margin: 0; font-family: var(--serif); font-weight: 600; font-size: 3.4rem; line-height: 1.02; color: var(--muted); letter-spacing: -0.015em; }
@@ -212,9 +228,12 @@ button.row .when::after { content: "›"; margin-left: 8px; font-size: 1.2rem; c
   .door .state { font-size: 1.2rem; margin-top: 6px; }
   .go { width: 62px; height: 62px; }
   .companion { width: 176px; }
+  .home { --efraim-h: 48px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .go, .estimate .fill, .companion img, .companion .excited, #companion-art { transition: none !important; }
   .sheet[open] { animation: none; }
+  .efraim .moving { display: none; }
+  .efraim .still { display: block; }
 }
