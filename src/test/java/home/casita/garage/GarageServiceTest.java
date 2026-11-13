@@ -1327,6 +1327,22 @@ class GarageServiceTest {
     }
 
     @Test
+    void anOpenThatCantBeSentAfterAnUnconfirmedCloseLeavesTheCloseToItsCheck() {
+        newGarage(TRAVEL, LAG);
+        doorSettledOpen();
+        clock.advance(LAG);
+        garage.close("Shir");
+        long[] now = {0};
+        tick(10, () -> { if (++now[0] == 9) door.open = false; tasks.runDue(); });
+        door.rejectCommands = true;
+        assertThat(garage.open("Shir").outcome()).isEqualTo(Outcome.ERROR);
+        door.rejectCommands = false;
+        assertThat(outcomes()).doesNotContain(Outcome.SUPERSEDED);
+        tick(20, tasks::runDue);
+        assertThat(outcomes()).contains(Outcome.CLOSED_CONFIRMED);
+    }
+
+    @Test
     void anOpenDuringAnUnconfirmedCloseThatThenReversesIsNeverReportedClosed() {
         // Tony's blocker: "closed" for a moment at 9 s (the door may be reversing), Open at 10 s.
         newGarage(TRAVEL, LAG);

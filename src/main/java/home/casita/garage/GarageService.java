@@ -243,6 +243,8 @@ public class GarageService {
         boolean close = action == Action.CLOSE;
         // Casita's own acknowledged open, travelled but not yet checked: a close may end it (rule 9).
         Movement travelledOpen = null;
+        // Casita's own close that reads "closed" but isn't checked yet: an open may follow it (rule 10).
+        Movement closeToSupersede = null;
         DoorDevice.Reading reading = null;
         if (pending != null) {
             if (isDue(pending)) {
@@ -262,7 +264,7 @@ public class GarageService {
                 if (pending != null && reading.open()) {
                     return result(Outcome.BUSY, "The door may still be closing. Give it a few more seconds.");
                 }
-                if (pending != null) supersedeClose(pending);
+                closeToSupersede = pending;
             } else {
                 return result(Outcome.BUSY, "Give me a moment, I'm still checking on the door.");
             }
@@ -322,11 +324,13 @@ public class GarageService {
         try {
             door.command(wantOpen);
         } catch (DoorCommandRejectedException e) {
+            // Nothing was sent: a close being superseded keeps its own check.
             log.warn("Couldn't {} {}, nothing was sent: {}", action, name, e.getMessage());
             record(who, action, Outcome.ERROR);
             return result(Outcome.ERROR, "I couldn't reach the door. Nothing was sent, so nothing moved.");
         } catch (DoorException e) {
             log.warn("{} command for {} may or may not have gone through: {}", action, name, e.getMessage());
+            if (closeToSupersede != null) supersede(closeToSupersede);
             start(new Movement(id, action, who, clock.instant(), false, sensorChanges));
             record(who, action, Outcome.UNCONFIRMED);
             notifier.send("I'm not sure the " + name + " door got " + who + "'s " + verb(action)
@@ -334,6 +338,7 @@ public class GarageService {
             return result(Outcome.UNCONFIRMED, "I'm not sure the door got that. I'll check in a few seconds and let you know.");
         }
 
+        if (closeToSupersede != null) supersede(closeToSupersede);
         start(new Movement(id, action, who, clock.instant(), true, sensorChanges));
         record(who, action, Outcome.MOVING);
         notifier.send((wantOpen ? "Opening the " : "Closing the ") + name + " door for " + who);
@@ -374,11 +379,12 @@ public class GarageService {
     }
 
     /**
-     * Rule 10: the pending close reads "closed" and an open is about to be sent. The close ends without being confirmed
-     * ({@code SUPERSEDED}, nobody told it closed): it never had the time to show it stayed closed.
+     * Rule 10: the pending close read "closed" and an open has just been sent. The close ends without being confirmed
+     * ({@code SUPERSEDED}, nobody told it closed): it never had the time to show it stayed closed. Called only once the
+     * open has gone (or may have gone); an open that definitely wasn't sent leaves the close to its own check.
      */
-    private void supersedeClose(Movement m) {
-        pending = null;
+    private void supersede(Movement m) {
+        if (pending == m) pending = null;
         record(CASITA, Action.CLOSE, Outcome.SUPERSEDED);
     }
 
