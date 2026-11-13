@@ -72,6 +72,46 @@ settled is an ordinary close and records no `CHECKED`.
 Without a check (a phone away from the garage, a Shortcut), nothing changed except the grace: Close waits for the
 check at travel + lag.
 
+## The user's scenario, second by second
+
+Someone at the garage opens a door from the app at 0 s. The door stops at about 8 s. Travel time is configured at 10 s and the sensor lag at 25 s (`GarageServiceTest`, "the user's scenario"):
+
+| Meross reading | Close (after looking) works at | Before this change |
+|---|---|---|
+| Changes to not closed within a few seconds (as Ford's did) | **10 s**, the travel time | 37 s (10 + 25 + 2) |
+| Still "closed" at 25 s (as Toyota's was once seen) | **25 s**, the moment the reading changes | 37 s |
+| Travel time left at the old 22 s | 22 s | 22 + lag + 2 s |
+
+So the wait becomes the **travel time** when Meross reports promptly. When Meross is stale, the wait is however long it stays stale: nothing safe can be done sooner with this sensor (below). Away from the garage (no look), Close waits for the check at travel + lag as before.
+
+## What `checked=true` is, and isn't
+
+It is the signed-in member saying "I looked". It is **not** proof that anyone is at the garage or that the doorway is clear. Any signed-in member can send it, from anywhere, including a browser that signed itself back in without Face ID (PR #16), and Casita can't verify presence. So its effect is limited to what a wrong answer could cost:
+
+- It never skips the travel time, never overrides a reading, a hold, an unknown command, a restart or a resume, and never applies to opens or Shortcuts.
+- If someone confirms without looking, the close goes to a door that Casita has watched long enough for any movement it knows of to be over, and whose sensor says it isn't closed. That is what an ordinary close does at travel + lag, minus one case: a remote or wall button that started moving the door in the last `sensorLag` seconds without the reading showing it. A close then can stop or reverse that movement. This is the same risk docs/MEROSS.md already describes for a door moved by the remote while its reading is stale.
+- Obstructions are still handled by the opener's own photo eyes and auto-reverse, and a close that doesn't finish ends `STUCK` and holds the door.
+
+## Exactly when Close is allowed
+
+| Situation | Close without a look | Close after a look |
+|---|---|---|
+| Sensor unreadable | refused (`UNKNOWN`) | refused |
+| Held after a stuck or lost move | refused (`HELD`) | refused |
+| Commands for this door off, or closing from the app off | refused (`DISABLED`) | refused |
+| A command of unknown outcome pending | refused (`BUSY`) | refused |
+| Another close pending | refused (`BUSY`) | refused |
+| Casita's own open, before its travel time | refused | refused |
+| Casita's own open, after travel time, reading still "closed" | refused | refused (the opener may think it is closed) |
+| Casita's own open, after travel time, reading not closed, no other change since | refused until travel + lag | **allowed** |
+| Same, but the reading changed again since (wall-button reversal) | counts from the newest change | allowed once that change has had its travel time |
+| Door opened by wall button or remote, seen changing | refused until travel + lag after the change | allowed after travel time from the change |
+| Just after a restart or a resume (no change seen) | refused until travel + lag | refused until travel + lag |
+| The opener reports a change of its reading less than travel time ago | as above | refused |
+| Settled (travel + lag passed) | allowed | allowed (an ordinary close, no `CHECKED` entry) |
+
+The app offers Close exactly in the allowed cases. `GarageServiceTest#theAppOffersACheckedCloseExactlyWhenTheServerWouldSendIt` checks it for every second of five scenarios.
+
 ## What a binary sensor can't support, and the minimum extra verification
 
 - **A reading still at "closed" after travel time.** If the MSG200 reports "open" only after its own travel timer, a
@@ -79,7 +119,7 @@ check at travel + lag.
   state is "closed" and a close may be ignored (`execute: 0`) or act as a button press. The fix is a faster or second
   signal, not an override. In order of cost:
   1. Read the opener's `Appliance.GarageDoor.MultipleConfig` (read-only) to learn each channel's configured
-     open/close duration. If it is longer than the real 10 s, shortening it in the Meross app (if offered there) shortens
+     open/close duration. `casita-door-watch` now prints them first (numeric fields only), if the opener answers. If it is longer than the real 10 s, shortening it in the Meross app (if offered there) shortens
      the report delay. **Changing it is a device setting: needs approval and a supervised test.**
   2. Use the opener's signed PUSH notifications (already traced on `/app/<userId>/subscribe`, not used): the Meross app
      showed Toyota open before `System.All` did. Measure `sensorLag` again with them.

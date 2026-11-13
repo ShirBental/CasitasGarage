@@ -973,6 +973,107 @@ class GarageServiceTest {
         assertThat(status.canClose()).isTrue();
     }
 
+    /* ---------- the user's scenario: at the garage, the door stopped, how long until Close works ---------- */
+
+    /** The first second, after an open at 0 s, at which a checked close is sent; the reading changes at {@code flipAt}. */
+    private long firstCheckedCloseAfterOpen(Duration travel, Duration lag, long flipAt) {
+        newGarage(travel, lag);
+        garage.open("Shir");
+        for (long t = 1; t <= 120; t++) {
+            clock.advance(Duration.ofSeconds(1));
+            if (t == flipAt) door.open = true;
+            if (garage.close("Shir", true).outcome() == Outcome.MOVING) return t;
+        }
+        return -1;
+    }
+
+    @Test
+    void atTheGarageCloseWorksOnceTheDoorHasTravelledWhenMerossReportsPromptly() {
+        // Ford-like: 10 s of travel, the reading changes within 3 s; the configured lag (25 s) is only a worst case.
+        assertThat(firstCheckedCloseAfterOpen(TRAVEL, Duration.ofSeconds(25), 3)).isEqualTo(10);
+        // Before: the first close at all was the check at 10 + 25 + 2 s.
+        newGarage(TRAVEL, Duration.ofSeconds(25));
+        garage.open("Shir");
+        door.open = true;
+        clock.advance(Duration.ofSeconds(36));
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.BUSY);
+        clock.advance(Duration.ofSeconds(1));
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
+    }
+
+    @Test
+    void atTheGarageAStaleClosedReadingStillBlocksCloseUntilMerossCatchesUp() {
+        // Toyota-like: the reading stays "closed" for 25 s after the door is up. The binary sensor can't support an
+        // earlier close: the opener itself may think the door is closed. Close works the moment the reading changes.
+        assertThat(firstCheckedCloseAfterOpen(TRAVEL, Duration.ofSeconds(30), 25)).isEqualTo(25);
+        assertThat(door.commands).containsExactly(true, false);
+    }
+
+    @Test
+    void withTheOldConfiguredTravelTimeTheWaitIsThatTravelTime() {
+        // Production's travel time must come down to the measured value: rule 9 never skips travel time.
+        assertThat(firstCheckedCloseAfterOpen(Duration.ofSeconds(22), Duration.ofSeconds(5), 3)).isEqualTo(22);
+    }
+
+    /** One way the door got where it is; each probe replays it from scratch up to {@code seconds}. */
+    private interface Scenario {
+        void play(long seconds);
+    }
+
+    private void tick(long seconds, Runnable each) {
+        for (long t = 1; t <= seconds; t++) {
+            clock.advance(Duration.ofSeconds(1));
+            each.run();
+        }
+    }
+
+    @Test
+    void theAppOffersACheckedCloseExactlyWhenTheServerWouldSendIt() {
+        Map<String, Scenario> scenarios = new java.util.LinkedHashMap<>();
+        scenarios.put("own open, prompt reading", t -> {
+            garage.open("Shir");
+            long[] now = {0};
+            tick(t, () -> { if (++now[0] == 3) door.open = true; garage.status(); });
+        });
+        scenarios.put("own open, stale reading", t -> {
+            garage.open("Shir");
+            long[] now = {0};
+            tick(t, () -> { if (++now[0] == 20) door.open = true; garage.status(); });
+        });
+        scenarios.put("own open, wall-button reversal", t -> {
+            garage.open("Shir");
+            long[] now = {0};
+            tick(t, () -> {
+                now[0]++;
+                if (now[0] == 3) door.open = true;
+                if (now[0] == 8) door.open = false;
+                if (now[0] == 11) door.open = true;
+                garage.status();
+            });
+        });
+        scenarios.put("wall button", t -> {
+            garage.status();
+            door.open = true;
+            tick(t, garage::status);
+        });
+        scenarios.put("restart", t -> {
+            door.open = true;
+            tick(t, garage::status);
+        });
+        for (Map.Entry<String, Scenario> e : scenarios.entrySet()) {
+            for (long t = 0; t <= 40; t++) {
+                newGarage(TRAVEL, LAG);
+                e.getValue().play(t);
+                tasks.runDue();
+                GarageStatus status = garage.status();
+                Outcome outcome = garage.close("Shir", true).outcome();
+                boolean offered = status.canClose() || status.canCloseIfChecked();
+                assertThat(outcome == Outcome.MOVING).as(e.getKey() + " at " + t + " s: " + status + " -> " + outcome).isEqualTo(offered);
+                assertThat(status.canClose() && status.canCloseIfChecked()).as("never both").isFalse();
+            }
+        }
+    }
+
     static final class FakeDoor implements DoorDevice {
         volatile boolean open;
         volatile boolean readFails;
