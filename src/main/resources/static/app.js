@@ -297,6 +297,27 @@
     }
   }
 
+  // Efraim, the mouse, hides beneath the last car (casita.css). He uses only room that is already there: the
+  // spare space below the list, then the empty space under that car's round control (keeping 6 px from it).
+  // 56 pt, or 48 pt on short screens or when 56 doesn't fit; hidden only if 48 doesn't. Nothing moves for him.
+  const efraim = $("efraim");
+  function placeEfraim() {
+    const cars = [...$("doors").querySelectorAll(".door")].filter((d) => !d.hidden);
+    const go = cars.length ? cars[cars.length - 1].querySelector(".go") : null;
+    if ($("doors").hidden || $("spare-below").hidden || !go) { efraim.hidden = true; return; }
+    const below = $("spare-below").getBoundingClientRect().height;
+    const under = $("doors").getBoundingClientRect().bottom - go.getBoundingClientRect().bottom - 6;
+    const sizes = matchMedia("(max-height: 700px)").matches ? [48] : [56, 48];
+    const size = sizes.find((h) => h <= below + under);
+    efraim.hidden = !size;
+    if (!size) return;
+    efraim.classList.toggle("small", size === 48);
+    efraim.style.setProperty("--efraim-up", Math.max(0, size - below) + "px");
+  }
+  const watchRoom = new ResizeObserver(placeEfraim);
+  watchRoom.observe($("doors"));
+  watchRoom.observe($("spare-below"));
+
   drawBrand();
   api("GET", "/api/brand").then((b) => { VOICE.setBrand(b); drawBrand(); }).catch(() => {});
   api("GET", "/api/me").then((me) => { $("signed-in").textContent = VOICE.signedIn(me); }).catch(() => {});
