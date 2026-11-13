@@ -297,6 +297,15 @@
     }
   }
 
+  // Efraim, the mouse, sits in the spare space below the doors only while it already fits him (casita.css):
+  // he never makes room for himself, so nothing on the page moves or scrolls because of him.
+  const efraim = $("efraim");
+  new ResizeObserver(([entry]) => {
+    const room = entry.contentRect.height;
+    efraim.hidden = room < 50;
+    efraim.classList.toggle("small", room < 60);
+  }).observe($("spare-below"));
+
   drawBrand();
   api("GET", "/api/brand").then((b) => { VOICE.setBrand(b); drawBrand(); }).catch(() => {});
   api("GET", "/api/me").then((me) => { $("signed-in").textContent = VOICE.signedIn(me); }).catch(() => {});
