@@ -51,6 +51,14 @@ import org.slf4j.LoggerFactory;
  *       when a command of unknown fate could still land. The person's word alone never moves a door: a reading of "closed" (a sensor that
  *       hasn't caught up with an open) still refuses, because the opener could take the close as a button press. The
  *       check is recorded ({@code CHECKED}) with who made it, before the close.</li>
+ *   <li><b>Seen moving, then stopped.</b> While its own acknowledged command is pending, Casita reads the sensor every
+ *       {@link #WATCH_EVERY} until its check is due (the app or Siri may not be asking). If it sees the reading leave "closed" during its own
+ *       open, with no other change since that open, the door began moving no later than that reading, so it has stopped
+ *       one {@code travelTime} after it. From then on the open is done ({@code OPEN_INFERRED}) and the door counts as
+ *       settled without waiting for {@code sensorLag}, for any close, with or without a person's look. This rests on the
+ *       sensor never reporting "not closed" before the door has left the closed position (a hardware check). A reading
+ *       that stays "closed", an open of unknown outcome, or a second change all leave the full wait in place. A watched
+ *       close that reads "closed" is checked at once.</li>
  * </ol>
  *
  * <h2>What Casita reports</h2>
@@ -70,6 +78,9 @@ import org.slf4j.LoggerFactory;
 public class GarageService {
 
     static final String CASITA = "Casita";
+
+    /** How often the sensor is read while Casita's own acknowledged command is pending (rule 10). */
+    static final Duration WATCH_EVERY = Duration.ofSeconds(2);
 
     private static final Logger log = LoggerFactory.getLogger(GarageService.class);
 
@@ -97,6 +108,11 @@ public class GarageService {
     private boolean sawChange;
     /** How many changes of the reading Casita has seen, ever: a movement compares it with its own start. */
     private long sensorChanges;
+    /**
+     * When Casita read the sensor leaving "closed" during its own acknowledged open, that change being the only one since
+     * the open (rule 10); null otherwise, and cleared by any later change, a new movement or a resume.
+     */
+    private Instant seenOpenAt;
     /** The action of the movement that ended stuck or lost, while commands are held; null when not held. */
     private Action heldAfter;
 
@@ -149,13 +165,16 @@ public class GarageService {
         if (m != null) {
             if (!m.acknowledged()) return new GarageStatus(DoorState.CHECKING, m.startedAt(), false, false, held());
             // "Not closed" proves nothing about an opening door, so wait for the check, unless someone checks the door.
-            if (m.action() == Action.OPEN) {
+            if (m.action() == Action.OPEN && seenStopped(m, reading)) {
+                endSeenStopped(m);
+                m = null;
+            } else if (m.action() == Action.OPEN) {
                 return new GarageStatus(DoorState.OPENING, m.startedAt(), false, false, held(),
                         mayCloseIfChecked() && reading.open() && travelled(m) && onlyItsOwnChange(m) && !deviceSawARecentChange(reading));
             }
-            if (reading.open()) return new GarageStatus(DoorState.CLOSING, m.startedAt(), false, false, held());
+            if (m != null && reading.open()) return new GarageStatus(DoorState.CLOSING, m.startedAt(), false, false, held());
             // "Closed" proves the close finished: check it now.
-            check(m, reading);
+            if (m != null) check(m, reading);
         }
 
         if (!reading.open()) {
@@ -185,6 +204,7 @@ public class GarageService {
             heldAfter = null;
             lastSensorChange = clock.instant();
             sawChange = false;
+            seenOpenAt = null;
         }
         return status();
     }
@@ -226,13 +246,30 @@ public class GarageService {
         boolean checkedClose = checkedByPerson && action == Action.CLOSE;
         // Casita's own acknowledged open, travelled but not yet checked: a checked close may end it (rule 9).
         Movement travelledOpen = null;
+        DoorDevice.Reading reading = null;
         if (pending != null) {
             if (isDue(pending)) {
                 check(pending, null); // overdue: settle the last movement before anything new
+            } else if (action == Action.CLOSE && pending.action() == Action.OPEN && pending.acknowledged() && !travelled(pending)) {
+                return result(Outcome.BUSY, "The door may still be opening. Give it a few more seconds.");
+            } else if (!checkedClose && action == Action.CLOSE && pending.action() == Action.OPEN && pending.acknowledged()) {
+                // Rule 10: Casita may have seen its open stop. Otherwise say why it waits.
+                try {
+                    reading = readSensor();
+                } catch (DoorException e) {
+                    log.warn("Won't close {}: can't read the door: {}", name, e.getMessage());
+                    return result(Outcome.BUSY, "I can't see the door right now, so I won't touch it.");
+                }
+                if (seenStopped(pending, reading)) {
+                    endSeenStopped(pending);
+                } else if (!reading.open()) {
+                    return result(Outcome.BUSY, "The sensor still says closed, so I can't send a close yet: it hasn't caught up "
+                            + "with the door. Give it a few seconds.");
+                } else {
+                    return result(Outcome.BUSY, "I opened it a moment ago and the sensor hasn't settled yet. Give it a few seconds.");
+                }
             } else if (checkedClose && travelled(pending)) {
                 travelledOpen = pending;
-            } else if (checkedClose && pending.action() == Action.OPEN && pending.acknowledged()) {
-                return result(Outcome.BUSY, "The door may still be opening. Give it a few more seconds.");
             } else {
                 return result(Outcome.BUSY, "Give me a moment, I'm still checking on the door.");
             }
@@ -243,13 +280,14 @@ public class GarageService {
                     + "checked it and tells me it's OK.");
         }
 
-        DoorDevice.Reading reading;
-        try {
-            reading = readSensor();
-        } catch (DoorException e) {
-            log.warn("Won't {} {}: can't read the door: {}", action, name, e.getMessage());
-            record(who, action, Outcome.UNKNOWN);
-            return result(Outcome.UNKNOWN, "I can't see the door right now, so I won't touch it.");
+        if (reading == null) {
+            try {
+                reading = readSensor();
+            } catch (DoorException e) {
+                log.warn("Won't {} {}: can't read the door: {}", action, name, e.getMessage());
+                record(who, action, Outcome.UNKNOWN);
+                return result(Outcome.UNKNOWN, "I can't see the door right now, so I won't touch it.");
+            }
         }
 
         boolean wantOpen = action.wantsOpen();
@@ -315,7 +353,52 @@ public class GarageService {
 
     private void start(Movement m) {
         pending = m;
+        seenOpenAt = null;
         tasks.runAt(dueAt(m), () -> checkScheduled(m.id()));
+        if (m.acknowledged()) watchLater(m);
+    }
+
+    private void watchLater(Movement m) {
+        Instant next = clock.instant().plus(WATCH_EVERY);
+        if (next.isBefore(dueAt(m))) tasks.runAt(next, () -> watch(m.id()));
+    }
+
+    /**
+     * Rule 10: one read while this acknowledged movement is pending, so a change is seen when it happens even if nobody
+     * is asking, until its check is due. A close that reads "closed" is checked at once. An open keeps being read after
+     * its change is seen, so a second change (the wall button reversing it) is seen too. A failed read changes nothing
+     * (the scheduled check decides).
+     */
+    synchronized void watch(long id) {
+        Movement m = pending;
+        if (m == null || m.id() != id || isDue(m)) return;
+        DoorDevice.Reading reading;
+        try {
+            reading = readSensor();
+        } catch (DoorException e) {
+            watchLater(m);
+            return;
+        }
+        if (m.action() == Action.CLOSE && !reading.open()) {
+            check(m, reading);
+            return;
+        }
+        watchLater(m); // an open too, after its change is seen: a second change (a reversal) must not be missed
+    }
+
+    /**
+     * Rule 10 for a pending open: Casita saw the reading leave "closed" during it (the only change since), at least the
+     * travel time ago, and the reading, just read, still says not closed.
+     */
+    private boolean seenStopped(Movement m, DoorDevice.Reading reading) {
+        return m.acknowledged() && m.action() == Action.OPEN && reading.open() && seenOpenAt != null
+                && seenOpenAt.isAfter(m.startedAt()) && onlyItsOwnChange(m) && settledBySight() && !deviceSawARecentChange(reading);
+    }
+
+    /** Ends a pending open that Casita saw stop (rule 10). */
+    private void endSeenStopped(Movement m) {
+        pending = null;
+        record(CASITA, m.action(), Outcome.OPEN_INFERRED);
     }
 
     /** The scheduled check. Does nothing if that movement was already checked. */
@@ -387,6 +470,9 @@ public class GarageService {
             lastSensorChange = clock.instant();
             sawChange = true;
             sensorChanges++;
+            Movement m = pending;
+            seenOpenAt = reading.open() && m != null && m.acknowledged() && m.action() == Action.OPEN
+                    && sensorChanges - m.changesAtStart() == 1 ? lastSensorChange : null;
         }
         return reading;
     }
@@ -419,9 +505,17 @@ public class GarageService {
         return control != DoorControl.OFF && properties.allowRemoteClose() && !held();
     }
 
-    /** True once Casita has seen the sensor's current value for at least the travel time plus the sensor's lag. */
+    /**
+     * True once Casita has seen the sensor's current value for at least the travel time plus the sensor's lag, or (rule 10)
+     * saw its own open move the reading at least the travel time ago.
+     */
     private boolean settled() {
-        return lastSensorChange != null && !clock.instant().isBefore(lastSensorChange.plus(settleTime));
+        return lastSensorChange != null && !clock.instant().isBefore(lastSensorChange.plus(settleTime)) || settledBySight();
+    }
+
+    /** Rule 10: the reading left "closed" during Casita's own open, was seen doing so at least the travel time ago, and hasn't changed since. */
+    private boolean settledBySight() {
+        return seenOpenAt != null && Boolean.TRUE.equals(lastSensorOpen) && !clock.instant().isBefore(seenOpenAt.plus(travelTime));
     }
 
     private Instant dueAt(Movement m) {
