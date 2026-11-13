@@ -94,15 +94,18 @@ class ShortcutCloseApiTest {
         };
     }
 
-    /** Asks for the door's status until it says {@code state}, for at most 10 s. */
+    /**
+     * Asks for the door's status until it says {@code state}, for at most 12 s, once a second: the Shortcut endpoints
+     * allow a client {@link home.casita.security.shortcut.ShortcutRateLimiter#PER_CLIENT} requests per window.
+     */
     private void awaitState(String door, String bearer, String state) throws Exception {
-        Instant deadline = Instant.now().plus(Duration.ofSeconds(10));
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(12));
         while (true) {
             String body = mvc.perform(get("/shortcut/v1/doors/" + door).with(phone()).header("Authorization", bearer))
                     .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
             if (state.equals(JsonPath.read(body, "$.doorState"))) return;
             assertThat(Instant.now()).as(door + " never reached " + state + ": " + body).isBefore(deadline);
-            Thread.sleep(100);
+            Thread.sleep(1000);
         }
     }
 
