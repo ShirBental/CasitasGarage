@@ -72,8 +72,14 @@ public class PasskeySignInSuccessHandler implements AuthenticationSuccessHandler
                 devices.renew(request, response, d);
                 // Face ID just now, on this browser: it may sign itself back in for a while (RememberedSignIns).
                 if (remembered != null && request.isSecure()) {
-                    remembered.issue(binding.member(), binding.credentialId(), binding.nodeId())
-                            .ifPresent(c -> response.addHeader(org.springframework.http.HttpHeaders.SET_COOKIE, c.toString()));
+                    try {
+                        // Bound to the browser's current authorization (the invite that authorized it).
+                        String authorization = store.device(binding.nodeId()).map(SecurityStore.Device::inviteId).orElse(null);
+                        remembered.issue(binding.member(), binding.credentialId(), binding.nodeId(), authorization)
+                                .ifPresent(c -> response.addHeader(org.springframework.http.HttpHeaders.SET_COOKIE, c.toString()));
+                    } catch (StoreUnavailableException e) {
+                        log.warn("No remembered sign-in for {}: security store unavailable", binding.member()); // signed in anyway
+                    }
                 }
             });
         }
@@ -107,6 +113,7 @@ public class PasskeySignInSuccessHandler implements AuthenticationSuccessHandler
         String refusal = decisions.passkeySession(member, binding, device.get());
         if (refusal != null) return refusal;
         session.setAttribute(AccessSession.BINDING, binding);
+        if (remembered != null) session.setAttribute(AccessSession.FACE_ID_UNTIL, remembered.faceIdUntil(decisions.now()));
         return null;
     }
 }

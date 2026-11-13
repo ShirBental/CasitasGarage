@@ -99,7 +99,13 @@ class RememberedSignInTest {
 
     /** What the phone's browser got after its last Face ID sign-in. */
     private Cookie remembered() {
-        return new Cookie(RememberedSignIns.COOKIE, signIns.issue("shir", PASSKEY, TestBrowsers.SHIR_PHONE.nodeId()).orElseThrow().getValue());
+        return rememberedFor("shir", PASSKEY, TestBrowsers.SHIR_PHONE);
+    }
+
+    /** Issued as a Face ID sign-in would issue it: under the browser's current authorization. */
+    private Cookie rememberedFor(String member, String passkey, TestBrowsers.Phone phone) {
+        String authorization = store.device(phone.nodeId()).map(SecurityStore.Device::inviteId).orElseThrow();
+        return new Cookie(RememberedSignIns.COOKIE, signIns.issue(member, passkey, phone.nodeId(), authorization).orElseThrow().getValue());
     }
 
     /** No session (Casita restarted, or the session ended): the browser key and the remembered sign-in only. */
@@ -120,7 +126,7 @@ class RememberedSignInTest {
         MvcResult first = mvc.perform(fromPhone(get("/api/doors"), remembered())).andExpect(status().isOk()).andReturn();
 
         // A new session, and the remembered sign-in renewed (never removed).
-        assertThat(setCookies(first)).anySatisfy(c -> assertThat(c).startsWith(RememberedSignIns.COOKIE + "=v1.").contains("Secure")
+        assertThat(setCookies(first)).anySatisfy(c -> assertThat(c).startsWith(RememberedSignIns.COOKIE + "=v2.").contains("Secure")
                 .contains("HttpOnly"));
         MockHttpSession session = (MockHttpSession) first.getRequest().getSession(false);
         assertThat(session).isNotNull();
@@ -176,8 +182,7 @@ class RememberedSignInTest {
         removesTheRememberedSignIn(mvc.perform(fromPhone(get("/api/doors"), cookie)).andExpect(status().isUnauthorized()));
 
         TestBrowsers.enrollNewPasskey(context, "hubby", "aHViYnlzLWtleQ", TestBrowsers.HUBBY_PHONE);
-        Cookie hubbys = new Cookie(RememberedSignIns.COOKIE,
-                signIns.issue("hubby", "aHViYnlzLWtleQ", TestBrowsers.HUBBY_PHONE.nodeId()).orElseThrow().getValue());
+        Cookie hubbys = rememberedFor("hubby", "aHViYnlzLWtleQ", TestBrowsers.HUBBY_PHONE);
         mvc.perform(get("/api/doors").cookie(hubbys).with(TestBrowsers.from(TestBrowsers.HUBBY_PHONE))).andExpect(status().isOk());
         mvc.perform(delete("/admin/members/hubby").header(LocalAdmin.HEADER, adminSecret())).andExpect(status().isOk());
         mvc.perform(get("/api/doors").cookie(hubbys).with(TestBrowsers.from(TestBrowsers.HUBBY_PHONE))).andExpect(status().isUnauthorized());
@@ -195,21 +200,48 @@ class RememberedSignInTest {
     }
 
     @Test
-    void aBrowserRevokedAndAuthorizedAgainNeverAcceptsACookieFromBefore() throws Exception {
+    void aBrowserRevokedAndAuthorizedAgainInTheSameSecondNeverAcceptsACookieFromBefore() throws Exception {
+        // Regression: revocation, a new invite and a new authorization all within one second of the cookie. The cookie is
+        // bound to the authorization (its invite id), not compared by time, so it doesn't matter how close together they are.
         Cookie old = remembered(); // e.g. the copy that made someone revoke the phone
-        mvc.perform(delete("/admin/devices/" + TestBrowsers.SHIR_PHONE.nodeId()).header(LocalAdmin.HEADER, adminSecret()));
-        Thread.sleep(1100); // the cookie keeps whole seconds
-        TestBrowsers.enrollExistingPasskey(context, "shir", PASSKEY, TestBrowsers.SHIR_PHONE); // a new invite, same browser
+        mvc.perform(delete("/admin/devices/" + TestBrowsers.SHIR_PHONE.nodeId()).header(LocalAdmin.HEADER, adminSecret()))
+                .andExpect(jsonPath("$.revoked").value(true));
+        TestBrowsers.enrollExistingPasskey(context, "shir", PASSKEY, TestBrowsers.SHIR_PHONE); // a new invite, same browser key
+        Cookie fresh = remembered(); // what the next Face ID sign-in on that browser issues
 
         removesTheRememberedSignIn(mvc.perform(fromPhone(get("/api/doors"), old)).andExpect(status().isUnauthorized()));
-        mvc.perform(fromPhone(get("/api/doors"), remembered())).andExpect(status().isOk()); // one issued after Face ID now works
+        mvc.perform(fromPhone(post("/api/doors/ford/open"), old).with(csrf())).andExpect(status().isUnauthorized());
+        mvc.perform(fromPhone(get("/api/doors"), fresh)).andExpect(status().isOk());
+        assertThat(activity.recent(10)).isEmpty();
+    }
+
+    @Test
+    void aFaceIdSessionKeptActiveStillEndsThirtyDaysAfterFaceId() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        assertThat(TestBrowsers.signIn(context, session, "shir", PASSKEY, TestBrowsers.SHIR_PHONE)).isNull();
+        assertThat(session.getAttribute(AccessSession.FACE_ID_UNTIL)).isInstanceOfSatisfying(java.time.Instant.class, until ->
+                assertThat(until).isBetween(java.time.Instant.now().plus(java.time.Duration.ofDays(30)).minusSeconds(60),
+                        java.time.Instant.now().plus(java.time.Duration.ofDays(30)).plusSeconds(60)));
+        mvc.perform(get("/api/doors").session(session).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE))).andExpect(status().isOk());
+
+        session.setAttribute(AccessSession.FACE_ID_UNTIL, java.time.Instant.now().minusSeconds(1)); // day 30, used every day
+        mvc.perform(get("/api/doors").session(session).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE))).andExpect(status().isUnauthorized());
+        assertThat(session.isInvalid()).isTrue();
+    }
+
+    @Test
+    void aRememberedSignInMeansNothingToTheShortcutEndpoints() throws Exception {
+        // /shortcut/** has its own chain that reads no cookie: neither the browser key, the session nor this one.
+        mvc.perform(fromPhone(post("/shortcut/v1/doors/ford/open"), remembered())).andExpect(status().isUnauthorized());
+        mvc.perform(fromPhone(get("/shortcut/v1/doors/ford"), remembered())).andExpect(status().isUnauthorized());
+        assertThat(activity.recent(10)).isEmpty();
     }
 
     @Test
     void aRestoredSessionEndsWhenItsRememberedSignInDoesHoweverOftenItIsUsed() throws Exception {
         MvcResult first = mvc.perform(fromPhone(get("/api/doors"), remembered())).andExpect(status().isOk()).andReturn();
         MockHttpSession session = (MockHttpSession) first.getRequest().getSession(false);
-        session.setAttribute(AccessSession.REMEMBERED_UNTIL, java.time.Instant.now().minusSeconds(1)); // 30 days after Face ID
+        session.setAttribute(AccessSession.FACE_ID_UNTIL, java.time.Instant.now().minusSeconds(1)); // 30 days after Face ID
 
         mvc.perform(get("/api/doors").session(session).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE))).andExpect(status().isUnauthorized());
         assertThat(session.isInvalid()).isTrue();
@@ -228,7 +260,12 @@ class RememberedSignInTest {
         session.setAttribute(AccessSession.REMEMBER_RENEWED, java.time.Instant.now().minus(java.time.Duration.ofDays(2)));
         MvcResult later = mvc.perform(get("/api/doors").session(session).cookie(cookie).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE)))
                 .andExpect(status().isOk()).andReturn();
-        assertThat(setCookies(later)).anySatisfy(c -> assertThat(c).startsWith(RememberedSignIns.COOKIE + "=v1."));
+        String renewed = setCookies(later).stream().filter(c -> c.startsWith(RememberedSignIns.COOKIE + "=v2.")).findFirst().orElseThrow();
+        RememberedSignIns.Claim after = signIns.verify(renewed.substring(renewed.indexOf('=') + 1, renewed.indexOf(';'))).orElseThrow();
+        RememberedSignIns.Claim before = signIns.verify(cookie.getValue()).orElseThrow();
+        assertThat(after.verifiedAt()).isEqualTo(before.verifiedAt());
+        assertThat(after.expiresAt()).isEqualTo(before.expiresAt()); // renewing never moves the 30-day limit
+        assertThat(session.getAttribute(AccessSession.FACE_ID_UNTIL)).isEqualTo(before.expiresAt());
     }
 
     @Test
@@ -271,7 +308,7 @@ class RememberedSignInTest {
 
         context.getBean(PasskeySignInSuccessHandler.class).onAuthenticationSuccess(request, response, auth);
 
-        String issued = response.getHeaders(HttpHeaders.SET_COOKIE).stream().filter(c -> c.startsWith(RememberedSignIns.COOKIE + "=v1.")).findFirst()
+        String issued = response.getHeaders(HttpHeaders.SET_COOKIE).stream().filter(c -> c.startsWith(RememberedSignIns.COOKIE + "=v2.")).findFirst()
                 .orElseThrow();
         String value = issued.substring(issued.indexOf('=') + 1, issued.indexOf(';'));
         assertThat(signIns.verify(value)).get().satisfies(c -> {

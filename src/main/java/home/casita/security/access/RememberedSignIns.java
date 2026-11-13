@@ -44,20 +44,27 @@ import home.casita.security.RememberProperties;
 public final class RememberedSignIns {
 
     public static final String COOKIE = "__Host-casita-signin";
-    private static final String VERSION = "v1";
-    private static final String CONTEXT = "casita-signin-v1:";
+    private static final String VERSION = "v2";
+    private static final String CONTEXT = "casita-signin-v2:";
+    /** With remembered sign-ins off, a passkey session still needs Face ID again after this long. */
+    static final Duration FACE_ID_INTERVAL_WHEN_OFF = Duration.ofDays(30);
     private static final Pattern MEMBER = Pattern.compile("[a-z][a-z0-9-]{0,31}");
     private static final Pattern CREDENTIAL = Pattern.compile("[A-Za-z0-9_-]{1,1400}");
     private static final Pattern NODE = Pattern.compile("b-[0-9a-f]{32}");
+    private static final Pattern AUTHORIZATION = Pattern.compile("[A-Za-z0-9_-]{1,64}");
     /** A cookie claiming a sign-in from the future (beyond clock skew) is refused. */
     private static final Duration SKEW = Duration.ofMinutes(5);
 
     /**
+     * @param authorization the browser's authorization the cookie was issued under: the id of the invite that authorized it
+     *                      ({@code Device.inviteId}). Authorizing a browser again always takes a new invite, so a cookie
+     *                      from before a revocation never matches again, whatever the clocks say.
      * @param verifiedAt when the member last proved themselves with the passkey on this browser
      * @param expiresAt  {@code verifiedAt + max-age}: never moves
      * @param idleUntil  when it lapses if unused
      */
-    public record Claim(String member, String credentialId, String nodeId, Instant verifiedAt, Instant expiresAt, Instant idleUntil) {}
+    public record Claim(String member, String credentialId, String nodeId, String authorization, Instant verifiedAt, Instant expiresAt,
+                        Instant idleUntil) {}
 
     private final byte[] key;
     private final RememberProperties properties;
@@ -73,19 +80,27 @@ public final class RememberedSignIns {
         return properties.enabled();
     }
 
-    /** After a passkey sign-in on this browser: a new remembered sign-in, or empty when they are off. */
-    public Optional<ResponseCookie> issue(String member, String credentialId, String nodeId) {
-        if (!enabled()) return Optional.empty();
+    /**
+     * After a passkey sign-in on this browser: a new remembered sign-in, or empty when they are off or the browser's
+     * authorization has no id to bind to.
+     */
+    public Optional<ResponseCookie> issue(String member, String credentialId, String nodeId, String authorization) {
+        if (!enabled() || authorization == null || !AUTHORIZATION.matcher(authorization).matches()) return Optional.empty();
         Instant now = now();
         Instant expires = now.plus(properties.maxAge());
-        return Optional.of(cookie(new Claim(member, credentialId, nodeId, now, expires, min(now.plus(properties.idle()), expires))));
+        return Optional.of(cookie(new Claim(member, credentialId, nodeId, authorization, now, expires, min(now.plus(properties.idle()), expires))));
+    }
+
+    /** When a session that began with Face ID at {@code signedInAt} must end, however it is used: the 30-day rule. */
+    public Instant faceIdUntil(Instant signedInAt) {
+        return signedInAt.plus(enabled() ? properties.maxAge() : FACE_ID_INTERVAL_WHEN_OFF);
     }
 
     /** After a session was restored from {@code claim}: the same sign-in and expiry, a new idle deadline. */
     public ResponseCookie renew(Claim claim) {
         Instant now = now();
-        return cookie(new Claim(claim.member(), claim.credentialId(), claim.nodeId(), claim.verifiedAt(), claim.expiresAt(),
-                min(now.plus(properties.idle()), claim.expiresAt())));
+        return cookie(new Claim(claim.member(), claim.credentialId(), claim.nodeId(), claim.authorization(), claim.verifiedAt(),
+                claim.expiresAt(), min(now.plus(properties.idle()), claim.expiresAt())));
     }
 
     /**
@@ -106,13 +121,14 @@ public final class RememberedSignIns {
         }
         if (!MessageDigest.isEqual(mac(payload), given)) return Optional.empty();
         String[] f = new String(payload, StandardCharsets.UTF_8).split("\\|", -1);
-        if (f.length != 6 || !MEMBER.matcher(f[0]).matches() || !CREDENTIAL.matcher(f[1]).matches() || !NODE.matcher(f[2]).matches()) {
+        if (f.length != 7 || !MEMBER.matcher(f[0]).matches() || !CREDENTIAL.matcher(f[1]).matches() || !NODE.matcher(f[2]).matches()
+                || !AUTHORIZATION.matcher(f[3]).matches()) {
             return Optional.empty();
         }
         Claim claim;
         try {
-            claim = new Claim(f[0], f[1], f[2], Instant.ofEpochSecond(Long.parseLong(f[3])), Instant.ofEpochSecond(Long.parseLong(f[4])),
-                    Instant.ofEpochSecond(Long.parseLong(f[5])));
+            claim = new Claim(f[0], f[1], f[2], f[3], Instant.ofEpochSecond(Long.parseLong(f[4])), Instant.ofEpochSecond(Long.parseLong(f[5])),
+                    Instant.ofEpochSecond(Long.parseLong(f[6])));
         } catch (NumberFormatException | java.time.DateTimeException e) {
             return Optional.empty();
         }
@@ -131,7 +147,7 @@ public final class RememberedSignIns {
     }
 
     private ResponseCookie cookie(Claim c) {
-        byte[] payload = (c.member() + "|" + c.credentialId() + "|" + c.nodeId() + "|" + c.verifiedAt().getEpochSecond() + "|"
+        byte[] payload = (c.member() + "|" + c.credentialId() + "|" + c.nodeId() + "|" + c.authorization() + "|" + c.verifiedAt().getEpochSecond() + "|"
                 + c.expiresAt().getEpochSecond() + "|" + c.idleUntil().getEpochSecond()).getBytes(StandardCharsets.UTF_8);
         Base64.Encoder b64 = Base64.getUrlEncoder().withoutPadding();
         String value = VERSION + "." + b64.encodeToString(payload) + "." + b64.encodeToString(mac(payload));

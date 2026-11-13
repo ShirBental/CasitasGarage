@@ -137,12 +137,15 @@ browser, not on every visit and not after a restart:
   it lapses after `idle` (14 days) unused. Each use re-issues the cookie with a new idle deadline. Max 90 days.
   `max-age: 0` turns it off (every session starts with Face ID, as before).
 - **Revocation is immediate:** `revoke-device`, `revoke-passkey` and `revoke-member` refuse the next request, remove the
-  cookie, and leave the browser on the sign-in page. A browser revoked and later authorized again through a new invite
-  never accepts a cookie issued before that new authorization (a copy that prompted the revocation stays dead). Signing
+  cookie, and leave the browser on the sign-in page. Each cookie is bound to the browser's authorization (the id of the invite
+  that authorized it). Authorizing a revoked browser again always takes a new invite, so a cookie issued under the old
+  authorization (a copy that prompted the revocation) never works again: an exact match of ids, not a comparison of
+  times, so it holds however close together the revocation, the new invite and the cookie were. Signing
   out in the app removes the cookie **from that browser only**: a copy elsewhere keeps working until it expires or
   something is revoked. After a suspected theft, revoke the browser (or delete `remember.key`), don't just sign out.
-- **A restored session never outlives its remembered sign-in:** 30 days after the last Face ID it ends, however often
-  it is used, and the next visit needs Face ID. A browser used daily within one session has its cookie's idle deadline
+- **No session outlives 30 days after its Face ID:** a session signed in with Face ID, or restored from a remembered
+  sign-in, ends at the last Face ID + `max-age` however often it is used (with remembering off: 30 days), and the next
+  visit needs Face ID. Renewing the cookie never moves that limit. A browser used daily within one session has its cookie's idle deadline
   renewed once a day.
 - **Kill switch for every browser at once:** delete `/var/lib/casita/remember.key` and restart Casita. Everyone then
   signs in with Face ID once; browser keys, passkeys and enrollments are untouched.

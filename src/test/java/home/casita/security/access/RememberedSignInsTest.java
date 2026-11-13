@@ -22,6 +22,7 @@ class RememberedSignInsTest {
 
     private static final String NODE = "b-5a17000000000000000000000000000a";
     private static final String CREDENTIAL = "c2hpcnMtcGFzc2tleQ";
+    private static final String AUTH = "i-1a2b3c4d";
 
     @TempDir
     Path dir;
@@ -39,12 +40,12 @@ class RememberedSignInsTest {
     }
 
     private String issue() {
-        return signIns.issue("shir", CREDENTIAL, NODE).orElseThrow().getValue();
+        return signIns.issue("shir", CREDENTIAL, NODE, AUTH).orElseThrow().getValue();
     }
 
     @Test
     void aSignInIsIssuedAsAHostOnlySecureHttpOnlyCookieAndVerifiesToWhatItClaims() throws Exception {
-        ResponseCookie cookie = signIns.issue("shir", CREDENTIAL, NODE).orElseThrow();
+        ResponseCookie cookie = signIns.issue("shir", CREDENTIAL, NODE, AUTH).orElseThrow();
 
         assertThat(cookie.getName()).isEqualTo("__Host-casita-signin");
         assertThat(cookie.isSecure()).isTrue();
@@ -57,6 +58,7 @@ class RememberedSignInsTest {
             assertThat(c.member()).isEqualTo("shir");
             assertThat(c.credentialId()).isEqualTo(CREDENTIAL);
             assertThat(c.nodeId()).isEqualTo(NODE);
+            assertThat(c.authorization()).isEqualTo(AUTH);
             assertThat(c.verifiedAt()).isEqualTo(clock.instant());
             assertThat(c.expiresAt()).isEqualTo(clock.instant().plus(Duration.ofDays(30)));
         });
@@ -72,7 +74,9 @@ class RememberedSignInsTest {
 
         assertThat(signIns.verify(parts[0] + "." + hubby + "." + parts[2])).isEmpty();
         assertThat(signIns.verify(value.substring(0, value.length() - 2) + "AA")).isEmpty();
-        assertThat(signIns.verify("v2." + parts[1] + "." + parts[2])).isEmpty();
+        assertThat(signIns.verify("v1." + parts[1] + "." + parts[2])).isEmpty(); // the earlier format, unsigned for v2
+        String other = Base64.getUrlEncoder().withoutPadding().encodeToString(payload.replace("|" + AUTH + "|", "|i-99999999|").getBytes(StandardCharsets.UTF_8));
+        assertThat(signIns.verify(parts[0] + "." + other + "." + parts[2])).isEmpty(); // another authorization: the MAC fails
         for (String junk : new String[] {null, "", "v1", "v1..", "v1.!!.!!", "x".repeat(5000)}) assertThat(signIns.verify(junk)).isEmpty();
 
         Files.delete(dir.resolve("remember.key")); // the kill switch: a new key, so every cookie issued before is refused
@@ -129,7 +133,7 @@ class RememberedSignInsTest {
         String value = issue();
         RememberedSignIns off = with(Duration.ZERO, Duration.ZERO);
         assertThat(off.enabled()).isFalse();
-        assertThat(off.issue("shir", CREDENTIAL, NODE)).isEmpty();
+        assertThat(off.issue("shir", CREDENTIAL, NODE, AUTH)).isEmpty();
         assertThat(off.verify(value)).isEmpty();
     }
 
@@ -149,6 +153,19 @@ class RememberedSignInsTest {
         assertThatThrownBy(() -> new RememberProperties(Duration.ofDays(7), Duration.ZERO)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new RememberProperties(Duration.ofDays(-1), Duration.ZERO)).isInstanceOf(IllegalArgumentException.class);
         assertThat(new RememberProperties(Duration.ZERO, Duration.ZERO).enabled()).isFalse();
+    }
+
+    @Test
+    void noAuthorizationToBindToMeansNoCookie() {
+        assertThat(signIns.issue("shir", CREDENTIAL, NODE, null)).isEmpty();
+        assertThat(signIns.issue("shir", CREDENTIAL, NODE, "not|safe")).isEmpty();
+    }
+
+    @Test
+    void faceIdIsNeededEveryMaxAgeAndEvery30DaysWhenRememberingIsOff() {
+        assertThat(signIns.faceIdUntil(clock.instant())).isEqualTo(clock.instant().plus(Duration.ofDays(30)));
+        assertThat(with(Duration.ofDays(7), Duration.ofDays(7)).faceIdUntil(clock.instant())).isEqualTo(clock.instant().plus(Duration.ofDays(7)));
+        assertThat(with(Duration.ZERO, Duration.ZERO).faceIdUntil(clock.instant())).isEqualTo(clock.instant().plus(Duration.ofDays(30)));
     }
 
     @Test

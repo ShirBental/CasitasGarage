@@ -115,11 +115,12 @@ public class RememberedSignInFilter extends OncePerRequestFilter {
                 if (member.isEmpty()) {
                     refusal = "member revoked";
                 } else {
-                    // A browser revoked and later authorized again (a new invite) starts over: a cookie from before
-                    // its current authorization, such as a copy that prompted the revocation, is never accepted.
-                    java.time.Instant authorizedAt = store.device(claim.nodeId()).map(SecurityStore.Device::authorizedAt).orElse(null);
-                    // (Whole seconds: the cookie keeps seconds.)
-                    if (authorizedAt == null || claim.verifiedAt().isBefore(authorizedAt.truncatedTo(java.time.temporal.ChronoUnit.SECONDS))) refusal = "issued before the browser's current authorization";
+                    // A browser revoked and later authorized again (always through a new invite) starts over: a cookie
+                    // issued under an earlier authorization, such as a copy that prompted the revocation, never matches.
+                    // An exact comparison of ids, not of times, so nothing depends on clocks or on how close together
+                    // the revocation, the new authorization and the cookie were.
+                    String current = store.device(claim.nodeId()).map(SecurityStore.Device::inviteId).orElse(null);
+                    if (current == null || !current.equals(claim.authorization())) refusal = "issued under an earlier authorization of this browser";
                 }
             } catch (StoreUnavailableException e) {
                 refusal = AccessDecisions.STORE_UNAVAILABLE;
@@ -138,7 +139,7 @@ public class RememberedSignInFilter extends OncePerRequestFilter {
         if (request.getSession(false) != null) request.changeSessionId();
         HttpSession session = request.getSession(true);
         session.setAttribute(AccessSession.BINDING, binding);
-        session.setAttribute(AccessSession.REMEMBERED_UNTIL, claim.expiresAt());
+        session.setAttribute(AccessSession.FACE_ID_UNTIL, claim.expiresAt());
         session.setAttribute(AccessSession.REMEMBER_RENEWED, signIns.now());
         SecurityStore.Member m = member.get();
         WebAuthnAuthentication auth = new WebAuthnAuthentication(

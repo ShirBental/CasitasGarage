@@ -85,9 +85,9 @@ public class AccessCheckFilter extends OncePerRequestFilter {
         }
         if (!(auth instanceof WebAuthnAuthentication)) return "not a passkey sign-in";
         AccessSession.Binding binding = session.getAttribute(AccessSession.BINDING) instanceof AccessSession.Binding b ? b : null;
-        // A session restored without Face ID never outlives its remembered sign-in, however often it is used.
-        if (session.getAttribute(AccessSession.REMEMBERED_UNTIL) instanceof java.time.Instant until && !decisions.now().isBefore(until)) {
-            return "remembered sign-in expired: Face ID needed";
+        // Face ID at least every 30 days: no session outlives that, however often it is used or renewed.
+        if (session.getAttribute(AccessSession.FACE_ID_UNTIL) instanceof java.time.Instant until && !decisions.now().isBefore(until)) {
+            return "last Face ID too long ago: Face ID needed";
         }
         return decisions.passkeySession(auth.getName(), binding, device.get());
     }
