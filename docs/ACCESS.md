@@ -109,7 +109,7 @@ takes effect on the next request of every affected session, and is in Firestore 
 ## Siri and Shortcuts
 
 Shortcuts can't use passkeys or the browser key, so they get **Shortcut tokens**: per phone, hashed, kept in Firestore
-with the rest of the security state, revocable, each opening one door (Ford or Toyota) and nothing else, on their own `/shortcut/**` chain that never reads a cookie or session (`docs/SHORTCUTS.md`). A token is a
+with the rest of the security state, revocable, each allowing one action (open or close) on one door (Ford or Toyota) and nothing else, never "I've looked" (`checked`), on their own `/shortcut/**` chain that never reads a cookie or session (`docs/SHORTCUTS.md`). A token is a
 bearer secret and proves nothing about who holds the phone or whether it is unlocked.
 
 ```bash

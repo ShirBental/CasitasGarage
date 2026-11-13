@@ -100,6 +100,14 @@ class ShortcutApiTest {
         return JsonPath.read(body, "$.token");
     }
 
+    private String newToken(String member, String door, String action) throws Exception {
+        String body = mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, adminSecret())
+                        .param("member", member).param("label", member + "'s iPhone").param("door", door).param("action", action))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.action").value(action.toUpperCase(java.util.Locale.ROOT)))
+                .andReturn().getResponse().getContentAsString();
+        return JsonPath.read(body, "$.token");
+    }
+
     private String idOf(String body) {
         return JsonPath.read(body, "$.id");
     }
@@ -204,6 +212,95 @@ class ShortcutApiTest {
         mvc.perform(post("/shortcut/v1/doors/garage/open").with(phone()).header("Authorization", bearer)).andExpect(status().isForbidden());
         mvc.perform(get("/shortcut/v1/doors/toyota").with(phone()).header("Authorization", bearer)).andExpect(status().isForbidden());
         assertThat(activity.recent(10)).isEmpty();
+    }
+
+    /* ---------- close ---------- */
+
+    @Test
+    void aTokenMadeWithoutAnActionOpensAndCanNeverClose() throws Exception {
+        // Tokens from before close existed were all made this way: they stay open-only.
+        String token = newToken("shir");
+        String list = mvc.perform(get("/admin/shortcut-tokens").header(LocalAdmin.HEADER, adminSecret()))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(JsonPath.<java.util.List<String>>read(list, "$[*].action")).containsExactly("OPEN");
+        mvc.perform(post("/shortcut/v1/doors/ford/close").with(phone()).header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden());
+        assertThat(activity.recent(10)).isEmpty();
+    }
+
+    @Test
+    void aCloseTokenClosesItsOwnDoorOnlyAndNeverOpens() throws Exception {
+        String bearer = "Bearer " + newToken("shir", "toyota", "close");
+
+        mvc.perform(post("/shortcut/v1/doors/toyota/open").with(phone()).header("Authorization", bearer)).andExpect(status().isForbidden());
+        mvc.perform(post("/shortcut/v1/doors/ford/close").with(phone()).header("Authorization", bearer)).andExpect(status().isForbidden());
+        mvc.perform(post("/shortcut/v1/doors/toyota/resume").with(phone()).header("Authorization", bearer)).andExpect(status().isForbidden());
+        mvc.perform(get("/shortcut/v1/doors/ford").with(phone()).header("Authorization", bearer)).andExpect(status().isForbidden());
+        assertThat(activity.recent(10)).isEmpty();
+        mvc.perform(get("/shortcut/v1/doors/toyota").with(phone()).header("Authorization", bearer)).andExpect(status().isOk());
+    }
+
+    @Test
+    void aCloseOfADoorTheSensorSaysIsClosedSendsNothingAndSaysWhy() throws Exception {
+        String bearer = "Bearer " + newToken("shir", "ford", "close");
+
+        mvc.perform(post("/shortcut/v1/doors/ford/close").with(phone()).header("Authorization", bearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value("already"))
+                .andExpect(jsonPath("$.outcome").value("ALREADY"))
+                .andExpect(jsonPath("$.speak").value(org.hamcrest.Matchers.containsString("sensor says it's closed, so I didn't send anything")))
+                .andExpect(jsonPath("$.speak").value(org.hamcrest.Matchers.containsString("hasn't caught up")));
+    }
+
+    @Test
+    void aCloseRightAfterAnOpenIsRefusedWithAReasonAndNothingIsSent() throws Exception {
+        String open = newToken("shir", "ford", "open");
+        String close = newToken("shir", "ford", "close");
+        mvc.perform(open(open)).andExpect(status().isAccepted());
+
+        mvc.perform(post("/shortcut/v1/doors/ford/close").with(phone()).header("Authorization", "Bearer " + close))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.result").value("refused"))
+                .andExpect(jsonPath("$.outcome").value("BUSY"))
+                .andExpect(jsonPath("$.speak").value(org.hamcrest.Matchers.startsWith("Practice door, not the real one. Ford: ")))
+                .andExpect(jsonPath("$.speak").value(org.hamcrest.Matchers.endsWith("I didn't send anything.")));
+        assertThat(activity.recent(10)).extracting(e -> e.action()).containsOnly(home.casita.garage.Action.OPEN);
+    }
+
+    @Test
+    void aShortcutCanNeverSayItLookedAtTheDoor() throws Exception {
+        String close = newToken("shir", "ford", "close");
+        String open = newToken("shir", "ford", "open");
+        for (String query : new String[] {"checked=true", "checked=false", "checked="}) {
+            mvc.perform(post("/shortcut/v1/doors/ford/close?" + query).with(phone()).header("Authorization", "Bearer " + close))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error").value("checked-not-allowed"));
+            mvc.perform(post("/shortcut/v1/doors/ford/open?" + query).with(phone()).header("Authorization", "Bearer " + open))
+                    .andExpect(status().isBadRequest());
+        }
+        mvc.perform(post("/shortcut/v1/doors/ford/close").with(phone()).header("Authorization", "Bearer " + close).param("checked", "true"))
+                .andExpect(status().isBadRequest());
+        assertThat(activity.recent(10)).isEmpty();
+    }
+
+    @Test
+    void onePhoneHasFourTokensEachRevokedOnItsOwn() throws Exception {
+        java.util.Map<String, String> tokens = new java.util.LinkedHashMap<>();
+        for (String door : new String[] {"ford", "toyota"}) {
+            for (String action : new String[] {"open", "close"}) tokens.put(door + " " + action, newToken("shir", door, action));
+        }
+        String list = mvc.perform(get("/admin/shortcut-tokens").header(LocalAdmin.HEADER, adminSecret()))
+                .andReturn().getResponse().getContentAsString();
+        String fordClose = JsonPath.<java.util.List<String>>read(list, "$[?(@.door == 'ford' && @.action == 'CLOSE')].id").get(0);
+        mvc.perform(delete("/admin/shortcut-tokens/" + fordClose).header(LocalAdmin.HEADER, adminSecret())).andExpect(status().isOk());
+
+        mvc.perform(post("/shortcut/v1/doors/ford/close").with(phone()).header("Authorization", "Bearer " + tokens.get("ford close")))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(open(tokens.get("ford open"))).andExpect(status().isAccepted());
+        mvc.perform(post("/shortcut/v1/doors/toyota/close").with(phone()).header("Authorization", "Bearer " + tokens.get("toyota close")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.outcome").value("ALREADY"));
+        mvc.perform(post("/shortcut/v1/doors/toyota/open").with(phone()).header("Authorization", "Bearer " + tokens.get("toyota open")))
+                .andExpect(status().isAccepted());
     }
 
     /* ---------- who may ---------- */
@@ -369,6 +466,10 @@ class ShortcutApiTest {
                 .param("door", "ford,toyota")).andExpect(status().isBadRequest());
         mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "shir").param("label", "x")
                 .param("days", "366")).andExpect(status().isBadRequest());
+        for (String action : new String[] {"resume", "open,close", "OPEN_AND_CLOSE", "both"}) {
+            mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "shir").param("label", "x")
+                    .param("action", action)).andExpect(status().isBadRequest());
+        }
         mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "shir").param("label", "x")
                 .param("days", "0")).andExpect(status().isBadRequest());
         mvc.perform(post("/admin/shortcut-tokens").header(LocalAdmin.HEADER, admin).param("member", "shir").param("label", " "))

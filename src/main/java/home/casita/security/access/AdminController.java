@@ -144,12 +144,13 @@ class AdminController {
     /* ---------- Shortcut tokens (docs/SHORTCUTS.md) ---------- */
 
     /**
-     * A new Shortcut token for one member's device: open one door ({@code ford}, the default, or {@code toyota}), nothing else. The answer is the only place the
+     * A new Shortcut token for one member's device: one action ({@code open}, the default, or {@code close}) on one door ({@code ford}, the default, or {@code toyota}), nothing else. The answer is the only place the
      * token ever appears: it isn't logged or kept (only its hash is). Copy it into the Shortcut, then clear the terminal.
      */
     @PostMapping("/shortcut-tokens")
     Map<String, Object> createShortcutToken(@RequestParam String member, @RequestParam String label,
                                             @RequestParam(defaultValue = "ford") String door,
+                                            @RequestParam(defaultValue = "open") String action,
                                             @RequestParam(defaultValue = "180") int days) {
         activeMember(member);
         String clean = cleanLabel(label);
@@ -157,12 +158,17 @@ class AdminController {
         if (!ShortcutTokens.DOORS.contains(key)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "door: a Shortcut token can be for " + ShortcutTokens.DOORS + " only");
         }
+        Action allowed = switch (action.strip().toLowerCase(java.util.Locale.ROOT)) {
+            case "open" -> Action.OPEN;
+            case "close" -> Action.CLOSE;
+            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "action: a Shortcut token can open or close, one per token");
+        };
         if (days < 1 || days > ShortcutTokens.MAX_LIFETIME.toDays()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "days: 1 to " + ShortcutTokens.MAX_LIFETIME.toDays());
         }
         ShortcutTokens.Created created;
         try {
-            created = shortcutTokens.create(member, clean, key, Action.OPEN, Duration.ofDays(days));
+            created = shortcutTokens.create(member, clean, key, allowed, Duration.ofDays(days));
         } catch (IllegalStateException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage() + ": nothing was created");
         }
