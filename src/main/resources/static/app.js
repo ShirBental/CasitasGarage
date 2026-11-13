@@ -8,7 +8,7 @@
   const FAST_AFTER_COMMAND_MS = 30000;   // poll every second this long after a command (poller.js)
   const COMMAND_TIMEOUT_MS = 10000;
   const CONFIRM_FRESH_MS = 15000;        // "I've looked at the door" counts only if answered within this
-  const CHECKS = ["CLOSED_CONFIRMED", "OPEN_INFERRED", "STUCK", "LOST"];
+  const CHECKS = ["CLOSED_CONFIRMED", "OPEN_INFERRED", "STUCK", "LOST", "SUPERSEDED"];
   const MOVING = ["OPENING", "CLOSING", "CHECKING"];
 
   let doors = null;               // /api/doors

@@ -244,10 +244,13 @@ and the rules in section 5 assume the worst case:
    opener or MSG100 warns (beeps or flashes) before a close it can't see.
 8. **Which client failures guarantee nothing was sent.** Only those may raise
    `DoorCommandRejectedException`. Everything else must stay an unknown outcome.
-9. **Before `settle-by-sight` (rule 10) for a door** (off by default): its reading never leaves "closed" later
-   than the door is fully open (the longest change − press is shorter than the shortest stop − press), a press while
-   opening stops the door rather than reversing it, and for Casita's own command, motion never starts before the
-   acknowledgement and the reading never changes before motion (3 and 4 above). docs/DOOR_TIMING.md, "Without a look".
+9. **Rules 9 and 10 (the close at travel time, and its confirmation):**
+   - every supervised run stops within the configured travel time;
+   - a press while opening stops or reverses the door (either is detected and reported);
+   - the reading never reports "closed" more than `sensorLag` late;
+   - the opener's warning before a remote close works (7 above).
+
+   docs/DOOR_TIMING.md, "Plausible ways it goes wrong"
 
 ## 7. Activity and notifications
 

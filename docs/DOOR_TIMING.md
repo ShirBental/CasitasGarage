@@ -2,8 +2,9 @@
 
 Neither door's travel time has been measured with a stopwatch yet (estimates range from 5–10 s to the 20 s Ford was once
 watched for). Casita used to refuse **Close** for about 30 s after
-an **Open**, even with someone standing at the garage looking at a fully open, stopped door. This is why, what changed,
-and what is still deliberately refused.
+an **Open**, even with someone standing at the garage looking at a fully open, stopped door, and Siri had the same wait.
+This is why, what changed, which restrictions protect against real hazards and which only against wrong outcomes, and
+what is still refused.
 
 ## Root cause
 
@@ -37,161 +38,155 @@ changes how often it asks.
 
 ## What changed
 
-1. **`verify-grace` defaults to 0 s** (application.yml and `GarageProperties`; PR #13). The check is at travel time +
-   sensor lag.
-2. **Travel time is whatever each door is measured at**, with `casita-door-watch` and a stopwatch, before it is set in
-   production (deploy/watson/LIVE_DOORS.md, step 4). No value is assumed; 10 s below is only an example. Live mode still refuses to start without each door's own
-   measured `travel-times` and `sensor-lags`.
-3. **"I've checked the door" (rule 9 in `GarageService`).** The wait is now treated as two parts:
-   `travelTime` (the door may still be **moving**: never skipped) and `sensorLag` (the door has stopped but the
-   **report** may be late: a person looking at the door can stand in for it). From travel time on, the door's status
-   has `canCloseIfChecked: true`, and the app shows **Close** with the note "Waiting for the sensor. At the garage?
-   Look, then close." Tapping it asks: *"Look at the Ford door. Is it all the way up and stopped, with the doorway clear?
-   Only close it if you can see it."* Confirming sends `POST /api/doors/{door}/close?checked=true` (the older Ford-only `POST /api/close` takes the same parameter, under the same rules).
+1. **`verify-grace` (2 s) now only delays a movement's check** (confirming a close, inferring an open), never the next
+   command.
+2. **Travel time is whatever each door is measured at** (deploy/watson/LIVE_DOORS.md step 4; no value is assumed, 10 s
+   below is an example). Live mode still refuses to start without each door's measured `travel-times` and `sensor-lags`.
+3. **The opposite command waits for the door's travel, not the sensor's delay (rule 9).** After Casita's own
+   acknowledged open, Close (the app's button, from anywhere, or Siri) works from `travelTime` after the command. No
+   look is needed. The app's "I've checked the door" still exists and is recorded (`CHECKED`), but it no longer changes
+   any timing, so the app now just shows **Close**.
+4. **A close succeeds only if the door stays closed (rule 10).** Casita reads the sensor every 2 s while its own
+   command is pending, with or without anyone asking. A close that reads "closed" lets an Open go at once, but stays
+   "closing" in the app and in Siri's answers. It is recorded as `CLOSED_CONFIRMED`, and the family told "All tucked
+   in", only at its check (`travelTime + sensorLag + verify-grace` after the command) if the reading still says "closed".
+   - A reading back at "not closed" before then ends it `STUCK`: held, with "closed, then opened again".
+   - An Open sent before then ends it `SUPERSEDED`: not confirmed, and nobody is told it closed.
 
-A checked close goes through only when **all** of these hold, checked on the server:
+## Hazards versus wrong outcomes
 
-| Condition | Why |
-|---|---|
-| The door's commands are on, closing from the app is allowed, nothing is held after a stuck or lost move | Rules 7 and 8 unchanged |
-| The sensor can be read right now, and reads **not closed** | The person's word never overrides a reading. A reading still at "closed" (the sensor hasn't caught up with the open) refuses: the opener itself may think the door is closed and could take a close as a button press |
-| No command of unknown outcome is pending (`UNCONFIRMED`) | It could still reach the opener late |
-| Casita's own acknowledged open was sent **at least `travelTime` ago** and the only change Casita has seen since is the one it caused; or Casita **saw** the door change to "not closed" (wall button, remote) at least `travelTime` ago | Any movement Casita can know about has finished. A wall-button reversal during the open (closed again, then opened again) is refused until the open's own check, then counts from the new "not closed". Before that, even a checked close is `BUSY` |
-| Not right after a restart or a resume | Casita didn't see that door open, and a command of unknown fate from before could still land: the check doesn't shorten the wait there (travel + lag, then an ordinary close) |
-| The opener doesn't report a change of its reading less than `travelTime` ago (when it reports a change time; ours reports none, `lmTime` 0) | A change Casita missed between two reads. Used only to refuse |
-| The person answered the app's question within 15 s | A dialog left open says nothing about the door now; the app asks for a fresh look instead (client side) |
-| No other close is pending | One movement at a time; a second checked close is `BUSY` |
+| Restriction | What it prevents | Kind |
+|---|---|---|
+| The opener's photo eyes and auto-reverse (the opener's, untouched) | Closing onto a person, a pet or a car | **Physical hazard** |
+| No command against the reported position (rule 2): no close while it reads "closed", no open while "not closed" | The command acting as a button press: a door moving the wrong way | Wrong outcome. It becomes a hazard only where the opener's own protections don't apply, i.e. never on a close the photo eyes see |
+| Commands off per door, remote close off (rules 7, 8) | Any remote movement, as configured | Operator choice |
+| One movement at a time, duplicates and concurrent commands refused (rule 3) | A second press stopping or reversing the first | Reliability |
+| No close before `travelTime` after the last movement Casita knows of (rule 9) | A close reaching a door still moving: it stops or reverses | Reliability |
+| After a restart or resume: the full `travelTime + sensorLag` | A command of unknown fate from before landing late | Reliability |
+| Unknown outcomes never retried, checked by the sensor (rule 4) | A double press | Reliability |
+| Hold after `STUCK` or `LOST` until someone resumes (rule 6) | Moving a door nobody has checked after it didn't do what it was told (an obstruction, an auto-reverse) | **Physical hazard** (repeating a close onto an obstruction) and reliability |
+| A close confirmed only at its check, if still "closed" (rule 10) | Reporting a failed, stopped or reversed close as closed | Reporting accuracy |
+| The opener's warning (beep, flash) before an unattended close (the opener's; not yet verified on ours) | A silent remote close nobody nearby expects | **Physical hazard** if missing: a hardware check |
 
-When it goes through: the pending open is closed out as `OPEN_INFERRED` (its scheduled check then does nothing), the
-person's check is recorded as `CHECKED` under their name, then the close as `MOVING`, and the close is judged exactly
-as before: `CLOSED_CONFIRMED` when the sensor reads closed, `STUCK` (and held) if it doesn't within travel + lag. The
-command still passes `MerossDoor`'s own re-read just before sending. `OPEN_INFERRED` and `CHECKED` are recorded before
-the close is sent: if the send then fails (`ERROR`, or `UNCONFIRMED`), the history shows the check followed by that
-outcome, and an unchecked close still waits for the open's travel + lag. A checked close of a door that has already
-settled is an ordinary close and records no `CHECKED`.
-
-Without a check (a phone away from the garage, a Shortcut), Close waits for the open's check at travel + lag +
-`verify-grace` (0 s as shipped). Rule 10 below can shorten that only for a door it is switched on for, and it is off for
-both doors.
+What was dropped: the `sensorLag` wait before a close after Casita's own open. It protected against nothing that moves
+the door: the report is late, the door is not. It only made a stop or reversal from an unseen cause less likely in the
+first seconds, and those are reliability problems that rule 10 now detects.
 
 ## The user's scenario, second by second
 
-Someone at the garage opens a door from the app at 0 s. The door stops at about 8 s. Travel time is configured at 10 s and the sensor lag at 25 s (`GarageServiceTest`, "the user's scenario"):
+A door opened by Casita at 0 s. Travel time 10 s, sensor lag 25 s (`GarageServiceTest`, "Siri and the app from away"):
 
-| Meross reading | Close (after looking) works at | Before this change |
+| Meross reading | Close (Siri, or the app) works at | Before |
 |---|---|---|
-| Changes to not closed within a few seconds (as Ford's did) | **10 s**, the travel time | 37 s (10 + 25 + 2) |
-| Still "closed" at 25 s (as Toyota's was once seen) | **25 s**, the moment the reading changes | 37 s |
-| Travel time left at the old 22 s | 22 s | 22 + lag + 2 s |
+| Leaves "closed" within a few seconds (as Ford's did) | **10 s**: the travel time | 37 s (10 + 25 + 2) |
+| Still "closed" at 25 s (as Toyota's was once seen) | **25 s**: the moment the reading changes | 37 s |
+| The wall button reverses it during the open | the open's check (35 s), or later if the newest change was less than 10 s before | 37 s or later |
+| After a restart (Casita didn't see it open) | 35 s after Casita first read it | the same |
 
-So the wait becomes the **travel time** when Meross reports promptly. When Meross is stale, the wait is however long it stays stale: nothing safe can be done sooner with this sensor (below).
+After a close that reads "closed" at 9 s, an Open works at once (the close is then `SUPERSEDED`, not confirmed).
 
-## Without a look (Siri, or the app from away): rule 10, off by default
+## Plausible ways it goes wrong, and what Casita reports
 
-**What ships:** a close without a look (Siri, or the app from away) waits for the open's check at **travel + lag**, for
-both doors. That is the conservative wait, kept because a closed/not-closed sensor can't prove a door has stopped
-(below). Siri's close follows exactly the same rules as the app's Close button.
+| What happens | Mechanism | What Casita does | Hazard? |
+|---|---|---|---|
+| Travel time set too short | The close at "travel time" reaches a door still opening: a press that stops or reverses it | The close's check reads "not closed": `STUCK`, held, "didn't close" (`LiveDoorsTest`, understated travel time) | No: the door stops or goes back up. Fix: measure it |
+| Wall button or remote during an open | A second movement | If Casita sees it (the watch reads every 2 s), no close until that movement has had its travel time. If it happens between two reads and never reaches "closed", it can't be seen: the close may then stop or reverse it, and the check reports `STUCK` | No |
+| Obstruction during a close | The opener's photo eyes and auto-reverse send it back up | The reading never says "closed": `STUCK`, held, "didn't close" | Handled by the opener |
+| Auto-reverse at touch-down | "Closed" for a moment, then "not closed" | `STUCK` at once, held, "closed, then opened again". Never "tucked in" | Handled by the opener |
+| Reading stale at "closed" when Casita opens (Tony's B1) | The door was really up (wall button), so Casita's open is a press that closes it; the reading's catch-up looks like the open's own change; Siri's close is then a press that opens it again | The reading then shows "closed" (late) and "not closed" again: `STUCK`, held, "closed, then opened again". Never confirmed closed (`aStaleClosedReadingWhenTheOpenWasSentIsCaughtNotReportedClosed`); an Open in between ends the close `SUPERSEDED`, not closed | The first step is an unattended close started by an "open": a hazard only if the opener doesn't warn then (hardware check) |
+| An Open while a close reads "closed" but isn't confirmed | The door may be reversing at touch-down | The close ends `SUPERSEDED` (never "closed"); the Open is a new movement, checked on its own | No |
+| "Closed" reported later than the measured lag | A slower sensor than measured | `STUCK` at the check (a false alarm, never a false "closed"). Fix: measure the lag again | No |
+| Lost acknowledgement | The command may still land late | `UNCONFIRMED`: no opposite command until its check, then counted from when Casita saw the door change | No |
+| Two Siri requests at once, or Siri and the app | — | One command; the rest `BUSY` | No |
 
-**Settle by sight (off; `casita.garage.settle-by-sight`, per door; Ford or Toyota only, anything else stops Casita
-from starting).** When switched on for a door, Casita reads its sensor every 2 s (`GarageService.WATCH_EVERY`) while its
-own acknowledged open is pending, until the check is due, even with nobody asking. It skips a read when the door was
-read less than 2 s before. If it sees the
-reading leave "closed" during its own open, and that is the only change since the open, the open counts as settled one
-travel time after that sighting, instead of travel + lag after the command.
+## What `checked=true` is now
 
-| Close **without** a look, travel 10 s, lag 25 s | Off (shipped) | On |
-|---|---|---|
-| Reading changes at 3 s | 37 s, then 35 s with no grace: the open's check | 13–15 s: seen + travel |
-| Reading still "closed" until 25 s | the open's check | 35 s: seen + travel |
-| A second change during the open (wall-button reversal) | the open's check, then the newest change + travel + lag | the same |
-| The open's outcome is unknown (`UNCONFIRMED`) | the full wait | the same |
+The member saying "I looked". It is recorded with their name (`CHECKED`) when it came with a close that rule 9 allowed
+before the door settled. It changes no timing and proves nothing about presence. Shortcuts can't send it (400).
 
-**Why it is off: what the sensor can't tell (Tony's review).**
-- The bound itself holds: anything Casita's signal starts begins no later than the acknowledgement, so it has stopped one
-  travel time after any later sighting.
-- But the sighting may not be the open's own change. Say the door is really up (wall button) while the reading is stale
-  at "closed". Then Casita's open is a press that closes it. The reading's late catch-up to "not closed" looks exactly
-  like the open's own change. A close at seen + travel then reaches a closed door that the opener thinks is open: it
-  opens it, and the late "closed" reading that follows would be recorded as a confirmed close. With the full wait, the
-  open's check at travel + lag sees the mismatch instead: `STUCK`, held, and the family told.
-- A reversal by the wall button that doesn't pass through "closed" is invisible to every rule. One that does is seen
-  only after the closing edge's lag (up to `sensorLag`). Inside seen + travel that gap matters.
+## Exactly when Close is allowed (app and Siri alike)
 
-**What a door needs before it may be switched on** (Shir's approval; release readiness, section 6):
-1. Its reading never leaves "closed" later than the door is fully open: over every supervised run, the longest
-   (change − press) is shorter than the shortest (stop − press). Then a stale "closed" with the door up can't happen.
-   Toyota, as observed (25 s stale), fails this.
-2. A press while it is opening **stops** it (not reverses it).
-3. For Casita's own command (an app open): the times of command, first motion and reading change. Motion never starts
-   before the acknowledgement (DESIGN.md hardware prerequisites 3 and 4), and the reading never changes before motion.
-4. A Siri close at seen + travel, watched, closes a door that has stopped.
+| Situation | Close |
+|---|---|
+| Sensor unreadable | refused (`UNKNOWN`) |
+| Held after a stuck or lost move | refused (`HELD`) |
+| Commands for this door off, or remote close off | refused (`DISABLED`) |
+| A command of unknown outcome pending | refused (`BUSY`) |
+| Another close pending | refused (`BUSY`) |
+| Casita's own open, before its travel time | refused ("may still be opening") |
+| Casita's own open, after travel time, reading still "closed" | refused ("the sensor still says closed") |
+| Casita's own open, after travel time, reading not closed, no other change since | **allowed** |
+| Same, but the reading changed again since (a reversal Casita saw) | refused until the open's check; then allowed once the newest change has had its travel time |
+| Door moved by the wall button or remote, seen changing | allowed from travel time after Casita saw the change |
+| Just after a restart or a resume (no change seen) | refused until travel + lag |
+| The opener reports a change less than travel time ago | refused |
+| Settled | allowed |
 
-**Cost, only where switched on:** one cloud read every 2 s while an open is pending (about 5–15 reads per open, fewer
-when the app is polling). A read holds that door's lock for its round trip, as a status read does. Scheduled tasks run on
-two threads, so one door's slow read seldom delays the other's check, and an overdue check also runs before any
-command or status. A failed read changes nothing: the scheduled check decides. The watch never checks a movement early,
-so a close is still judged at its check and a touch-down auto-reverse is still caught as `STUCK`. Doors without the
-switch aren't watched: as shipped, no door is.
+The app offers Close exactly in the allowed cases. `GarageServiceTest#anOrdinaryCloseIsOfferedExactlyWhenTheServerWouldSendIt`
+(and the checked variant) check it for every second from 0 to 60 s of ten scenarios.
 
-## What `checked=true` is, and isn't
+## Remaining limits (with a mechanism)
 
-It is the signed-in member saying "I looked". It is **not** proof that anyone is at the garage or that the doorway is clear. Any signed-in member can send it, from anywhere, including a browser that signed itself back in without Face ID (PR #16), and Casita can't verify presence. So its effect is limited to what a wrong answer could cost:
+- **A stale "closed" reading blocks Close until it changes.** That is up to 25 s on Toyota, as seen once. A close against
+  "closed" would be a press that may do nothing or open the door. Improvements, in order: read the opener's own timers
+  (`MultipleConfig`, printed by `casita-door-watch`), use its PUSH notifications, or add a sensor at the open position.
+- **Changes between two reads.** A press that reverses a door and doesn't pass through "closed" within the 2 s between
+  reads is invisible. The close that follows may stop or reverse that movement. It is reported `STUCK`, not prevented.
+- **A reversal reported only after the close's check.** With a travel time or lag set too short, a door can reverse
+  after Casita confirmed it closed. Nothing watches after the check, so that reopening shows only as an ordinary change.
+  Measuring the timings with margin (and the 2 s grace) is what covers it.
+- **A hold is in memory.** After a restart, a door held after `STUCK` can be commanded again without anyone resuming it.
+  Rule 5's full wait still applies.
+- **The opener's own change time.** Ours reports none (`lmTime` 0). If a firmware update starts reporting it, rule 9
+  would refuse a close until travel time after that reported change, which could bring the long wait back on Toyota.
+  The test suite would not show it; the supervised checks would.
+- **"Not closed" is not "fully open".** A door stopped partway reads the same. Casita says "open" in the app and in Siri's
+  answers, and the history says "open inferred".
+- **Hardware assumptions** (DESIGN.md "Hardware prerequisites", and release readiness section 6):
+  - the measured travel time covers every run;
+  - `SETACK` means the relay fired;
+  - a press while opening stops or reverses the door (either is handled);
+  - the opener warns (beeps or flashes) before a remote close: the one item that is a real hazard if missing.
 
-- It never skips the travel time, never overrides a reading, a hold, an unknown command, a restart or a resume, and never applies to opens or Shortcuts.
-- If someone confirms without looking, the close goes to a door that Casita has watched long enough for any movement it knows of to be over, and whose sensor says it isn't closed. That is what an ordinary close does at travel + lag (and, if rule 10's settle by sight is ever switched on for a door, what Siri's or the app's close from away does there too), minus one case: a remote or wall button that started moving the door in the last `sensorLag` seconds without the reading showing it. A close then can stop or reverse that movement. This is the same risk docs/MEROSS.md already describes for a door moved by the remote while its reading is stale.
-- Obstructions are still handled by the opener's own photo eyes and auto-reverse, and a close that doesn't finish ends `STUCK` and holds the door.
+## Cost
 
-## Exactly when Close is allowed
-
-| Situation | Close without a look | Close after a look |
-|---|---|---|
-| Sensor unreadable | refused (`UNKNOWN`) | refused |
-| Held after a stuck or lost move | refused (`HELD`) | refused |
-| Commands for this door off, or closing from the app off | refused (`DISABLED`) | refused |
-| A command of unknown outcome pending | refused (`BUSY`) | refused |
-| Another close pending | refused (`BUSY`) | refused |
-| Casita's own open, before its travel time | refused | refused |
-| Casita's own open, after travel time, reading still "closed" | refused | refused (the opener may think it is closed) |
-| Casita's own open, after travel time, reading not closed, no other change since | refused until travel + lag (settle by sight off, as shipped; on: from travel time after Casita saw the change) | **allowed** |
-| Same, but the reading changed again since (wall-button reversal) | counts from the newest change | refused until the open's own check (travel + lag); after that, allowed once the newest change has had its travel time |
-| Casita's open had an unknown outcome (`UNCONFIRMED`) | refused until its check; the door then counts from when Casita saw it change, not from the command | the same |
-| Door opened by wall button or remote, seen changing | refused until travel + lag after the change | allowed after travel time from the change |
-| Just after a restart or a resume (no change seen) | refused until travel + lag | refused until travel + lag |
-| The opener reports a change of its reading less than travel time ago | as above | refused |
-| Settled (travel + lag passed) | allowed | allowed (an ordinary close, no `CHECKED` entry) |
-
-The app offers Close exactly in the allowed cases. `GarageServiceTest#theAppOffersACheckedCloseExactlyWhenTheServerWouldSendIt` checks it for every second from 0 to 60 s of ten scenarios, and
-`anOrdinaryCloseIsOfferedExactlyWhenTheServerWouldSendIt` does the same for a close without a look (Siri's).
-
-## What a binary sensor can't support, and the minimum extra verification
-
-- **A reading still at "closed" after travel time.** If the MSG200 reports "open" only after its own travel timer, a
-  person can see an open door while Casita still reads "closed". Casita can't send a close then: the opener's own
-  state is "closed" and a close may be ignored (`execute: 0`) or act as a button press. The fix is a faster or second
-  signal, not an override. In order of cost:
-  1. Read the opener's `Appliance.GarageDoor.MultipleConfig` (read-only) to learn each channel's configured
-     open/close duration. `casita-door-watch` now prints them first (numeric fields only), if the opener answers. If it is longer than the measured travel time, shortening it in the Meross app (if offered there) shortens
-     the report delay. **Changing it is a device setting: needs approval and a supervised test.**
-  2. Use the opener's signed PUSH notifications (already traced on `/app/<userId>/subscribe`, not used): the Meross app
-     showed Toyota open before `System.All` did. Measure `sensorLag` again with them.
-  3. A second sensor at the fully-open position (a tilt or reed sensor) would prove "fully open", which today is only
-     inferred.
-- **Changes between two reads.** Casita knows of a change only when it reads the sensor (the app polls; a command
-  reads first). A door that leaves "closed", comes back and leaves again between two reads looks unchanged. The opener
-  would say when its reading changed (`lmTime`), but ours reports 0, so nothing catches this today; the person's look
-  is what covers it. The PUSH notifications above would.
-- **A door moved by the remote while its reading is stale** (docs/MEROSS.md, "What it shows"): unchanged, and not
-  fixable by timing. The person's check covers it only when the person is at the door.
+One cloud read per door every 2 s while a command is pending (about 5–15 per command, fewer when the app is polling).
+A read holds that door's lock for its round trip, as a status read does. Scheduled tasks run on two threads, so one
+door's slow read seldom delays the other's check, and an overdue check also runs before any command or status. A failed
+read changes nothing: the scheduled check decides.
 
 ## Tests
 
-`GarageServiceTest` ("a person at the door stands in for the sensor's delay"): checked close after travel time; refused
-before travel time; refused while the sensor still reads closed (and a duplicate open stays `BUSY`); the open's
-scheduled check does nothing afterwards; a checked close that doesn't close ends `STUCK` and holds; a second checked close
-is `BUSY`; eight concurrent checked closes send one command; an `UNCONFIRMED` open is never ended by a check; wall
-button, restart and resume each wait travel time first; a settled door's checked close records nothing extra; an unreadable
-sensor, closing switched off and a door switched off all refuse; no grace means the check is at travel + lag.
-Rule 10: off by default (Siri waits travel + lag; a stale "closed" catch-up is never taken for the open's change); when
-switched on, Siri's close at seen + travel, the stale reading, a second change, a reversal seen by the watch, an unconfirmed
-open not watched, a watched close checked at once, a failed read changing nothing, the watch ending with the movement.
-`GarageControllerTest`: `?checked=true` through the API, CSRF required, nothing recorded for refusals.
+`GarageServiceTest`:
+- **Siri and the app from away:**
+  - the close at travel time;
+  - a stale reading;
+  - spoken reasons;
+  - a reversal by a second command;
+  - an obstruction;
+  - auto-reverse at touch-down;
+  - B1;
+  - a late "closed" within the lag, and one beyond it;
+  - an open right after a close (`SUPERSEDED`, no "closed" message), and one during a close that then reverses;
+  - an open while still closing;
+  - eight simultaneous Siri closes (one command);
+  - repeated commands;
+  - a restart.
+- **Rule 9:**
+  - before travel time;
+  - wall button;
+  - unconfirmed;
+  - an opener-reported change;
+  - a failed send.
+- **The watch:**
+  - stops with the movement;
+  - skips a read made just before;
+  - survives errors;
+  - a failure at the check is `LOST`.
+
+`LiveDoorsTest` (a fake MSG200 that moves each door and reports it late):
+- Ford's close at its travel time reaches no moving door;
+- Toyota's close at the moment its lagging reading changes;
+- an understated travel time is reported `STUCK`.
+
+`GarageControllerTest`: the API, CSRF.

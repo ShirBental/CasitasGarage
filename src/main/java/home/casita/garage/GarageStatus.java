@@ -11,9 +11,8 @@ import java.time.Instant;
  * @param canClose the same for a close command
  * @param held     a movement ended stuck or lost: no command is sent until someone checks the door
  *                 and resumes ({@code GarageService.resume})
- * @param canCloseIfChecked a close would go through now if the person asking has looked at the door and seen it fully
- *                 open and stopped ({@code GarageService.close(who, true)}): the door has had its travel time and only the
- *                 sensor's delay is left. Never true when {@code canClose} is.
+ * @param canCloseIfChecked always false now: a look no longer changes when a close may go (rule 9 applies to every
+ *                 close). Kept for older app versions, which offered "close after a look" when it was true.
  */
 public record GarageStatus(DoorState door, Instant since, boolean canOpen, boolean canClose, boolean held, boolean canCloseIfChecked) {
 

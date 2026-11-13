@@ -2,9 +2,7 @@ package home.casita.garage;
 
 import java.time.Duration;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
-import java.util.TreeSet;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;
@@ -23,20 +21,14 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *                         given). Casita waits travel time + lag before it treats "not closed" as settled or checks a
  *                         movement. A real door gets live commands only with its travel time and lag both given here,
  *                         as measured (docs/MEROSS.md): never the defaults.
- * @param settleBySight    the doors (by name) for which rule 10 may count an open as settled one travel time after Casita
- *                         saw its reading leave "closed", instead of after travel time + lag. Empty by default: off for
- *                         every door. Only for a door whose supervised test showed its reading never leaves "closed"
- *                         later than the door is fully open, and that a press while opening stops it
- *                         (docs/DOOR_TIMING.md, "Without a look").
  */
 @ConfigurationProperties("casita.garage")
 public record GarageProperties(
         @DefaultValue("10s") Duration travelTime,
-        @DefaultValue("0s") Duration verifyGrace,
+        @DefaultValue("2s") Duration verifyGrace,
         @DefaultValue("true") boolean allowRemoteClose,
         Map<String, Duration> travelTimes,
-        Map<String, Duration> sensorLags,
-        Set<String> settleBySight) {
+        Map<String, Duration> sensorLags) {
 
     @ConstructorBinding
     public GarageProperties {
@@ -68,30 +60,14 @@ public record GarageProperties(
             });
         }
         sensorLags = Map.copyOf(lags);
-        TreeSet<String> sight = new TreeSet<>();
-        if (settleBySight != null) {
-            settleBySight.forEach(door -> {
-                String key = DoorRoster.Door.key(door);
-                if (!Set.of("ford", "toyota").contains(key)) {
-                    throw new IllegalArgumentException("casita.garage.settle-by-sight: Ford or Toyota only, but was " + door);
-                }
-                sight.add(key);
-            });
-        }
-        settleBySight = Set.copyOf(sight);
-    }
-
-    public GarageProperties(Duration travelTime, Duration verifyGrace, boolean allowRemoteClose, Map<String, Duration> travelTimes,
-                            Map<String, Duration> sensorLags) {
-        this(travelTime, verifyGrace, allowRemoteClose, travelTimes, sensorLags, Set.of());
     }
 
     public GarageProperties(Duration travelTime, Duration verifyGrace, boolean allowRemoteClose, Map<String, Duration> travelTimes) {
-        this(travelTime, verifyGrace, allowRemoteClose, travelTimes, Map.of(), Set.of());
+        this(travelTime, verifyGrace, allowRemoteClose, travelTimes, Map.of());
     }
 
     public GarageProperties(Duration travelTime, Duration verifyGrace, boolean allowRemoteClose) {
-        this(travelTime, verifyGrace, allowRemoteClose, Map.of(), Map.of(), Set.of());
+        this(travelTime, verifyGrace, allowRemoteClose, Map.of(), Map.of());
     }
 
     /** The named door's travel time: its own when configured, otherwise {@code travelTime}. */
@@ -102,11 +78,6 @@ public record GarageProperties(
     /** How long the named door's reading can trail the door: its own when configured, otherwise zero. */
     public Duration sensorLag(String door) {
         return sensorLags.getOrDefault(DoorRoster.Door.key(door), Duration.ZERO);
-    }
-
-    /** Whether rule 10 may settle the named door's open by sight (off unless listed in {@code settle-by-sight}). */
-    public boolean settlesBySight(String door) {
-        return settleBySight.contains(DoorRoster.Door.key(door));
     }
 
     /** Whether the named door has its own travel time and sensor lag: required before it gets live commands. */
