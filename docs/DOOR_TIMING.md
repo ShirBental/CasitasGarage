@@ -70,8 +70,8 @@ the close is sent: if the send then fails (`ERROR`, or `UNCONFIRMED`), the histo
 outcome, and an unchecked close still waits for the open's travel + lag. A checked close of a door that has already
 settled is an ordinary close and records no `CHECKED`.
 
-Without a check (a phone away from the garage, a Shortcut), Close waits for the open's check at travel + lag, as
-before but without the grace. Rule 10 below can shorten that only for a door it is switched on for, and it is off for
+Without a check (a phone away from the garage, a Shortcut), Close waits for the open's check at travel + lag +
+`verify-grace` (0 s as shipped). Rule 10 below can shorten that only for a door it is switched on for, and it is off for
 both doors.
 
 ## The user's scenario, second by second
@@ -92,12 +92,10 @@ So the wait becomes the **travel time** when Meross reports promptly. When Meros
 both doors. That is the conservative wait, kept because a closed/not-closed sensor can't prove a door has stopped
 (below). Siri's close follows exactly the same rules as the app's Close button.
 
-**The watch (on).** While Casita's own acknowledged command is pending, it reads the sensor every 2 s
-(`GarageService.WATCH_EVERY`) until the check is due, even with nobody asking. It skips a read when the door was read
-less than 2 s before (the app polling, a command). A watched close that reads "closed" is checked at once, so the next
-command isn't kept waiting. This only reads; it never allows anything sooner.
-
-**Settle by sight (off; `casita.garage.settle-by-sight`, per door).** When switched on for a door: if Casita sees the
+**Settle by sight (off; `casita.garage.settle-by-sight`, per door; Ford or Toyota only, anything else stops Casita
+from starting).** When switched on for a door, Casita reads its sensor every 2 s (`GarageService.WATCH_EVERY`) while its
+own acknowledged open is pending, until the check is due, even with nobody asking. It skips a read when the door was
+read less than 2 s before. If it sees the
 reading leave "closed" during its own open, and that is the only change since the open, the open counts as settled one
 travel time after that sighting, instead of travel + lag after the command.
 
@@ -128,10 +126,12 @@ travel time after that sighting, instead of travel + lag after the command.
    before the acknowledgement (DESIGN.md hardware prerequisites 3 and 4), and the reading never changes before motion.
 4. A Siri close at seen + travel, watched, closes a door that has stopped.
 
-**Cost of the watch:** one cloud read per door every 2 s while a command is pending (about 5–15 reads per command,
-fewer when the app is polling). A read holds that door's lock for its round trip, as a status read does. Scheduled
-tasks run on two threads, so one door's slow read doesn't delay the other door's check. A failed read changes nothing:
-the scheduled check decides.
+**Cost, only where switched on:** one cloud read every 2 s while an open is pending (about 5–15 reads per open, fewer
+when the app is polling). A read holds that door's lock for its round trip, as a status read does. Scheduled tasks run on
+two threads, so one door's slow read seldom delays the other's check, and an overdue check also runs before any
+command or status. A failed read changes nothing: the scheduled check decides. The watch never checks a movement early,
+so a close is still judged at its check and a touch-down auto-reverse is still caught as `STUCK`. Doors without the
+switch aren't watched: as shipped, no door is.
 
 ## What `checked=true` is, and isn't
 

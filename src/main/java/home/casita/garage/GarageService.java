@@ -51,12 +51,12 @@ import org.slf4j.LoggerFactory;
  *       when a command of unknown fate could still land. The person's word alone never moves a door: a reading of "closed" (a sensor that
  *       hasn't caught up with an open) still refuses, because the opener could take the close as a button press. The
  *       check is recorded ({@code CHECKED}) with who made it, before the close.</li>
- *   <li><b>Watching, and (only where switched on) seen moving, then stopped.</b> While its own acknowledged command is
- *       pending, Casita reads the sensor every {@link #WATCH_EVERY} until its check is due (the app or Siri may not be
- *       asking). A watched close that reads "closed" is checked at once. For a door listed in
- *       {@code casita.garage.settle-by-sight} (none by default), an open whose reading Casita saw leave "closed", with
- *       no other change since, counts as settled one {@code travelTime} after that sighting instead of after
- *       {@code travelTime + sensorLag}. Off by default because a binary sensor can't prove it: a reading that was stale at
+ *   <li><b>Seen moving, then stopped: only for a door it is switched on for.</b> For a door listed in
+ *       {@code casita.garage.settle-by-sight} (none by default), Casita reads the sensor every {@link #WATCH_EVERY}
+ *       while its own acknowledged open is pending, until the check is due (the app or Siri may not be asking). An open
+ *       whose reading it saw leave "closed", with no other change since, counts as settled one {@code travelTime} after
+ *       that sighting instead of after {@code travelTime + sensorLag}. Other doors aren't watched and behave exactly as
+ *       rules 1–9 say. Off by default because a binary sensor can't prove it: a reading that was stale at
  *       "closed" when the open was sent (the door really up) makes the open a press that closes it, and the reading's
  *       late catch-up then looks exactly like the open's own change. Only a supervised test per door can rule that
  *       out.</li>
@@ -361,7 +361,7 @@ public class GarageService {
         pending = m;
         seenOpenAt = null;
         tasks.runAt(dueAt(m), () -> checkScheduled(m.id()));
-        if (m.acknowledged()) watchLater(m);
+        if (settleBySight && m.acknowledged() && m.action() == Action.OPEN) watchLater(m);
     }
 
     private void watchLater(Movement m) {
@@ -370,10 +370,11 @@ public class GarageService {
     }
 
     /**
-     * Rule 10: one read while this acknowledged movement is pending, so a change is seen when it happens even if nobody
-     * is asking, until its check is due. A close that reads "closed" is checked at once. An open keeps being read after
-     * its change is seen, so a second change (the wall button reversing it) is seen too. A failed read changes nothing
-     * (the scheduled check decides).
+     * Rule 10 (doors with settle by sight only): one read while this acknowledged open is pending, so a change is seen
+     * when it happens even if nobody is asking, until its check is due. It keeps reading after the change is seen, so a
+     * second change (the wall button reversing it) is seen too. A failed read changes nothing (the scheduled check
+     * decides). It never checks a movement early: a close is still judged at its check, so a touch-down auto-reverse is
+     * caught as STUCK.
      */
     synchronized void watch(long id) {
         Movement m = pending;
@@ -389,11 +390,7 @@ public class GarageService {
             watchLater(m);
             return;
         }
-        if (m.action() == Action.CLOSE && !reading.open()) {
-            check(m, reading);
-            return;
-        }
-        watchLater(m); // an open too, after its change is seen: a second change (a reversal) must not be missed
+        watchLater(m); // after its change is seen too: a second change (a reversal) must not be missed
     }
 
     /**
