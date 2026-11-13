@@ -102,8 +102,12 @@ class ShortcutTokensTest {
     }
 
     @Test
-    void onlyOpeningFordForAtMostAYearForAnActiveMember() {
-        assertThatThrownBy(() -> tokens.create("shir", "iPhone", "toyota", Action.OPEN, Duration.ofDays(1)))
+    void onlyOpeningFordOrToyotaForAtMostAYearForAnActiveMember() {
+        assertThatThrownBy(() -> tokens.create("shir", "iPhone", "garage", Action.OPEN, Duration.ofDays(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> tokens.create("shir", "iPhone", "ford,toyota", Action.OPEN, Duration.ofDays(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> tokens.create("shir", "iPhone", "toyota", Action.CLOSE, Duration.ofDays(1)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> tokens.create("shir", "iPhone", "ford", Action.CLOSE, Duration.ofDays(1)))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -115,5 +119,7 @@ class ShortcutTokensTest {
         assertThatThrownBy(() -> tokens.create("shahar", "iPhone", "ford", Action.OPEN, Duration.ofDays(1)))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(tokens.list(List.of("shir", "shahar"))).isEmpty();
+
+        assertThat(tokens.create("shir", "iPhone", "toyota", Action.OPEN, Duration.ofDays(1)).token().door()).isEqualTo("toyota");
     }
 }

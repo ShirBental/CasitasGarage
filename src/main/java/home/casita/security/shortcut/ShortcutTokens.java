@@ -30,7 +30,8 @@ import home.casita.security.store.SecurityStore.ShortcutView;
  *   <li>A token is {@value #PREFIX} followed by 256 random bits (base64url). It is shown once, when created; the store
  *       keeps only its SHA-256. (A fast hash is right here: the secret is 256 random bits, so there is nothing to
  *       brute-force.)</li>
- *   <li>For now a token can only {@link Action#OPEN} the Ford door ({@link #DOORS}, {@link #ACTIONS}).</li>
+ *   <li>A token can only {@link Action#OPEN}, and only one door: Ford or Toyota ({@link #DOORS}, {@link #ACTIONS}). A phone
+ *       that should open both gets one token per door, each revocable on its own.</li>
  * </ul>
  *
  * <p>A token is a bearer secret. Holding it is all it proves: not who is holding the phone, not that the phone is
@@ -39,8 +40,8 @@ import home.casita.security.store.SecurityStore.ShortcutView;
 public class ShortcutTokens {
 
     public static final String PREFIX = "casita_st_";
-    /** The doors a token may be created for. Ford only, for now. */
-    public static final Set<String> DOORS = Set.of("ford");
+    /** The doors a token may be created for, by API key. One door per token. */
+    public static final Set<String> DOORS = Set.of("ford", "toyota");
     /** The actions a token may be created for. Open only, for now: closing stays in the app. */
     public static final Set<Action> ACTIONS = Set.of(Action.OPEN);
     public static final Duration DEFAULT_LIFETIME = Duration.ofDays(180);

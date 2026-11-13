@@ -9,7 +9,7 @@
 #   bin/casita-access release-device <node id>           # a revoked node may then be enrolled for anyone
 #   bin/casita-access revoke-passkey <credential id>
 #   bin/casita-access revoke-member <member>               # all their devices, passkeys, invites and Shortcut tokens
-#   bin/casita-access shortcut-token <member> "<device label>" [days]   # Siri: opens Ford only; the token is shown once
+#   bin/casita-access shortcut-token <member> "<device label>" [days [ford|toyota]]   # Siri: opens one door; days first
 #   bin/casita-access shortcut-tokens                      # lists them (never the tokens themselves)
 #   bin/casita-access revoke-shortcut-token <token id>     # st-..., from 'shortcut-tokens'
 #
@@ -48,9 +48,9 @@ case "$1" in
   release-device) [ $# -eq 2 ] || usage; call POST "$url/admin/devices/$2/release" ;;
   revoke-passkey) [ $# -eq 2 ] || usage; call DELETE "$url/admin/credentials/$2" ;;
   revoke-member)  [ $# -eq 2 ] || usage; call DELETE "$url/admin/members/$2" ;;
-  shortcut-token) [ $# -eq 3 ] || [ $# -eq 4 ] || usage
+  shortcut-token) [ $# -ge 3 ] && [ $# -le 5 ] || usage
                   call POST "$url/admin/shortcut-tokens" --data-urlencode "member=$2" --data-urlencode "label=$3" \
-                    --data-urlencode "days=${4:-180}" ;;
+                    --data-urlencode "days=${4:-180}" --data-urlencode "door=${5:-ford}" ;;
   shortcut-tokens) call GET "$url/admin/shortcut-tokens" ;;
   revoke-shortcut-token) [ $# -eq 2 ] || usage; call DELETE "$url/admin/shortcut-tokens/$2" ;;
   *)              usage ;;
