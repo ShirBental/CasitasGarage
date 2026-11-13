@@ -129,6 +129,19 @@ class RememberedSignInsTest {
     }
 
     @Test
+    void aLoweredMaxAgeAlsoShortensTheExpiryOfARestoredSessionAndOfTheRenewedCookie() {
+        String value = issue();
+        clock.advance(Duration.ofDays(2));
+        RememberedSignIns lowered = with(Duration.ofDays(14), Duration.ofDays(14)); // max-age lowered from 30 to 14 days
+        RememberedSignIns.Claim claim = lowered.verify(value).orElseThrow();
+
+        java.time.Instant limit = claim.verifiedAt().plus(Duration.ofDays(14));
+        assertThat(claim.expiresAt()).isAfter(limit); // as issued: 30 days
+        assertThat(lowered.expiry(claim)).isEqualTo(limit);
+        assertThat(lowered.verify(lowered.renew(claim).getValue()).orElseThrow().expiresAt()).isEqualTo(limit);
+    }
+
+    @Test
     void offMeansNothingIsIssuedOrAccepted() {
         String value = issue();
         RememberedSignIns off = with(Duration.ZERO, Duration.ZERO);
