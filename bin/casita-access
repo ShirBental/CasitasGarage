@@ -9,7 +9,8 @@
 #   bin/casita-access release-device <node id>           # a revoked node may then be enrolled for anyone
 #   bin/casita-access revoke-passkey <credential id>
 #   bin/casita-access revoke-member <member>               # all their devices, passkeys, invites and Shortcut tokens
-#   bin/casita-access shortcut-token <member> "<device label>" [days [ford|toyota]]   # Siri: opens one door; days first
+#   bin/casita-access shortcut-phone <member> "<device label>" [days]     # Siri: the four tokens for one iPhone
+#   bin/casita-access shortcut-token <member> "<device label>" [days [ford|toyota [open|close]]]   # one token, one door, one action
 #   bin/casita-access shortcut-tokens                      # lists them (never the tokens themselves)
 #   bin/casita-access revoke-shortcut-token <token id>     # st-..., from 'shortcut-tokens'
 #
@@ -48,9 +49,19 @@ case "$1" in
   release-device) [ $# -eq 2 ] || usage; call POST "$url/admin/devices/$2/release" ;;
   revoke-passkey) [ $# -eq 2 ] || usage; call DELETE "$url/admin/credentials/$2" ;;
   revoke-member)  [ $# -eq 2 ] || usage; call DELETE "$url/admin/members/$2" ;;
-  shortcut-token) [ $# -ge 3 ] && [ $# -le 5 ] || usage
+  shortcut-token) [ $# -ge 3 ] && [ $# -le 6 ] || usage
                   call POST "$url/admin/shortcut-tokens" --data-urlencode "member=$2" --data-urlencode "label=$3" \
-                    --data-urlencode "days=${4:-180}" --data-urlencode "door=${5:-ford}" ;;
+                    --data-urlencode "days=${4:-180}" --data-urlencode "door=${5:-ford}" --data-urlencode "action=${6:-open}" ;;
+  shortcut-phone) [ $# -ge 3 ] && [ $# -le 4 ] || usage
+                  # Four separate tokens, each revocable on its own. Stops at the first failure; any made before it are
+                  # listed by 'shortcut-tokens' and can be revoked.
+                  for door in ford toyota; do
+                    for action in open close; do
+                      echo "== $door $action ==   (docs/SHORTCUTS.md, step 2: its Shortcut's Authorization header)"
+                      call POST "$url/admin/shortcut-tokens" --data-urlencode "member=$2" --data-urlencode "label=$3" \
+                        --data-urlencode "days=${4:-180}" --data-urlencode "door=$door" --data-urlencode "action=$action"
+                    done
+                  done ;;
   shortcut-tokens) call GET "$url/admin/shortcut-tokens" ;;
   revoke-shortcut-token) [ $# -eq 2 ] || usage; call DELETE "$url/admin/shortcut-tokens/$2" ;;
   *)              usage ;;

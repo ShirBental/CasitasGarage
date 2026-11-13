@@ -1,7 +1,8 @@
 # Siri and Apple Shortcuts
 
-"Hey Siri, Open Ford Garage" opens the Ford door, and "Hey Siri, Open Toyota Garage" the Toyota door, without opening
-Safari, over Wi-Fi or cellular. Shortcuts can't use passkeys or the browser
+Four phrases, each its own Shortcut on the iPhone: **"Open Ford Garage"**, **"Close Ford Garage"**, **"Open Toyota
+Garage"**, **"Close Toyota Garage"**. They work hands-free, over Wi-Fi or cellular, without Face ID, a browser sign-in or
+opening Casita. Shortcuts can't use passkeys or the browser
 key (docs/ACCESS.md), so a Shortcut gets its own credential: a **Shortcut token**. Code: `home.casita.security.shortcut`
 and `web/ShortcutController`.
 
@@ -16,13 +17,32 @@ Everything below follows from that.
 | Format | `casita_st_` + 256 random bits (base64url). Shown **once**, when created |
 | Stored | only its SHA-256, in the security store with members, passkeys, devices and invitations: `shortcutTokens/t_{sha256}` in Firestore (one document per token) |
 | Belongs to | one member, one device label ("Shir's iPhone") |
-| Allows | **open** **one** door, the one it was created for: Ford (the default) or Toyota. Nothing else: not close, not resume, not the other door, not `/api/**`, not `/admin/**`. A phone that opens both doors has two tokens, one per door, each revoked on its own |
+| Allows | **one action** (open **or** close) on **one door** (Ford or Toyota), both fixed when the token is created. Nothing else: not the other action, not resume, not the other door, not "I've looked at the door" (`checked`), not `/api/**`, not `/admin/**`. A phone with all four phrases has four tokens, each revoked on its own. A token made to open can never close: there is no upgrade, and tokens made before close existed stay open-only |
 | Also reads | its own door's status (so the Shortcut can say what really happened) |
 | Lifetime | 180 days by default, at most 365; then it stops working |
 | Checked on every request | read from the store, no cache: the token exists, isn't revoked or expired; its member is in `casita.security.family` and active. Store unreachable: refused (503) |
 | Revoked by | `casita-access revoke-shortcut-token <id>`, or `revoke-member` (all of that member's tokens) |
 
-Closing stays in the app on purpose: the app shows the door and its sensor before you close it.
+### Closing from Siri
+
+A Siri close is an **ordinary close**, through the same `GarageService.close()` as the app's Close button, never the
+app's "Close after a look". A voice request proves nothing about who is at the garage, so a Shortcut can't send
+`checked`: a request that tries is refused (400) and nothing is sent. Every rule applies unchanged:
+
+- It refuses while a movement is unchecked or the door may be moving, while held after a stuck or lost move, when the
+  sensor can't be read, when the door's commands or remote closing are off, and when the sensor says closed.
+- Right after an open, it waits until the door has stopped. Casita watches the sensor during its own open, even with
+  nobody asking. Once it has seen the reading leave "closed", the door has stopped one travel time later, so a close
+  works from then on, without the configured worst-case sensor lag. With a prompt Meross reading that is about
+  **travel time + 2 s** after the open. If the reading stays "closed" (Meross hasn't caught up), Close waits for it.
+  (docs/DOOR_TIMING.md, "Without a look".)
+- When it refuses, Siri says why and that nothing was sent. For example:
+  - "Ford: The door may still be opening. Give it a few more seconds. I didn't send anything."
+  - "Ford's sensor says it's closed, so I didn't send anything. If you can see it open, the sensor hasn't caught up
+    yet: ask again in a little while, or use the wall button."
+
+The opener's own photo eyes and auto-reverse still protect the doorway: Casita can't see it. A close that doesn't finish
+ends `STUCK`, and Casita holds that door until someone checks it in the app.
 
 ## The API
 
@@ -33,7 +53,9 @@ browser sends by itself, and this chain reads none.
 
 | Request | Answer |
 |---|---|
-| `POST /shortcut/v1/doors/{ford,toyota}/open` | the command's result (below), for the token's own door |
+| `POST /shortcut/v1/doors/{ford,toyota}/open` | the command's result (below), for an open token's own door |
+| `POST /shortcut/v1/doors/{ford,toyota}/close` | the same, for a close token's own door |
+| either, with a `checked` parameter | `400`, nothing sent: a Shortcut can't say it looked at the door |
 | `GET /shortcut/v1/doors/{ford,toyota}` | the door's status, for the token's own door |
 | anything else the token doesn't allow | `403` |
 | no token, a bad, revoked or expired token, or a revoked member | `401` (the same answer whatever the reason; the reason is logged with the token's id) |
@@ -62,7 +84,7 @@ applies unchanged. A command answer:
 |---|---|---|
 | `accepted` | 202 | sent, and the opener acknowledged it. **Not** that the door is open |
 | `unconfirmed` | 202 | sent, no acknowledgement: it may or may not be moving |
-| `already` | 200 | the sensor says it isn't closed; nothing was sent |
+| `already` | 200 | nothing was sent: for an open, the sensor says it isn't closed; for a close, it says closed |
 | `refused` | 409 | nothing was sent: busy, held after a stuck move, sensor unreadable, or the door switched off |
 | `failed` | 502 | definitely not sent (in dry-run mode, every command ends here) |
 
@@ -88,89 +110,109 @@ two separate writes. It didn't even help during an outage, since checking a toke
 
 ## Setting it up
 
-Each phone gets its **own** tokens: one for Ford and, if that phone should open Toyota too, one for Toyota. Never
-reuse a token on a second phone; make that phone its own.
+Each phone gets its **own** four tokens. Never reuse a token on a second phone; make that phone its own. A phone that
+should only open, or only use Ford, gets only those tokens (`shortcut-token`, below).
 
 ### 1. Create the tokens (on watson)
 
 ```bash
 gcloud compute ssh watson --zone us-central1-a --tunnel-through-iap
-casita-access shortcut-token shir "Shir's iPhone"                 # Ford, 180 days
-casita-access shortcut-token shir "Shir's iPhone" 180 toyota      # Toyota: days, then the door
+casita-access shortcut-phone shir "Shir's iPhone"            # four tokens: Ford open, Ford close, Toyota open, Toyota close (180 days)
 ```
 
-Arguments: member, label, then optionally days (default 180, at most 365) and door (`ford`, the default, or `toyota`).
-Each answer contains `"token": "casita_st_..."` and `"door"`. It is shown this once and not kept anywhere. Copy it
-straight into that door's Shortcut (step 2), using AirDrop or Notes between your own devices if you must (then delete
-the note). Don't send it through chat or email, don't screenshot it or the finished Shortcut (the header shows the
-token), then `clear` the terminal. If it leaks, revoke it and make a new one.
+The command prints four answers, each headed `== ford open ==` (and so on), each containing `"token": "casita_st_..."`,
+`"door"` and `"action"`. Optionally add the days (default 180, at most 365): `shortcut-phone shir "Shir's iPhone" 365`.
+One token at a time: `casita-access shortcut-token shir "Shir's iPhone" 180 toyota close` (days, door, action; the
+defaults are 180, `ford`, `open`).
 
-### 2. Build each Shortcut (on the iPhone, Shortcuts app)
+Each token is shown this once and not kept anywhere. Copy it straight into its Shortcut (step 2). If you must move it
+between your own devices, use AirDrop or Notes, then delete the note. Don't send it through chat or email. Don't
+screenshot it or the finished Shortcut (the header shows the token). Then `clear` the terminal. If a token leaks,
+revoke it and make a new one. If `shortcut-phone` stops with FAILED, the tokens printed before it are real: use them
+or revoke them (`shortcut-tokens` lists them).
 
-Do this once per door. For Toyota, replace `ford` with `toyota` in both URLs and use the Toyota token.
+### 2. Build the four Shortcuts (on the iPhone, Shortcuts app)
 
-1. Open **Shortcuts** → **+** (new shortcut). Tap the name at the top → **Rename** → `Open Ford Garage` (what you will
-   say to Siri; for Toyota, `Open Toyota Garage`).
+| Shortcut name (what you say) | URL | Token |
+|---|---|---|
+| `Open Ford Garage` | `https://watsonbental.duckdns.org/shortcut/v1/doors/ford/open` | `== ford open ==` |
+| `Close Ford Garage` | `https://watsonbental.duckdns.org/shortcut/v1/doors/ford/close` | `== ford close ==` |
+| `Open Toyota Garage` | `https://watsonbental.duckdns.org/shortcut/v1/doors/toyota/open` | `== toyota open ==` |
+| `Close Toyota Garage` | `https://watsonbental.duckdns.org/shortcut/v1/doors/toyota/close` | `== toyota close ==` |
+
+Build the first one:
+
+1. Open **Shortcuts** → **+** (new shortcut). Tap the name at the top → **Rename** → `Open Ford Garage`.
 2. *Optional (see "Locked phones")*: **Add Action** → search **Open App** → choose **Casita** or Safari. Only if you
    want Siri to need an unlocked phone: when the phone is locked this adds a Face ID or passcode prompt, which the
    setup otherwise doesn't have. Skip it for fully hands-free use, and accept the risk in "Locked phones".
-3. **Add Action** → search **Get Contents of URL**. Tap the URL field and enter
-   `https://watsonbental.duckdns.org/shortcut/v1/doors/ford/open`.
+3. **Add Action** → search **Get Contents of URL**. Tap the URL field and enter the URL from the table.
 4. Tap the **›** (Show More) on that action:
    - **Method**: **POST**
    - **Headers** → **Add new header**: key `Authorization`, value `Bearer ` followed by the token (exactly one space
      after `Bearer`, no quotes, no line break)
-   - **Request Body**: leave it as is (if Shortcuts insists, choose **JSON** and add no fields)
+   - **Request Body**: leave it as is (if Shortcuts insists, choose **JSON** and add no fields). Never add `checked`.
 5. **Add Action** → **Get Dictionary Value**: Get **Value** for key `speak` in **Contents of URL**.
 6. **Add Action** → **Speak Text**: **Dictionary Value**.
-7. *Optional, to hear whether it actually opened:* **Get Dictionary Value** `checkAfterSeconds` in **Contents of
-   URL**, then **Wait** that many seconds (or a fixed 30),
-   then another **Get Contents of URL** for `https://watsonbental.duckdns.org/shortcut/v1/doors/ford`, Method
-   **GET**, with the same `Authorization` header, then **Get Dictionary Value** `speak` → **Speak Text**.
-8. Tap **Done**. Test it once from the Shortcuts app **while you can see the garage**, then once with "Hey Siri, Open
-   Ford Garage".
-9. Away from home: turn Wi-Fi off and try once on cellular. If it fails with no answer, check
-   **Settings → Cellular → Shortcuts** is on (the endpoint is public HTTPS, so nothing else is Wi-Fi-specific).
+7. Tap **Done**.
 
-In the Shortcut's details (the **ⓘ** button) you may turn off **Show in Share Sheet**; leave **Use with Siri** on. Do
-**not** share the Shortcut: a shared Shortcut carries its header, token included. If iCloud syncs your Shortcuts, the
-token is on every device signed in to your Apple Account: treat those devices as holding it too.
+Then the other three: long-press `Open Ford Garage` → **Duplicate**, rename it (table), open it, and change the **URL**
+and the **Authorization** value to that row's. Check each one's URL and token twice: a wrong pair is refused (403),
+never another door's move, but it won't work either.
+
+*Optional, to hear the result:* after step 6, **Get Dictionary Value** `checkAfterSeconds` in **Contents of URL**, then
+**Wait** that many seconds, then another **Get Contents of URL** for the door's status
+(`https://watsonbental.duckdns.org/shortcut/v1/doors/ford`, Method **GET**, the same `Authorization` header), then
+**Get Dictionary Value** `speak` → **Speak Text**.
+
+In each Shortcut's details (the **ⓘ** button) you may turn off **Show in Share Sheet**; leave **Use with Siri** on. Do
+**not** share the Shortcuts: a shared Shortcut carries its header, token included. If iCloud syncs your Shortcuts,
+the tokens are on every device signed in to your Apple Account: treat those devices as holding them too.
+
+Away from home: turn Wi-Fi off and try once on cellular. If it fails with no answer, check **Settings → Cellular →
+Shortcuts** is on (the endpoint is public HTTPS, so nothing else is Wi-Fi-specific).
 
 ### 3. Use it
 
-"Hey Siri, Open Ford Garage" or "Hey Siri, Open Toyota Garage". Siri says what Casita answered: it was sent and isn't
-confirmed yet, it's already not closed, it's busy, it's held for a check, the sensor can't be read, or the token was
-refused. Closing stays in the app. To revoke a phone's token:
+"Hey Siri, Open Ford Garage", "Hey Siri, Close Ford Garage", "Hey Siri, Open Toyota Garage", "Hey Siri, Close Toyota
+Garage". Siri says what Casita answered: sent and not confirmed yet, nothing to do (already open, or the sensor says
+closed), busy and why, held for a check, the sensor can't be read, or the token was refused. To revoke one token:
 
 ```bash
-casita-access shortcut-tokens                    # ids, labels, doors, state (never the tokens)
+casita-access shortcut-tokens                    # ids, labels, doors, actions, state (never the tokens)
 casita-access revoke-shortcut-token st-1a2b3c4d5e6f
 ```
 
-Rotate the same way: create a new token, put it in the Shortcut, revoke the old one. Revoking the Toyota token leaves
-the same phone's Ford token working, and the other way round.
+Rotate the same way: create a new token, put it in its Shortcut, revoke the old one. Revoking one of a phone's tokens
+leaves its other three working. A lost phone: revoke all four (or `revoke-member` if it is the member's only phone).
 
 ### 4. Check it on the phone (once per phone, someone watching the garage)
 
 Automated tests cover the server side only. These need the iPhone:
 
 1. Unlocked, on Wi-Fi: "Hey Siri, Open Ford Garage" → Siri speaks Casita's answer; the app shows "Shir via Shortcut".
-2. The same for Toyota (only once Toyota's commands are on; before that Siri says it was refused and nothing moves).
-3. Wi-Fi off, on cellular: both again.
-4. **Locked**, phone on a table: say the phrase. Note whether Siri runs it or asks to unlock. Repeat with the optional
-   **Open App** step if you added it. Write down what happened: Apple doesn't document this for "Get Contents of URL".
-5. Revoke that phone's Toyota token: "Open Toyota Garage" answers that the key wasn't accepted, and "Open Ford Garage" still
-   works.
+2. Straight away, "Close Ford Garage": Siri says the door may still be opening and that nothing was sent. Ask again
+   once the door has stopped and a few seconds have passed: it closes. Note how many seconds after the open it first
+   worked.
+3. With the door closed, "Close Ford Garage": Siri says the sensor says closed and nothing was sent.
+4. The same for Toyota (only once Toyota's commands are on; before that Siri says it was refused and nothing moves).
+5. Wi-Fi off, on cellular: open and close both doors again.
+6. **Locked**, phone in a pocket or on a table: say each phrase. Note whether Siri runs it or asks to unlock. Repeat
+   with the optional **Open App** step if you added it. Write down what happened: Apple doesn't document this for
+   "Get Contents of URL".
+7. Revoke that phone's Toyota close token: "Close Toyota Garage" answers that the key wasn't accepted; "Open Toyota
+   Garage" and both Ford phrases still work.
 
 ## Threat model
 
 | Risk | What happens | What limits it |
 |---|---|---|
-| **Siri on a locked phone** | Siri can run Shortcuts from the lock screen, and Apple doesn't document that "Get Contents of URL" requires unlocking: assume it doesn't. Anyone within earshot of the phone may be able to say the phrase. A bearer token can't tell | See *Locked phones* below. Casita adds no fake check for this |
-| **Token copied** (screenshot, backup, shared Shortcut, iCloud sync of Shortcuts) | Whoever has it can open that token's door from anywhere until it expires or is revoked | One door and open only; 6 commands per 10 minutes per token; every use logged with the token's id; revoke at once with `casita-access`; 180-day default life. **Never share the Shortcut**: shared Shortcuts carry their headers |
+| **Siri on a locked phone** | Siri can run Shortcuts from the lock screen, and Apple doesn't document that "Get Contents of URL" requires unlocking: assume it doesn't. Anyone within earshot of the phone may be able to say a phrase, open or close. A bearer token can't tell | See *Locked phones* below. Casita adds no fake check for this |
+| **Token copied** (screenshot, backup, shared Shortcut, iCloud sync of Shortcuts) | Whoever has it can open (or, with a close token, close) that token's door from anywhere until it expires or is revoked | One door and one action; 6 commands per 10 minutes per token; every use logged with the token's id; revoke at once with `casita-access`; 180-day default life. **Never share the Shortcut**: shared Shortcuts carry their headers |
 | **Replay / repeated requests** | The token is the same on every request; resending opens again if the door is closed | HTTPS only (nothing to capture in transit); `GarageService` refuses while a movement is unchecked, refuses when the door isn't closed, holds after a stuck move; per-token and per-client rate limits. No nonce: Shortcuts can't sign requests |
 | **Compromised phone** | Same as a copied token, plus the browser's session | Revoke the token (`revoke-shortcut-token`) **and** the browser (`revoke-device`): they are separate credentials. `revoke-device` doesn't revoke tokens (nothing ties a token to a browser: a Shortcut sends only its token), but lists the member's active ones so you can pick the phone's by its label and id. Or revoke the member (`revoke-member`), which revokes both |
-| **Other doors, closing, admin** | Not reachable: the token's door and action are checked against the path; `/api/**` ignores tokens; `/admin/**` is local-only with its own secret, and Caddy answers 404 for it | Tests cover each |
+| **Closing onto someone** | A close token closes from anywhere, with nobody looking, like the app's Close from away | Only a door Casita has seen settle open, never one that may be moving; the opener's photo eyes and auto-reverse; a close that doesn't finish holds the door. A phone that shouldn't close gets only open tokens |
+| **Other doors, other actions, admin** | Not reachable: the token's door and action are checked against the path; `checked` is refused; `/api/**` ignores tokens; `/admin/**` is local-only with its own secret, and Caddy answers 404 for it | Tests cover each |
 | **Guessing** | 256 random bits | Rate limits keep the endpoint from being hammered, not guessing |
 | **Leaks through logs** | — | Tokens are never logged (only ids); Caddy drops the Authorization header from its access log (it also redacts it by default); error answers are fixed text |
 | **Google Cloud outage** | Firestore can't be read, so no token can be checked | Refused (503), like every sign-in: fail closed. No cache or local copy is trusted instead, because it could still accept a revoked token |
@@ -197,7 +239,8 @@ repaired.
 ## Operations
 
 - **Deploy:** an ordinary release (`deploy-release.sh --apply`); no settings change. Tokens only exist once someone
-  creates one, so a release with this code and no tokens behaves exactly as before.
+  creates one, so a release with this code and no tokens behaves exactly as before. Existing tokens keep their one
+  action (open): to add closing, create close tokens (`shortcut-token ... ford close`), never edit a token.
 - **Logs:** `journalctl -u casita | grep -i shortcut`: every command (token id, member, label, outcome, client address) and
   every refusal (reason, token id when known).
 - **Activity:** commands appear in the app as "Shir via Shortcut asked to open Ford" (or Toyota).
