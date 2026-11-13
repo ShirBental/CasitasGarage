@@ -239,11 +239,15 @@ and the rules in section 5 assume the worst case:
    de-duplicate by message id.
 5. **`lmTime`.** What it records, and on which clock. Not used for safety today.
 6. **Travel time.** Time a full open and a full close; set `travel-time` to the slower one
-   plus a margin (10 s measured so far).
+   plus a margin (measure it; don't assume a value).
 7. **The opener's own safety.** Photo eyes aligned, auto-reverse tested, and whether the
    opener or MSG100 warns (beeps or flashes) before a close it can't see.
 8. **Which client failures guarantee nothing was sent.** Only those may raise
    `DoorCommandRejectedException`. Everything else must stay an unknown outcome.
+9. **Before `settle-by-sight` (rule 10) for a door** (off by default): its reading never leaves "closed" later
+   than the door is fully open (the longest change − press is shorter than the shortest stop − press), a press while
+   opening stops the door rather than reversing it, and for Casita's own command, motion never starts before the
+   acknowledgement and the reading never changes before motion (3 and 4 above). docs/DOOR_TIMING.md, "Without a look".
 
 ## 7. Activity and notifications
 

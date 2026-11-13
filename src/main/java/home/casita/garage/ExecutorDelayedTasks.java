@@ -19,7 +19,7 @@ public class ExecutorDelayedTasks implements DelayedTasks, DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(ExecutorDelayedTasks.class);
 
     private final Clock clock;
-    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
+    private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(2, r -> { // two: one door's slow read never delays the other door's check
         Thread t = new Thread(r, "casita-garage-tasks");
         t.setDaemon(true);
         return t;
