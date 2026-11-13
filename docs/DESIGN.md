@@ -177,7 +177,7 @@ that cuts off every kind of credential:
    "close" only when it reports not closed. Never send a command toward the state the
    sensor already reports.
 3. **One movement at a time, until checked.** After a command, nothing else is sent until
-   Casita has checked the sensor, at travel time + grace (10 s + 2 s; a close finishes early
+   Casita has checked the sensor, at travel time + grace (10 s + 0 s; a close finishes early
    once the sensor reports closed). If that check is overdue when a new request arrives, it
    runs first, so a failure is never skipped or blamed on a newer movement.
 4. **Unknown outcomes aren't failures.** If a command fails without a guarantee that
@@ -239,11 +239,18 @@ and the rules in section 5 assume the worst case:
    de-duplicate by message id.
 5. **`lmTime`.** What it records, and on which clock. Not used for safety today.
 6. **Travel time.** Time a full open and a full close; set `travel-time` to the slower one
-   plus a margin (10 s measured so far).
+   plus a margin (measure it; don't assume a value).
 7. **The opener's own safety.** Photo eyes aligned, auto-reverse tested, and whether the
    opener or MSG100 warns (beeps or flashes) before a close it can't see.
 8. **Which client failures guarantee nothing was sent.** Only those may raise
    `DoorCommandRejectedException`. Everything else must stay an unknown outcome.
+9. **Rules 9 and 10 (the close at travel time, and its confirmation):**
+   - every supervised run stops within the configured travel time;
+   - a press while opening stops or reverses the door (either is detected and reported);
+   - the reading never reports "closed" more than `sensorLag` late;
+   - the opener's warning before a remote close works (7 above).
+
+   docs/DOOR_TIMING.md, "Plausible ways it goes wrong"
 
 ## 7. Activity and notifications
 

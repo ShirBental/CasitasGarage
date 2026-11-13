@@ -31,6 +31,7 @@ import home.casita.garage.Garage;
 import home.casita.garage.GarageProperties;
 import home.casita.garage.GarageService;
 import home.casita.garage.InMemoryActivityLog;
+import home.casita.garage.CommandResult;
 import home.casita.garage.Outcome;
 import home.casita.meross.MerossException.Kind;
 
@@ -51,6 +52,7 @@ class LiveDoorsTest {
     private FakeMsg200 opener;
     private Garage garage;
     private GarageService ford, toyota;
+    private InMemoryActivityLog activity;
 
     @BeforeEach
     void setUp() {
@@ -72,7 +74,8 @@ class LiveDoorsTest {
                 CommandMode.LIVE, Map.of(1, "Ford", 2, "Toyota"), commandChannels);
         DoorRoster roster = new MerossConfig().doorRoster(opener, props,
                 new MerossLocalCredentials("placeholder@example.com", "placeholder", "uuid-1"), timings);
-        return new Garage(roster, new InMemoryActivityLog(), message -> {}, tasks, clock, timings);
+        activity = new InMemoryActivityLog();
+        return new Garage(roster, activity, message -> {}, tasks, clock, timings);
     }
 
     private void advance(long seconds) {
@@ -118,26 +121,47 @@ class LiveDoorsTest {
     }
 
     @Test
-    void aCloseWaitsUntilTheDoorHasSettledSoItNeverReachesAMovingDoor() {
+    void aCloseAtTheDoorsTravelTimeNeverReachesAMovingDoor() {
         ford.open("Shir");
-        advance(21);                             // Ford has finished opening, but its reading may still lag
+        advance(19);                             // Ford may still be opening
         assertThat(ford.close("Hubby").outcome()).isEqualTo(Outcome.BUSY);
         assertThat(opener.sets).containsExactly("SET channel 1 open");
-        advance(6);                              // 27 s: checked and settled
+        advance(1);                              // 20 s: its travel time, not travel + lag (27 s)
         assertThat(ford.close("Hubby").outcome()).isEqualTo(Outcome.MOVING);
         assertThat(ford.status().door()).isEqualTo(DoorState.CLOSING);
-        advance(20 + 5 + 2);                     // closed, and the lagging reading has caught up
+        advance(20 + 5 + 2);                     // closed, the lagging reading has caught up, and the close is checked
         assertThat(ford.status().door()).isEqualTo(DoorState.CLOSED);
         assertThat(opener.sets).containsExactly("SET channel 1 open", "SET channel 1 close");
         assertThat(opener.pressesWhileMoving).isZero();
     }
 
     @Test
-    void toyotaClosesOnlyAfterItsOwnLongerSettle() {
+    void anUnderstatedTravelTimeMakesACloseReachAMovingDoorAndItIsReportedStuckNotClosed() {
+        // Why travel time must be measured: configured 12 s, Ford really takes 20 s. The close at 12 s reaches a door
+        // still opening. Casita can't see that, but its check (12 + 12 + 5 + 2 s) reads "not closed": STUCK, held, never
+        // "closed".
+        garage = garage(Set.of(1, 2), new GarageProperties(Duration.ofSeconds(10), GRACE, true,
+                Map.of("Ford", Duration.ofSeconds(12), "Toyota", TOYOTA_TRAVEL), Map.of("Ford", FORD_LAG, "Toyota", TOYOTA_LAG)));
+        ford = garage.door("ford").orElseThrow();
+        ford.open("Shir");
+        advance(12);
+        assertThat(ford.close("Hubby").outcome()).isEqualTo(Outcome.MOVING);
+        assertThat(opener.pressesWhileMoving).isEqualTo(1);
+        advance(12 + 5 + 2);
+        assertThat(ford.status().held()).isTrue();
+        assertThat(activity.recent(1).get(0).outcome()).isEqualTo(Outcome.STUCK);
+    }
+
+    @Test
+    void toyotaClosesOnceItsLaggingReadingHasLeftClosed() {
+        // Toyota is up at 18 s, but its reading says "closed" until 25 s: no close against "closed" (it could be a
+        // press). The moment the reading changes, the open has had its travel time: close.
         toyota.open("Shir");
-        advance(44);
-        assertThat(toyota.close("Shir").outcome()).isEqualTo(Outcome.BUSY);
-        advance(1);                              // 45 s
+        advance(24);
+        CommandResult stale = toyota.close("Shir");
+        assertThat(stale.outcome()).isEqualTo(Outcome.BUSY);
+        assertThat(stale.message()).contains("sensor still says closed");
+        advance(1);                              // 25 s, not 18 + 25 + 2 = 45 s
         assertThat(toyota.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
         advance(18 + 25 + 2);
         assertThat(toyota.status().door()).isEqualTo(DoorState.CLOSED);
@@ -189,6 +213,11 @@ class LiveDoorsTest {
         assertThat(toyota.open("Shir").outcome()).isEqualTo(Outcome.UNCONFIRMED);
         assertThat(toyota.open("Shir").outcome()).isEqualTo(Outcome.BUSY);
         advance(45);
+        // The check found it went through, but Casita can't know when a command of unknown fate reached the door: it
+        // counts from when it saw the change (now), so it isn't called settled before another travel time + lag.
+        assertThat(toyota.status().door()).isEqualTo(DoorState.OPENING);
+        assertThat(toyota.close("Shir").outcome()).isEqualTo(Outcome.BUSY);
+        advance(18 + 25);
         assertThat(toyota.status().door()).isEqualTo(DoorState.NOT_CLOSED);
         assertThat(opener.sets).containsExactly("SET channel 2 open");
     }

@@ -289,6 +289,22 @@ class GarageControllerTest {
     }
 
     @Test
+    void aCheckedCloseGoesThroughTheSameRulesAndIsRecordedOnlyWhenItMatters() throws Exception {
+        // Closed: nothing to close, checked or not, and nothing about a check is recorded.
+        mvc.perform(post("/api/doors/ford/close").param("checked", "true").with(family).with(csrf()))
+                .andExpect(jsonPath("$.outcome").value("ALREADY"));
+        // Just opened: the door may still be moving, so even a checked close waits for the travel time.
+        mvc.perform(post("/api/doors/ford/open").with(family).with(csrf())).andExpect(jsonPath("$.outcome").value("MOVING"));
+        mvc.perform(post("/api/doors/ford/close").param("checked", "true").with(family).with(csrf()))
+                .andExpect(jsonPath("$.outcome").value("BUSY"))
+                .andExpect(jsonPath("$.status.canCloseIfChecked").value(false));
+        mvc.perform(post("/api/doors/ford/close").param("checked", "true").with(family)).andExpect(status().isForbidden()); // CSRF
+
+        assertThat(activity.recent(10)).extracting(e -> e.outcome().name()).containsExactly("MOVING", "ALREADY");
+        mvc.perform(get("/api/doors/ford").with(family)).andExpect(jsonPath("$.status.canCloseIfChecked").value(false));
+    }
+
+    @Test
     void perDoorResumeWithNothingHeldChangesNothing() throws Exception {
         mvc.perform(post("/api/doors/toyota/resume").with(family).with(csrf()))
                 .andExpect(status().isOk())
