@@ -181,6 +181,19 @@ class ShortcutApiTest {
     }
 
     @Test
+    void onePhonesFordAndToyotaShortcutsWorkIndependentlyAtTheSameTime() throws Exception {
+        String ford = newToken("shir");
+        String toyota = newToken("shir", "toyota");
+
+        mvc.perform(open(ford)).andExpect(status().isAccepted()).andExpect(jsonPath("$.door").value("Ford"));
+        // Ford is busy being checked; Toyota has its own movement and its own rules.
+        mvc.perform(post("/shortcut/v1/doors/toyota/open").with(phone()).header("Authorization", "Bearer " + toyota))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.door").value("Toyota"));
+        mvc.perform(open(ford)).andExpect(status().isConflict()).andExpect(jsonPath("$.outcome").value("BUSY"));
+        assertThat(activity.recent(10)).extracting(e -> e.door()).containsExactly("Toyota", "Ford");
+    }
+
+    @Test
     void aFordTokenOnlyOpensFord() throws Exception {
         String token = newToken("shir");
         String bearer = "Bearer " + token;

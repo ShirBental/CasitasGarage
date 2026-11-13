@@ -150,6 +150,18 @@ casita-access revoke-shortcut-token st-1a2b3c4d5e6f
 Rotate the same way: create a new token, put it in the Shortcut, revoke the old one. Revoking the Toyota token leaves
 the same phone's Ford token working, and the other way round.
 
+### 4. Check it on the phone (once per phone, someone watching the garage)
+
+Automated tests cover the server side only. These need the iPhone:
+
+1. Unlocked, on Wi-Fi: "Hey Siri, Open Ford Garage" → Siri speaks Casita's answer; the app shows "Shir via Shortcut".
+2. The same for Toyota (only once Toyota's commands are on; before that Siri says it was refused and nothing moves).
+3. Wi-Fi off, on cellular: both again.
+4. **Locked**, phone on a table: say the phrase. Note whether Siri runs it or asks to unlock. Repeat with the optional
+   **Open App** step if you added it. Write down what happened: Apple doesn't document this for "Get Contents of URL".
+5. Revoke that phone's Toyota token: "Open Toyota Garage" answers that the key wasn't accepted, and "Open Ford Garage" still
+   works.
+
 ## Threat model
 
 | Risk | What happens | What limits it |
