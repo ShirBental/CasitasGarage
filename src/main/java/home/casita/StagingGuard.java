@@ -38,9 +38,10 @@ import org.springframework.core.env.ConfigurableEnvironment;
  *   <li>in staging: {@code casita.door} isn't exactly {@code simulated}, {@code casita.meross.command-mode}
  *       isn't exactly {@code off}, or Meross credentials are present anywhere Casita or its live tests would
  *       read them (properties, {@code MEROSS_EMAIL}/{@code MEROSS_PASSWORD}, {@code config/meross.local.json});</li>
- *   <li>in staging or production, sign-in or storage isn't set up for the server: passkeys bound to
- *       {@code watson.<tailnet>.ts.net} with that one https origin, Tailscale device identity, a family, an absolute
- *       data directory, Firestore (never an emulator), Secure session cookies, and not the {@code dev} profile.</li>
+ *   <li>in staging or production, sign-in or storage isn't set up for the server: passkeys bound to the server's
+ *       public host name (a real DNS name, no placeholder) with that one https origin, browser-key device identity,
+ *       a family, an absolute data directory, Firestore (never an emulator), Secure session cookies, Casita listening
+ *       on the loopback address only (the reverse proxy is the only way in), and not the {@code dev} profile.</li>
  * </ul>
  * Local development (no {@code casita.deployment}, not on Compute Engine) is unchanged.
  */
@@ -49,8 +50,13 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
     static final String GCE_PRODUCT_NAME = "Google Compute Engine";
     static final Path DMI_PRODUCT_NAME = Path.of("/sys/class/dmi/id/product_name");
     static final Path MEROSS_LOCAL_FILE = Path.of("config", "meross.local.json");
-    /** The server's permanent name on the tailnet: watson.<tailnet>.ts.net, with the real tailnet, no placeholder. */
-    static final Pattern WATSON_RP_ID = Pattern.compile("watson\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?\\.ts\\.net");
+    /**
+     * The server's public host name: lower-case DNS labels, at least two, ending in a letters-only top-level domain,
+     * no trailing dot. A placeholder ({@code <...>}), an address or {@code localhost} doesn't match.
+     */
+    static final Pattern PUBLIC_RP_ID = Pattern.compile("(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}");
+    /** Where Casita may listen on a server: loopback only, behind the reverse proxy. */
+    static final Set<String> LOOPBACK = Set.of("127.0.0.1", "::1", "0:0:0:0:0:0:0:1");
 
     private final Log log;
     private final Path dmiProductName;
@@ -204,13 +210,13 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
         return out;
     }
 
-    /** Staging is reached only through tailscale serve at https://watson.<tailnet>.ts.net, and keeps its security store in Firestore. */
+    /** On a server, Casita is reached only through the reverse proxy at https://<rp-id>, and keeps its security store in Firestore. */
     private static void signInAndStorage(ConfigurableEnvironment env, Settings settings, Map<String, String> processEnv,
                                          List<String> problems, String who) {
         Binder binder = Binder.get(env);
         String rpId = settings.get("casita.security.rp-id");
-        if (rpId == null || !WATSON_RP_ID.matcher(rpId).matches()) {
-            problems.add(who + " needs casita.security.rp-id=watson.<tailnet>.ts.net with the real tailnet name, but it is "
+        if (rpId == null || !PUBLIC_RP_ID.matcher(rpId).matches()) {
+            problems.add(who + " needs casita.security.rp-id set to the server's public host name (e.g. watsonbental.duckdns.org), but it is "
                     + shown(rpId) + ".");
         }
         Set<String> origins = binder.bind("casita.security.allowed-origins", Bindable.setOf(String.class)).orElse(Set.of());
@@ -222,8 +228,12 @@ public class StagingGuard implements EnvironmentPostProcessor, Ordered {
             problems.add(who + " needs casita.security.family (who may sign in), but it is empty.");
         }
         String identity = settings.get("casita.security.device-identity");
-        if (identity == null || !identity.equalsIgnoreCase("tailscale")) {
-            problems.add(who + " needs casita.security.device-identity=tailscale, but it is " + shown(identity) + ".");
+        if (identity == null || !identity.equalsIgnoreCase("browser")) {
+            problems.add(who + " needs casita.security.device-identity=browser, but it is " + shown(identity) + ".");
+        }
+        String address = settings.get("server.address");
+        if (address == null || !LOOPBACK.contains(address.trim())) {
+            problems.add(who + " must listen on the loopback address only (server.address=127.0.0.1), but it is " + shown(address) + ".");
         }
         String dataDir = settings.get("casita.security.data-dir");
         if (dataDir == null || dataDir.equals(Settings.AMBIGUOUS) || !Path.of(dataDir).isAbsolute()) {

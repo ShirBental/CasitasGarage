@@ -19,14 +19,16 @@ import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
  * code does, reviewed separately. {@link #definitions()} is the reference for that code and what the tests create
  * in DynamoDB Local; {@link #verify} is the start-up check.
  */
-public record DynamoTables(String members, String passkeys, String devices, String invitations) {
+public record DynamoTables(String members, String passkeys, String devices, String invitations, String shortcutTokens) {
 
     public static final String BY_USER_HANDLE = "byUserHandle";
     public static final String BY_MEMBER = "byMember";
     public static final String BY_INVITE_ID = "byInviteId";
+    public static final String BY_TOKEN_ID = "byTokenId";
 
     public static DynamoTables withPrefix(String prefix) {
-        return new DynamoTables(prefix + "members", prefix + "passkeys", prefix + "devices", prefix + "invitations");
+        return new DynamoTables(prefix + "members", prefix + "passkeys", prefix + "devices", prefix + "invitations",
+                prefix + "shortcut-tokens");
     }
 
     public List<CreateTableRequest> definitions() {
@@ -39,12 +41,15 @@ public record DynamoTables(String members, String passkeys, String devices, Stri
                         List.of(index(BY_MEMBER, "memberId", null))),
                 table(invitations, "tokenHash", List.of(attribute("tokenHash", ScalarAttributeType.S), attribute("inviteId", ScalarAttributeType.S),
                         attribute("memberId", ScalarAttributeType.S), attribute("createdAt", ScalarAttributeType.N)),
-                        List.of(index(BY_INVITE_ID, "inviteId", null), index(BY_MEMBER, "memberId", "createdAt"))));
+                        List.of(index(BY_INVITE_ID, "inviteId", null), index(BY_MEMBER, "memberId", "createdAt"))),
+                table(shortcutTokens, "tokenHash", List.of(attribute("tokenHash", ScalarAttributeType.S), attribute("tokenId", ScalarAttributeType.S),
+                        attribute("memberId", ScalarAttributeType.S)),
+                        List.of(index(BY_TOKEN_ID, "tokenId", null), index(BY_MEMBER, "memberId", null))));
     }
 
     /** At start-up in DynamoDB mode: every table must exist, or Casita doesn't start. */
     public void verify(DynamoDbClient client) {
-        for (String table : List.of(members, passkeys, devices, invitations)) {
+        for (String table : List.of(members, passkeys, devices, invitations, shortcutTokens)) {
             try {
                 client.describeTable(b -> b.tableName(table));
             } catch (ResourceNotFoundException e) {

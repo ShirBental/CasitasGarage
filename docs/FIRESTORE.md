@@ -27,7 +27,8 @@ casita:
   machine (`127.0.0.1`, `localhost` or `[::1]`). If the library's own `FIRESTORE_EMULATOR_HOST`
   variable is set without that setting, Casita refuses to start: the variable alone would silently swap
   the real database for an unauthenticated emulator.
-- **Start-up:** `meta/schema` must exist with `schemaVersion: 1`. If it's missing, a different version, or
+- **Start-up:** `meta/schema` must exist with `schemaVersion: 1`. A new collection that older code never reads
+  (`shortcutTokens`) doesn't change the version, and needs no provisioning: Firestore creates it on the first write. If it's missing, a different version, or
   unreadable, Casita doesn't start. Casita never writes it: provisioning does.
 
 ## Data model
@@ -43,12 +44,13 @@ another collection's document.
 | `members/m_{memberId}` | `memberId`, `status`, `userHandle`, `createdAt`, `updatedAt`, `revokedAt`, `changeEventId` |
 | `userHandles/u_{b64url(handle)}` | `memberId`, `createdAt`. Created in the same batch that gives the member the handle, so a handle has one owner |
 | `passkeys/c_{credentialId}` | `memberId`, `userHandle`, `publicKeyCose` (bytes), `signatureCount`, `uvInitialized`, `backupEligible`, `backupState`, `transports`, `attestationObject`, `attestationClientDataJson`, `label`, `createdAt`, `lastUsedAt`, `status`, `revokedAt`, `enrolledNodeId`, `inviteId`, `changeEventId` |
-| `devices/n_{tailscaleStableId}` | `nodeId`, `memberId`, `label`, `nodeName`, `credentialId`, `inviteId`, `status`, `authorizedAt`, `revokedAt`, `releasedAt`, `changeEventId` |
+| `devices/n_{deviceId}` (a browser key `b-…`; older documents: a Tailscale StableID) | `nodeId`, `memberId`, `label`, `nodeName`, `credentialId`, `inviteId`, `status`, `authorizedAt`, `revokedAt`, `releasedAt`, `changeEventId` |
 | `invitations/h_{sha256hex(token)}` | `tokenHash`, `inviteId`, `memberId`, `label`, `status`, `createdAt`, `expiresAt`, `consumedAt`, `consumeRequestId`, `enrollmentId`, `nodeId`, `nodeName`, `enrolledAt`, `enrolledCredentialId`, `revokedAt`, `ttl`, `changeEventId` |
-| `securityEvents/e_{random 128 bits}` | `type`, `at`, `outcome`, `reason`, `memberId`, `nodeId`, `inviteId`, `credentialId`, `expiresAt` |
+| `shortcutTokens/t_{sha256hex(token)}` | `tokenHash`, `tokenId`, `memberId`, `label`, `door`, `action`, `status` (`ACTIVE` \| `REVOKED`), `createdAt`, `expiresAt`, `revokedAt`, `changeEventId` (docs/SHORTCUTS.md). No TTL: revoked and expired tokens stay listed |
+| `securityEvents/e_{random 128 bits}` | `type`, `at`, `outcome`, `reason`, `memberId`, `nodeId`, `inviteId`, `credentialId`, `shortcutTokenId`, `expiresAt` |
 | `meta/schema` | `schemaVersion`. Written by provisioning only |
 
-**Nothing secret is in an ID or a field.** The invitation token never reaches Firestore: only its SHA-256
+**Nothing secret is in an ID or a field.** Neither an invitation token nor a Shortcut token reaches Firestore: only its SHA-256
 (256 random bits, so the hash can't be enumerated). Event IDs are random and say nothing about the event.
 Not stored: tokens, session IDs, IP addresses, user agents, anything about Meross.
 
@@ -56,7 +58,7 @@ Not stored: tokens, session IDs, IP addresses, user agents, anything about Meros
 decision made again recognizes its own earlier commit (below). `lastEnrollmentAt` on members and passkeys
 exists only to carry an enrollment's condition on them.
 
-**Indexes:** only Firestore's automatic single-field indexes (`memberId`, `inviteId`, `securityEvents.at`).
+**Indexes:** only Firestore's automatic single-field indexes (`memberId`, `inviteId`, `tokenId`, `securityEvents.at`).
 Exempt the byte fields (`publicKeyCose`, `attestationObject`, `attestationClientDataJson`) from indexing at
 provisioning: nothing queries them.
 
@@ -122,7 +124,9 @@ only find documents. The fields that decide (`memberId`, `status`) are checked o
 Every change to access writes a `securityEvents` document **in the same batch** as the change: both or
 neither. Types: `INVITATION_CREATED`, `INVITATION_CONSUMED`, `INVITATION_REFUSED` (expired, revoked or
 already used: a replayed link), `DEVICE_ENROLLED`, `ENROLLMENT_REFUSED` (with a reason category),
-`SIGNED_IN`, `PASSKEY_REVOKED`, `DEVICE_REVOKED`, `DEVICE_RELEASED`, `MEMBER_REVOKED`. An unknown token
+`SIGNED_IN`, `PASSKEY_REVOKED`, `DEVICE_REVOKED`, `DEVICE_RELEASED`, `MEMBER_REVOKED`, `SHORTCUT_TOKEN_CREATED`,
+`SHORTCUT_TOKEN_REVOKED` (with `shortcutTokenId`, never the token or its hash). A Shortcut request that uses a token
+writes nothing here (it is logged, and a command appears in the activity log), so a busy Shortcut costs reads only. An unknown token
 writes nothing, so guessing costs no writes.
 
 Not recorded here: requests refused by the access check itself (a revoked device's next request, an
@@ -132,9 +136,40 @@ small interface addition (`SecurityStore.recordRefusal`) in all three stores, an
 ## IAM (gate G3 of the feasibility doc)
 
 The runtime service account needs `datastore.entities.get`, `list`, `create`, `update` and
-`datastore.databases.getMetadata`. It needs **no `delete`**: nothing in this code deletes a document. The
+`datastore.databases.getMetadata`. It needs **no `delete`**: nothing in this code deletes a document. Shortcut tokens
+need nothing more (the same four entity permissions, on one more collection). The
 emulator doesn't enforce IAM, so this is a provisioning check, not a test. No service-account keys. Org policy
-`iam.disableServiceAccountKeyCreation` on the project. Security Rules: `allow read, write: if false;`.
+`iam.disableServiceAccountKeyCreation` on the project.
+
+**Security Rules: deny all, in version control** (`deploy/watson/firestore.rules`: `allow read, write: if false;`).
+Casita's server client library uses IAM and "bypasses all Firestore Security Rules" (Google's words); rules apply only to
+Firebase mobile and web clients, and Casita has none. Deny-all closes that door for good. `provision-gcp.sh` reads the
+rules released as `cloud.firestore` (Firebase Rules API, `firebaserules.googleapis.com`, enabled with the others):
+
+- none released: `--apply` creates a ruleset from `firestore.rules` and releases it (create-only);
+- released and equal to `firestore.rules` (ignoring comments and whitespace): OK;
+- released and different (Firebase's "test mode" rules, say): **PROBLEM**, and the run stops; it never replaces them.
+
+Check by hand: Firebase console (or Google Cloud console) → Firestore → **Rules**; or
+`curl -H "Authorization: Bearer $(gcloud auth print-access-token)" https://firebaserules.googleapis.com/v1/projects/PROJECT/releases/cloud.firestore`
+and then the `rulesetName` it names.
+
+**Recovery: point-in-time recovery (PITR) on, and delete protection on**, both set when `provision-gcp.sh` creates the
+database (`--delete-protection --enable-pitr`). For an existing database the script never changes it: a database without
+PITR is a PROBLEM, fixed deliberately with `gcloud firestore databases update --database='(default)' --enable-pitr`.
+Check: `gcloud firestore databases describe --database='(default)' --format='value(pointInTimeRecoveryEnablement,deleteProtectionState,versionRetentionPeriod)'`
+(`POINT_IN_TIME_RECOVERY_ENABLED DELETE_PROTECTION_ENABLED 604800s`).
+
+- **What it keeps:** every version of every document for 7 days (`versionRetentionPeriod: 604800s`), readable at a past
+  time or restorable; plus, from enabling, nothing earlier (`earliestVersionTime`).
+- **Cost:** PITR storage "doesn't have a free tier" and needs billing enabled, even when the database reports
+  `freeTier: true` (that covers ordinary reads, writes and storage). It is billed as the database's size, measured daily
+  and averaged, times the PITR unit price per GB-month (on the Firestore pricing page). Casita's database is kilobytes,
+  so the charge rounds to cents a month at most; reads made against old versions are billed as ordinary reads.
+- **Restoring undoes revocations.** A restore (or an import) brings back every member, device, passkey, invitation and
+  Shortcut token as it was then, including ones revoked since. Revoke them again before Casita serves requests.
+- **Turning it off:** `gcloud firestore databases update --database='(default)' --no-enable-pitr` (up to a day of PITR
+  storage may still be charged).
 
 ## Tests
 

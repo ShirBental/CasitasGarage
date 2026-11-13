@@ -3,13 +3,21 @@
 #
 #   deploy/watson/deploy-release.sh deploy/watson/watson.conf            # build and verify; shows what it would copy and run
 #   deploy/watson/deploy-release.sh deploy/watson/watson.conf --apply    # also copies it to watson and installs it
+#   deploy/watson/deploy-release.sh deploy/watson/watson.conf --apply --preview   # copies it and starts it as the public
+#                                                                        # preview on PUBLIC_HOST instead (public-preview.sh)
+#
+# Works from Cloud Shell as well as a Mac (sha256sum or shasum). The release directory also carries deploy/ (this
+# folder: the VM-side scripts and units) and docs/PUBLIC_HTTPS.md, so the VM runs the scripts of the release it installs.
 #
 # The build is the CI build (mvn verify, with the pinned Firestore emulator and the skip guard), so a release is
 # never a jar that skipped its tests. The copy goes through Identity-Aware Proxy (gcloud compute scp/ssh
 # --tunnel-through-iap); install-release.sh on the VM checks the jar's SHA-256, switches releases and rolls back
 # by itself if the new one isn't healthy.
 set -euo pipefail
-conf="${1:?usage: deploy-release.sh <watson.conf> [--apply]}"; apply="${2:-}"
+conf="${1:?usage: deploy-release.sh <watson.conf> [--apply] [--preview]}"; shift
+apply=""; preview=no
+for a in "$@"; do case "$a" in --apply) apply=--apply ;; --preview) preview=yes ;; *) echo "unknown argument $a" >&2; exit 2 ;; esac; done
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 # shellcheck source=/dev/null
 . "$conf"
 repo="$(git rev-parse --show-toplevel)"; cd "$repo"
@@ -18,7 +26,7 @@ commit="$(git rev-parse HEAD)"
 
 jar_emulator="${FIRESTORE_EMULATOR_JAR:-$HOME/cloud-firestore-emulator-v1.22.0.jar}"
 [ -f "$jar_emulator" ] || { echo "the Firestore emulator jar isn't at $jar_emulator (docs/FIRESTORE.md); set FIRESTORE_EMULATOR_JAR" >&2; exit 1; }
-echo "9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c  $jar_emulator" | shasum -a 256 -c - >/dev/null
+echo "9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c  $jar_emulator" | sha256 -c - >/dev/null
 
 echo "== building $commit (mvn verify, as CI)"
 (unset FIRESTORE_EMULATOR_HOST GOOGLE_APPLICATION_CREDENTIALS MEROSS_EMAIL MEROSS_PASSWORD CASITA_MEROSS_EMAIL CASITA_MEROSS_PASSWORD
@@ -29,15 +37,21 @@ out="target/watson-release/$commit"
 rm -rf "$out"; mkdir -p "$out"
 cp target/casitas-garage-0.1.0-SNAPSHOT.jar "$out/casita.jar"
 cp bin/casita-access "$out/casita-access"
-cp docs/WATSON_DEPLOYMENT_READINESS.md "$out/"
+cp docs/WATSON_DEPLOYMENT_READINESS.md docs/PUBLIC_HTTPS.md "$out/"
+mkdir -p "$out/deploy" && cp deploy/watson/*.sh deploy/watson/*.service deploy/watson/Caddyfile deploy/watson/casita-access "$out/deploy/"
 echo "$commit $(date -u +%Y-%m-%dT%H:%M:%SZ) $(git log -1 --format=%s)" > "$out/RELEASE"
-sha="$(shasum -a 256 "$out/casita.jar" | cut -d' ' -f1)"
+sha="$(sha256 "$out/casita.jar" | cut -d' ' -f1)"
 echo "== release $commit: casita.jar sha256 $sha ($(du -h "$out/casita.jar" | cut -f1))"
 
 remote="casita-release-$commit"
 G="gcloud --project=$PROJECT_ID compute"
 copy=($G scp --zone="$ZONE" --tunnel-through-iap --recurse "$out" "$VM_NAME:$remote")
 install=($G ssh "$VM_NAME" --zone="$ZONE" --tunnel-through-iap --command="sudo casita-install-release ~/$remote $sha && casita-health")
+if [ "$preview" = yes ]; then
+  : "${PUBLIC_HOST:?watson.conf needs PUBLIC_HOST for --preview}"
+  install=($G ssh "$VM_NAME" --zone="$ZONE" --tunnel-through-iap \
+    --command="sudo bash ~/$remote/deploy/public-preview.sh ~/$remote $sha --host $PUBLIC_HOST --apply")
+fi
 printf '  $'; printf ' %q' "${copy[@]}"; echo
 printf '  $'; printf ' %q' "${install[@]}"; echo
 if [ "$apply" = "--apply" ]; then

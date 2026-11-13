@@ -98,9 +98,13 @@ class GarageController {
         return find(door).open(user.getName());
     }
 
+    /**
+     * {@code ?checked=true}: the signed-in user says they looked at the door. Recorded with the close; it changes no
+     * timing ({@link GarageService#close(String, boolean)}).
+     */
     @PostMapping("/doors/{door}/close")
-    CommandResult close(@PathVariable String door, Principal user) {
-        return find(door).close(user.getName());
+    CommandResult close(@PathVariable String door, @RequestParam(defaultValue = "false") boolean checked, Principal user) {
+        return find(door).close(user.getName(), checked);
     }
 
     /** After a stuck or lost movement of this door: the signed-in user has checked it. Sends nothing to it. */
@@ -130,8 +134,8 @@ class GarageController {
 
     /** The first door (Ford) only. Use {@code /api/doors/{door}/close}. */
     @PostMapping("/close")
-    CommandResult close(Principal user) {
-        return garage.first().close(user.getName());
+    CommandResult close(@RequestParam(defaultValue = "false") boolean checked, Principal user) {
+        return garage.first().close(user.getName(), checked);
     }
 
     /** The first door (Ford) only. Use {@code /api/doors/{door}/resume}. */

@@ -36,7 +36,7 @@ import org.springframework.web.servlet.resource.ResourceUrlProvider;
 import home.casita.security.access.Invitations;
 import home.casita.security.access.LocalAdmin;
 import home.casita.security.access.SoftAuthenticator;
-import home.casita.security.access.TestTailnet;
+import home.casita.security.access.TestBrowsers;
 import home.casita.security.store.SecurityStore;
 
 /**
@@ -46,7 +46,7 @@ import home.casita.security.store.SecurityStore;
  * own files, Watson's artwork and the API stay refused, by either name.
  */
 @SpringBootTest(properties = "casita.security.family=shir,hubby")
-@Import(TestTailnet.Config.class)
+@Import(TestBrowsers.Config.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class PublicFilesTest {
 
@@ -75,7 +75,7 @@ class PublicFilesTest {
     @Autowired
     private ResourceUrlProvider urls;
     @Autowired
-    private TestTailnet.FakeWhois whois;
+    private TestBrowsers.Browsers browsers;
     @Autowired
     private SecurityStore store;
 
@@ -89,7 +89,7 @@ class PublicFilesTest {
     @AfterEach
     void forgetEnrollments() throws IOException {
         Files.deleteIfExists(DATA.resolve("security.json"));
-        whois.reset();
+        browsers.reset();
     }
 
     private MockHttpServletResponse fetch(String url, RequestPostProcessor who) throws Exception {
@@ -100,10 +100,10 @@ class PublicFilesTest {
         return request -> request;
     }
 
-    private static RequestPostProcessor in(MockHttpSession session, TestTailnet.Phone phone) {
+    private static RequestPostProcessor in(MockHttpSession session, TestBrowsers.Phone phone) {
         return request -> {
             request.setSession(session);
-            return TestTailnet.from(phone).postProcessRequest(request);
+            return TestBrowsers.from(phone).postProcessRequest(request);
         };
     }
 
@@ -111,7 +111,7 @@ class PublicFilesTest {
     private MockHttpSession enrolling() throws Exception {
         String token = invitations.create("hubby", "Hubby's iPhone").token();
         var redeemed = mvc.perform(post("/login/ott").param("token", token).with(csrf())
-                .with(TestTailnet.from(TestTailnet.HUBBY_PHONE))).andReturn();
+                .with(TestBrowsers.from(TestBrowsers.HUBBY_PHONE))).andReturn();
         assertThat(redeemed.getResponse().getRedirectedUrl()).isEqualTo("/passkey");
         return (MockHttpSession) redeemed.getRequest().getSession();
     }
@@ -158,7 +158,7 @@ class PublicFilesTest {
     @Test
     void anEnrollingBrowserLoadsEverythingThePasskeyPageLinksAndStaysEnrolling() throws Exception {
         MockHttpSession session = enrolling();
-        RequestPostProcessor phone = in(session, TestTailnet.HUBBY_PHONE);
+        RequestPostProcessor phone = in(session, TestBrowsers.HUBBY_PHONE);
         List<String> links = links("/passkey", phone);
         assertThat(links).anyMatch(l -> l.matches("/passkey-[0-9a-f]{32}\\.js")).anyMatch(l -> l.matches("/common-[0-9a-f]{32}\\.js"))
                 .anyMatch(l -> l.matches("/casita-[0-9a-f]{32}\\.css")).anyMatch(l -> l.matches("/icons/icon-192-[0-9a-f]{32}\\.png"))
@@ -199,10 +199,10 @@ class PublicFilesTest {
 
         // Redeemed: an enrollment session, the passkey page and every file it links, hashed script included.
         var redeemed = mvc.perform(post("/login/ott")
-                .param("token", token).with(csrf()).with(TestTailnet.from(TestTailnet.HUBBY_PHONE))).andReturn();
+                .param("token", token).with(csrf()).with(TestBrowsers.from(TestBrowsers.HUBBY_PHONE))).andReturn();
         assertThat(redeemed.getResponse().getRedirectedUrl()).isEqualTo("/passkey");
         MockHttpSession enrollment = (MockHttpSession) redeemed.getRequest().getSession();
-        RequestPostProcessor enrolling = in(enrollment, TestTailnet.HUBBY_PHONE);
+        RequestPostProcessor enrolling = in(enrollment, TestBrowsers.HUBBY_PHONE);
         List<String> passkeyPage = links("/passkey", enrolling);
         assertThat(passkeyPage).anyMatch(l -> l.matches("/passkey-[0-9a-f]{32}\\.js"));
         for (String link : passkeyPage) if (!link.equals("/login")) assertLoads(fetch(link, enrolling), link + " enrolling");
@@ -210,25 +210,25 @@ class PublicFilesTest {
         // Face ID set up: Spring's real WebAuthn verification of a real attestation.
         String attestation = iphone.register(options("/webauthn/register/options", enrolling), "iCloud Keychain");
         assertThat(send("/webauthn/register", enrolling, attestation)).isEqualTo(200);
-        assertThat(store.device(TestTailnet.HUBBY_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("hubby")).isTrue());
+        assertThat(store.device(TestBrowsers.HUBBY_PHONE.nodeId())).get().satisfies(d -> assertThat(d.activeFor("hubby")).isTrue());
         assertLoads(fetch("/webauthn/register?success", nobody()), "where the passkey script lands");
 
         // Signed in with that passkey, on that phone: the home screen and everything it links.
         MockHttpSession session = new MockHttpSession();
-        RequestPostProcessor phone = in(session, TestTailnet.HUBBY_PHONE);
+        RequestPostProcessor phone = in(session, TestBrowsers.HUBBY_PHONE);
         assertThat(send("/login/webauthn", phone, iphone.assertion(options("/webauthn/authenticate/options", phone)))).isEqualTo(200);
         assertThat(fetch("/api/doors", phone).getStatus()).isEqualTo(200);
         for (String link : links("/", phone)) assertLoads(fetch(link, phone), link + " signed in");
         String app = hashed("/app.js");
 
         // The phone revoked on the server: its session ends on the next request; the public files stay public.
-        var revoked = mvc.perform(delete("/admin/devices/" + TestTailnet.HUBBY_PHONE.nodeId())
+        var revoked = mvc.perform(delete("/admin/devices/" + TestBrowsers.HUBBY_PHONE.nodeId())
                 .header(LocalAdmin.HEADER, Files.readString(DATA.resolve("admin.secret")).trim())).andReturn().getResponse();
         assertThat(revoked.getContentAsString()).contains("\"revoked\":true");
         assertThat(fetch("/api/doors", phone).getStatus()).isEqualTo(401);
         assertThat(session.isInvalid()).isTrue();
         MockHttpSession again = new MockHttpSession();
-        RequestPostProcessor phoneAgain = in(again, TestTailnet.HUBBY_PHONE);
+        RequestPostProcessor phoneAgain = in(again, TestBrowsers.HUBBY_PHONE);
         assertThat(send("/login/webauthn", phoneAgain, iphone.assertion(options("/webauthn/authenticate/options", phoneAgain))))
                 .as("a passkey sign-in on a revoked phone").isNotEqualTo(200);
         assertThat(fetch("/api/doors", phoneAgain).getStatus()).isEqualTo(401);
@@ -242,9 +242,9 @@ class PublicFilesTest {
 
     @Test
     void addToHomeScreenIconsLoadWithoutASession() throws Exception {
-        MockHttpSession shir = TestTailnet.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestTailnet.SHIR_PHONE);
+        MockHttpSession shir = TestBrowsers.signedInOn(context, "shir", "c2hpcnMtcGFzc2tleQ", TestBrowsers.SHIR_PHONE);
         List<String> icons = new ArrayList<>(links("/manifest.webmanifest", nobody()));
-        links("/", in(shir, TestTailnet.SHIR_PHONE)).stream().filter(l -> l.startsWith("/icons/")).forEach(icons::add);
+        links("/", in(shir, TestBrowsers.SHIR_PHONE)).stream().filter(l -> l.startsWith("/icons/")).forEach(icons::add);
         assertThat(icons).anyMatch(l -> l.matches("/icons/apple-touch-icon-[0-9a-f]{32}\\.png"))
                 .anyMatch(l -> l.matches("/icons/icon-512-[0-9a-f]{32}\\.png"))
                 .anyMatch(l -> l.matches("/icons/icon-maskable-512-[0-9a-f]{32}\\.png"))
@@ -273,7 +273,7 @@ class PublicFilesTest {
         }
         MockHttpSession session = enrolling();
         for (String url : refused) {
-            assertThat(fetch(url, in(session, TestTailnet.HUBBY_PHONE)).getStatus()).as(url + " enrolling").isEqualTo(403);
+            assertThat(fetch(url, in(session, TestBrowsers.HUBBY_PHONE)).getStatus()).as(url + " enrolling").isEqualTo(403);
         }
     }
 
@@ -292,7 +292,7 @@ class PublicFilesTest {
         assertThat(fetch("/admin/devices", nobody()).getStatus()).isEqualTo(403);
 
         MockHttpSession session = enrolling();
-        RequestPostProcessor phone = in(session, TestTailnet.HUBBY_PHONE);
+        RequestPostProcessor phone = in(session, TestBrowsers.HUBBY_PHONE);
         for (String url : api) assertThat(fetch(url, phone).getStatus()).as(url + " enrolling").isEqualTo(403);
         assertThat(mvc.perform(post("/api/doors/ford/open").with(phone).with(csrf())).andReturn().getResponse().getStatus()).isEqualTo(403);
     }

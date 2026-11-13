@@ -3,7 +3,7 @@
 Casita is our home's helper. This project lets the family see and move the garage door from
 their iPhones, privately and safely.
 
-- Runs on a small AWS EC2 server, reachable only over Tailscale.
+- Runs on a small Compute Engine VM (watson), on public HTTPS at `watsonbental.duckdns.org` behind Caddy; passkeys and per-browser invites decide who gets in (docs/ACCESS.md, docs/PUBLIC_HTTPS.md).
 - Talks to the Meross MSG100 garage door opener through Meross's cloud.
 - Family members sign in with passkeys.
 

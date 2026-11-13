@@ -20,16 +20,17 @@ import org.springframework.mock.env.MockEnvironment;
 /** The staging guard's rules, one configuration at a time. StagingStartupTest runs them through a real startup. */
 class StagingGuardTest {
 
-    /** Staging as the VM sets it up (deploy/watson/casita.env.example, with a tailnet filled in). */
+    /** Staging as the VM sets it up (deploy/watson/casita.env.example, with the public host filled in). */
     static Map<String, String> stagingSettings() {
         Map<String, String> s = new LinkedHashMap<>();
         s.put("casita.deployment", "staging");
         s.put("casita.door", "simulated");
         s.put("casita.meross.command-mode", "off");
-        s.put("casita.security.rp-id", "watson.example-tailnet.ts.net");
-        s.put("casita.security.allowed-origins", "https://watson.example-tailnet.ts.net");
+        s.put("casita.security.rp-id", "casita.example.org");
+        s.put("casita.security.allowed-origins", "https://casita.example.org");
         s.put("casita.security.family", "shir,hubby");
-        s.put("casita.security.device-identity", "tailscale");
+        s.put("casita.security.device-identity", "browser");
+        s.put("server.address", "127.0.0.1");
         s.put("casita.security.data-dir", "/var/lib/casita");
         s.put("casita.storage.type", "firestore");
         s.put("server.servlet.session.cookie.secure", "true");
@@ -115,9 +116,9 @@ class StagingGuardTest {
     /* ---------- sign-in and storage ---------- */
 
     @ParameterizedTest
-    @ValueSource(strings = {"localhost", "casita.example-tailnet.ts.net", "watson.<tailnet>.ts.net", "watson.<verified-tailnet>.ts.net",
-            "watson.ts.net", "watson.example-tailnet.ts.net.", "WATSON.example-tailnet.ts.net", "watson.example.com", ""})
-    void stagingRefusesAnRpIdThatIsntWatsonOnARealTailnet(String rpId) {
+    @ValueSource(strings = {"localhost", "<PUBLIC_HOST>", "watson.<tailnet>.ts.net", "casita.example.org.", "Casita.Example.org",
+            "127.0.0.1", "casita", "casita.example.123", "-casita.example.org", "casita_x.example.org", ""})
+    void stagingRefusesAnRpIdThatIsntAPublicHostName(String rpId) {
         MockEnvironment env = staging().withProperty("casita.security.rp-id", rpId)
                 .withProperty("casita.security.allowed-origins", "https://" + rpId);
         assertThat(problems(env)).singleElement().asString().contains("casita.security.rp-id");
@@ -129,10 +130,10 @@ class StagingGuardTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"https://watson.other-tailnet.ts.net", "http://watson.example-tailnet.ts.net",
-            "https://watson.example-tailnet.ts.net:8443", "https://watson.example-tailnet.ts.net,https://evil.example-tailnet.ts.net",
-            "https://watson.example-tailnet.ts.net/", "http://localhost:8080"})
-    void stagingRefusesAnyOriginButExactlyTheWatsonOne(String origins) {
+    @ValueSource(strings = {"https://other.example.org", "http://casita.example.org",
+            "https://casita.example.org:8443", "https://casita.example.org,https://evil.casita.example.org",
+            "https://casita.example.org/", "http://localhost:8080"})
+    void stagingRefusesAnyOriginButExactlyThePublicOne(String origins) {
         assertThat(problems(staging().withProperty("casita.security.allowed-origins", origins))).singleElement().asString()
                 .contains("allowed-origins");
     }
@@ -149,11 +150,24 @@ class StagingGuardTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"development", "DEVELOPMENT", ""})
-    void stagingRefusesAnyDeviceIdentityButTailscale(String identity) {
+    @ValueSource(strings = {"development", "DEVELOPMENT", "tailscale", ""})
+    void stagingRefusesAnyDeviceIdentityButBrowser(String identity) {
         assertThat(problems(staging().withProperty("casita.security.device-identity", identity))).singleElement().asString()
                 .contains("device-identity");
         assertThat(problems(staging("casita.security.device-identity"))).singleElement().asString().contains("device-identity");
+    }
+
+    @Test
+    void theWatsonHostNameIsAccepted() {
+        assertThat(problems(staging().withProperty("casita.security.rp-id", "watsonbental.duckdns.org")
+                .withProperty("casita.security.allowed-origins", "https://watsonbental.duckdns.org"))).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0.0.0.0", "10.80.0.2", "::", ""})
+    void stagingRefusesListeningAnywhereButLoopback(String address) {
+        assertThat(problems(staging().withProperty("server.address", address))).singleElement().asString().contains("server.address");
+        assertThat(problems(staging("server.address"))).singleElement().asString().contains("server.address");
     }
 
     @Test

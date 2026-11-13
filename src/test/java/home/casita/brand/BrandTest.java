@@ -15,7 +15,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
-import home.casita.security.access.TestTailnet;
+import home.casita.security.access.TestBrowsers;
 
 /** The family's words come from configuration, reach only signed-in family, and stay out of the pages' code. */
 @SpringBootTest(properties = {
@@ -23,7 +23,7 @@ import home.casita.security.access.TestTailnet;
         "casita.brand.household=test household",
         "casita.brand.companion=Rex",
         "casita.brand.about-line=A test line."})
-@Import(TestTailnet.Config.class)
+@Import(TestBrowsers.Config.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class BrandTest {
 
@@ -51,8 +51,8 @@ class BrandTest {
     void theFamilysWordsAreForTheFamilyOnly() throws Exception {
         var mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         mvc.perform(get("/api/brand")).andExpect(status().isUnauthorized());
-        var shir = TestTailnet.signedInOn(context, "shir", "c2hpcnMta2V5", TestTailnet.SHIR_PHONE);
-        mvc.perform(get("/api/brand").session(shir).with(TestTailnet.from(TestTailnet.SHIR_PHONE)))
+        var shir = TestBrowsers.signedInOn(context, "shir", "c2hpcnMta2V5", TestBrowsers.SHIR_PHONE);
+        mvc.perform(get("/api/brand").session(shir).with(TestBrowsers.from(TestBrowsers.SHIR_PHONE)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.household").value("test household"))
                 .andExpect(jsonPath("$.companion").value("Rex"))

@@ -36,7 +36,7 @@ GOOD_ENV='# /etc/casita/casita.env (test)
 CASITA_DEPLOYMENT=staging
 CASITA_DOOR=simulated
 CASITA_MEROSS_COMMANDMODE=off
-CASITA_SECURITY_RPID=watson.example-tailnet.ts.net
+CASITA_SECURITY_RPID=casita.example.org
 JAVA_OPTS=-Xmx128m -XX:+UseSerialGC'
 
 # fresh: a watson as bootstrap-vm.sh leaves it (no release yet, service enabled), with some data in place.

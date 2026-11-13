@@ -24,8 +24,8 @@ class LocalAdminTest {
         assertThat(admin.allowed(request("0:0:0:0:0:0:0:1", secret))).isTrue();
         assertThat(admin.allowed(request("127.0.0.1", null))).isFalse();
         assertThat(admin.allowed(request("127.0.0.1", secret.substring(1)))).isFalse();
-        assertThat(admin.allowed(request("100.64.0.11", secret))).isFalse();
-        for (String header : new String[] {"X-Forwarded-For", "X-Forwarded-Host", "Tailscale-User-Login", "Tailscale-Funnel-Request"}) {
+        assertThat(admin.allowed(request("203.0.113.10", secret))).isFalse(); // a client address Tomcat took from the proxy
+        for (String header : new String[] {"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "X-Real-IP", "Forwarded", "Via"}) {
             MockHttpServletRequest proxied = request("127.0.0.1", secret);
             proxied.addHeader(header, "x");
             assertThat(admin.allowed(proxied)).as(header).isFalse();

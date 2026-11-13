@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.function.Supplier;
 
 import org.springframework.security.authorization.AuthorizationDecision;
@@ -21,9 +22,10 @@ import jakarta.servlet.http.HttpServletRequest;
 
 /**
  * Who may administer access: only someone on the server itself. A request is accepted when it comes
- * straight to 127.0.0.1 (never through tailscale serve, whose requests carry the phone's tailnet address
- * and Tailscale headers) and presents the admin secret from {@code <data-dir>/admin.secret}, a random value
- * created on first start, readable by Casita's user only. The {@code casita-access} script reads it.
+ * straight to 127.0.0.1 (never through the reverse proxy: Caddy answers {@code /admin} itself with 404, and
+ * anything it does forward carries the client's address and X-Forwarded-* headers) and presents the admin
+ * secret from {@code <data-dir>/admin.secret}, a random value created on first start, readable by Casita's
+ * user only. The {@code casita-access} script reads it.
  */
 public class LocalAdmin implements AuthorizationManager<RequestAuthorizationContext> {
 
@@ -57,10 +59,17 @@ public class LocalAdmin implements AuthorizationManager<RequestAuthorizationCont
     boolean allowed(HttpServletRequest request) {
         String remote = request.getRemoteAddr();
         boolean local = "127.0.0.1".equals(remote) || "0:0:0:0:0:0:0:1".equals(remote);
-        boolean proxied = request.getHeader("X-Forwarded-For") != null || request.getHeader("X-Forwarded-Host") != null
-                || request.getHeader(TailscaleDeviceIdentity.USER_HEADER) != null || request.getHeader(TailscaleDeviceIdentity.FUNNEL_HEADER) != null;
         String given = request.getHeader(HEADER);
-        return local && !proxied && given != null
+        return local && !proxied(request) && given != null
                 && MessageDigest.isEqual(secret, given.trim().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Headers only a proxy adds. Any of them on a request means it didn't come straight from this server. */
+    static final List<String> PROXY_HEADERS = List.of("X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+            "X-Real-IP", "Forwarded", "Via");
+
+    /** True when the request carries any sign of having been forwarded. */
+    static boolean proxied(HttpServletRequest request) {
+        return PROXY_HEADERS.stream().anyMatch(h -> request.getHeader(h) != null);
     }
 }

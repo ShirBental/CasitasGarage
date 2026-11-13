@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Is Casita on watson healthy, and still a simulation-only staging? Run on the VM (casita-health). Read-only.
+# Is Casita on watson healthy, and reachable only as it should be? Run on the VM (casita-health). Read-only.
 #
 #   casita-health            # one check
 #   casita-health --wait 90  # wait up to 90 s for /healthz (used after a restart)
 #
 # Exit 0 only when: the service is active, /healthz answers "ok" on 127.0.0.1:8080, this start's log has the
-# staging or production guard's "ok" line, and Funnel is off.
+# staging or production guard's "ok" line, port 8080 is open on loopback only, and, once Caddy forwards the public
+# name to casita.service, https://<public name>/healthz answers "ok" with a trusted certificate.
 set -uo pipefail
 wait=0; [ "${1:-}" = "--wait" ] && wait="${2:-90}"
 fail=0
@@ -30,9 +31,25 @@ case "$line$pline" in
   *) bad "no 'staging guard: ok' or 'production guard: ok' line since the last start" ;;
 esac
 
-if command -v tailscale >/dev/null; then
-  tailscale funnel status 2>/dev/null | grep -qi "funnel on" && bad "Tailscale Funnel is on: Casita must not be public" || ok "Funnel off"
-  tailscale serve status 2>/dev/null | grep -q "127.0.0.1:8080" && ok "tailscale serve -> 127.0.0.1:8080" || echo "note: tailscale serve isn't proxying to 127.0.0.1:8080 yet"
+# Casita itself listens on loopback only: Caddy is the only way in from outside.
+listeners="$(ss -ltnH 'sport = :8080' 2>/dev/null | awk '{print $4}' | sort -u | tr '\n' ' ')"
+case "$listeners" in
+  "") ;;  # not up: already reported above
+  *) only_loopback=yes
+     for l in $listeners; do case "$l" in 127.0.0.1:8080|"[::1]:8080"|"[::ffff:127.0.0.1]:8080") ;; *) only_loopback=no ;; esac; done
+     [ "$only_loopback" = yes ] && ok "port 8080 on loopback only" || bad "port 8080 is open on $listeners, not loopback only" ;;
+esac
+if systemctl list-unit-files caddy.service >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
+  systemctl is-active --quiet caddy && ok "caddy active" || bad "caddy is $(systemctl is-active caddy)"
+  host="$(sed -n 's/^CASITA_SECURITY_RPID=//p' /etc/casita/casita.env 2>/dev/null)"
+  site="$(awk '/^[a-z0-9.-]+ [{]$/ {print $1; exit}' /etc/caddy/Caddyfile)"
+  upstream="$(awk '$1 == "reverse_proxy" {print $2; exit}' /etc/caddy/Caddyfile)"
+  echo "info: caddy forwards ${site:-?} to ${upstream:-?}"
+  # Only when Caddy serves casita.service's own sign-in name (after cutover): it must work end to end.
+  if [ -n "$host" ] && [ "$site" = "$host" ] && [ "$upstream" = "127.0.0.1:8080" ]; then
+    [ "$(curl -s --max-time 5 --noproxy '*' --resolve "$host:443:127.0.0.1" "https://$host/healthz")" = "ok" ] \
+      && ok "https://$host/healthz ok (trusted certificate)" || bad "https://$host/healthz isn't ok over trusted HTTPS"
+  fi
 fi
 
 pid="$(systemctl show -p MainPID --value casita.service)"

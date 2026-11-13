@@ -12,26 +12,34 @@ import org.junit.jupiter.api.Test;
 class CasitaSecurityPropertiesTest {
 
     private static CasitaSecurityProperties props(String rpId, Set<String> origins, List<String> family) {
-        return new CasitaSecurityProperties(rpId, origins, family, Path.of("data"), CasitaSecurityProperties.DeviceIdentityMode.TAILSCALE, "tailscale");
+        return new CasitaSecurityProperties(rpId, origins, family, Path.of("data"), CasitaSecurityProperties.DeviceIdentityMode.BROWSER, null);
     }
 
     @Test
-    void theTailscaleSetupIsAccepted() {
-        CasitaSecurityProperties p = props("casita.example-tailnet.ts.net", Set.of("https://casita.example-tailnet.ts.net"), List.of("shir", "hubby"));
+    void thePublicSetupIsAccepted() {
+        CasitaSecurityProperties p = props("watsonbental.duckdns.org", Set.of("https://watsonbental.duckdns.org"), List.of("shir", "hubby"));
 
         assertThat(p.family()).containsExactly("shir", "hubby");
+        assertThat(p.deviceKey()).isEqualTo(Path.of("data", "device.key"));
+    }
+
+    @Test
+    void theDeviceKeyFileCanBeSetApart() {
+        CasitaSecurityProperties p = new CasitaSecurityProperties("localhost", Set.of("http://localhost:8080"), List.of(), Path.of("data"),
+                CasitaSecurityProperties.DeviceIdentityMode.BROWSER, Path.of("/var/lib/casita/device.key"));
+        assertThat(p.deviceKey()).isEqualTo(Path.of("/var/lib/casita/device.key"));
     }
 
     @Test
     void plainHttpIsOnlyForLocalhost() {
         assertThat(props("localhost", Set.of("http://localhost:8080"), List.of()).allowedOrigins()).hasSize(1);
-        assertThatThrownBy(() -> props("casita.example-tailnet.ts.net", Set.of("http://casita.example-tailnet.ts.net"), List.of()))
+        assertThatThrownBy(() -> props("casita.example.org", Set.of("http://casita.example.org"), List.of()))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("https");
     }
 
     @Test
     void anOriginMustBeOnTheRelyingPartyId() {
-        assertThatThrownBy(() -> props("casita.example-tailnet.ts.net", Set.of("https://evil.example"), List.of()))
+        assertThatThrownBy(() -> props("casita.example.org", Set.of("https://evil.example"), List.of()))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("rp-id");
     }
 
@@ -46,10 +54,10 @@ class CasitaSecurityPropertiesTest {
     @Test
     void developmentDeviceIdentityIsOnlyForLocalhost() {
         assertThat(new CasitaSecurityProperties("localhost", Set.of("http://localhost:8080"), List.of(), Path.of("data"),
-                CasitaSecurityProperties.DeviceIdentityMode.DEVELOPMENT, "tailscale").deviceIdentity())
+                CasitaSecurityProperties.DeviceIdentityMode.DEVELOPMENT, null).deviceIdentity())
                 .isEqualTo(CasitaSecurityProperties.DeviceIdentityMode.DEVELOPMENT);
-        assertThatThrownBy(() -> new CasitaSecurityProperties("casita.example-tailnet.ts.net", Set.of("https://casita.example-tailnet.ts.net"),
-                List.of(), Path.of("data"), CasitaSecurityProperties.DeviceIdentityMode.DEVELOPMENT, "tailscale"))
+        assertThatThrownBy(() -> new CasitaSecurityProperties("casita.example.org", Set.of("https://casita.example.org"),
+                List.of(), Path.of("data"), CasitaSecurityProperties.DeviceIdentityMode.DEVELOPMENT, null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

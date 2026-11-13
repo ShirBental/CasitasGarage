@@ -6,6 +6,6 @@ import org.springframework.test.annotation.DirtiesContext;
 
 /** The access flows with the file store (local development). */
 @SpringBootTest
-@Import(TestTailnet.Config.class)
+@Import(TestBrowsers.Config.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class FileAccessFlowTest extends AccessFlowContract {}

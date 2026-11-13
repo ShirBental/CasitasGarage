@@ -1,5 +1,5 @@
 # Local development: mvn spring-boot:run -Dspring-boot.run.profiles=dev
-# Plain http://localhost, so the session cookie can't be Secure. Never use this profile behind Tailscale.
+# Plain http://localhost, so the session cookie can't be Secure. Never use this profile on a server.
 server:
   servlet:
     session:
@@ -7,5 +7,5 @@ server:
         secure: false
 casita:
   security:
-    # No tailscale serve locally: a request straight to 127.0.0.1 is "this computer" (rp-id localhost only).
+    # No reverse proxy locally: a request straight to 127.0.0.1 is "this computer" (rp-id localhost only).
     device-identity: development

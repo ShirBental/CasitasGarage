@@ -1,5 +1,8 @@
 # Casita's Garage: Design
 
+> **Update:** the Tailscale parts of this design were replaced by public HTTPS behind Caddy with passkeys and
+> per-browser invites (`docs/PUBLIC_HTTPS.md`, `docs/ACCESS.md`).
+
 Casita is our home's helper. This first piece lets the family see and move the garage door
 from their iPhones, safely, from anywhere.
 
@@ -16,7 +19,7 @@ was built; where the two differ, the code and the docs next to it win.
 | Remember-me cookie, fixed 6 months, `SameSite=Strict` | Not built: an in-memory session, 7 days idle, `SameSite=Lax` | `application.yml` |
 | Invite: a 10-minute one-time token, any device | One invite per device, 5 minutes, an enrollment-only session | `docs/ACCESS.md` |
 | A passkey alone signs you in | A passkey **and** an authorized Tailscale node, checked again on every request | `docs/ACCESS.md` |
-| Shortcut status tokens | Not built | |
+| Shortcut status tokens | Shortcut tokens: open Ford only, plus its status; hashed, revocable, per phone | `docs/SHORTCUTS.md` |
 | One MSG100, one door | An MSG200: Ford (channel 1) and Toyota (channel 2); channel 3 is disabled and never addressed. Commands are off by default and Ford-only when enabled | `docs/MEROSS.md` |
 | Travel time 10 s | Ford measured at 20 s, and the MSG200's reading can lag the door; both must be reflected in the configuration before any live command | `docs/MEROSS.md` |
 | Open: Java version, MQTT client | Java 21, HiveMQ | |
@@ -125,7 +128,8 @@ that cuts off every kind of credential:
 - "Hey Siri, open garage" and the arrival automation **open the Casita app**; the door
   moves from there.
 - *Open:* now that actions don't need Face ID, should Shortcut tokens be allowed to open
-  (not close) as well?
+  (not close) as well? **Decided (2026-10-24): yes, Ford only, never close** (`docs/SHORTCUTS.md`, with the
+  locked-phone trade-off).
 
 ## 4. Parameter Store layout
 
@@ -173,7 +177,7 @@ that cuts off every kind of credential:
    "close" only when it reports not closed. Never send a command toward the state the
    sensor already reports.
 3. **One movement at a time, until checked.** After a command, nothing else is sent until
-   Casita has checked the sensor, at travel time + grace (10 s + 2 s; a close finishes early
+   Casita has checked the sensor, at travel time + grace (10 s + 0 s; a close finishes early
    once the sensor reports closed). If that check is overdue when a new request arrives, it
    runs first, so a failure is never skipped or blamed on a newer movement.
 4. **Unknown outcomes aren't failures.** If a command fails without a guarantee that
@@ -235,11 +239,18 @@ and the rules in section 5 assume the worst case:
    de-duplicate by message id.
 5. **`lmTime`.** What it records, and on which clock. Not used for safety today.
 6. **Travel time.** Time a full open and a full close; set `travel-time` to the slower one
-   plus a margin (10 s measured so far).
+   plus a margin (measure it; don't assume a value).
 7. **The opener's own safety.** Photo eyes aligned, auto-reverse tested, and whether the
    opener or MSG100 warns (beeps or flashes) before a close it can't see.
 8. **Which client failures guarantee nothing was sent.** Only those may raise
    `DoorCommandRejectedException`. Everything else must stay an unknown outcome.
+9. **Rules 9 and 10 (the close at travel time, and its confirmation):**
+   - every supervised run stops within the configured travel time;
+   - a press while opening stops or reverses the door (either is detected and reported);
+   - the reading never reports "closed" more than `sensorLag` late;
+   - the opener's warning before a remote close works (7 above).
+
+   docs/DOOR_TIMING.md, "Plausible ways it goes wrong"
 
 ## 7. Activity and notifications
 

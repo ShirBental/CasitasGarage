@@ -21,7 +21,7 @@ public class EnrollmentSuccessHandler implements AuthenticationSuccessHandler {
             throws IOException {
         EnrollmentClaim claim = (EnrollmentClaim) authentication.getDetails();
         request.getSession().setAttribute(AccessSession.ENROLLMENT, claim);
-        log.info("Invite {} for {} redeemed on node {}; enrollment started", claim.inviteId(), claim.memberId(), claim.nodeName());
+        log.info("Invite {} for {} redeemed on device {}; enrollment started", claim.inviteId(), claim.memberId(), claim.nodeName());
         response.sendRedirect("/passkey");
     }
 }

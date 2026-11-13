@@ -13,14 +13,14 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *   <li>{@code cloud} (the default): Meross's cloud, over TLS (HTTPS sign-in, MQTT on 443). Nothing is needed at home;
  *       the opener keeps its own outbound connection to Meross.</li>
  *   <li>{@code local}: straight to the opener on the home network, {@code POST <local-url>/config} with messages
- *       signed by the account key, as meross_lan does. From watson, that address is reached through Tailscale: a home
- *       machine advertises it as a subnet route (deploy/watson/LIVE_DOORS.md). The account is still signed in once, for
- *       the key and the device list.</li>
+ *       signed by the account key, as meross_lan does. It needs a private network path from the server to that address
+ *       (deploy/watson/LIVE_DOORS.md); watson, without Tailscale since public HTTPS, has none and uses cloud. The account
+ *       is still signed in once, for the key and the device list.</li>
  * </ul>
  *
  * @param transport {@code cloud} or {@code local}
  * @param localUrl  for {@code local}: {@code http://<the opener's private IPv4 address>}, e.g. http://192.168.1.50. Only
- *                  plain http to a private (RFC 1918) address: the opener speaks nothing else, and only the tailnet
+ *                  plain http to a private (RFC 1918) address: the opener speaks nothing else, and only a private
  *                  route may reach it.
  */
 @ConfigurationProperties("casita.meross")

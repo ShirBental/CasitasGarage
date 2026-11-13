@@ -7,7 +7,8 @@
   const $ = (id) => document.getElementById(id);
   const FAST_AFTER_COMMAND_MS = 30000;   // poll every second this long after a command (poller.js)
   const COMMAND_TIMEOUT_MS = 10000;
-  const CHECKS = ["CLOSED_CONFIRMED", "OPEN_INFERRED", "STUCK", "LOST"];
+  const CONFIRM_FRESH_MS = 15000;        // "I've looked at the door" counts only if answered within this
+  const CHECKS = ["CLOSED_CONFIRMED", "OPEN_INFERRED", "STUCK", "LOST", "SUPERSEDED"];
   const MOVING = ["OPENING", "CLOSING", "CHECKING"];
 
   let doors = null;               // /api/doors
@@ -103,7 +104,13 @@
     if (!d.controllable) {
       verb = VOICE.control.open;
       note = VOICE.notSetUp(d.name);
-    } else if (me.sending || MOVING.includes(d.door)) {
+    } else if (me.sending) {
+      verb = VOICE.control.busy;
+    } else if (status.canCloseIfChecked && !held) {
+      // Travelled, but the sensor's delay isn't over: closing now needs the person to look at the door first.
+      verb = VOICE.control.close; action = canAct ? "close-checked" : "";
+      note = canAct ? VOICE.closeIfChecked() : VOICE.controlOff(d.name);
+    } else if (MOVING.includes(d.door)) {
       verb = VOICE.control.busy;
     } else if (held) {
       verb = VOICE.control.open;
@@ -204,6 +211,15 @@
 
   /** One tap, one command, for one door. Its control is disabled before the request leaves. */
   async function command(d, action) {
+    let path = commandPath(d, action);
+    if (action === "close-checked") {
+      // The server checks everything else again (travel time, sensor, holds); this only adds what a person can see.
+      const asked = Date.now();
+      if (!window.confirm(VOICE.confirmStopped(d.name))) return;
+      // A dialog left open for a while says nothing about the door now: ask for a fresh look instead.
+      if (Date.now() - asked > CONFIRM_FRESH_MS) { showResult(d, VOICE.lookAgain()); return; }
+      path = commandPath(d, "close") + "?checked=true";
+    }
     const me = stateOf(keyOf(d));
     me.sending = true;
     showResult(d, "");
@@ -213,7 +229,7 @@
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), COMMAND_TIMEOUT_MS);
     try {
-      const response = await fetch(commandPath(d, action), {
+      const response = await fetch(path, {
         method: "POST",
         headers: { Accept: "application/json", ...csrfHeaders() },
         credentials: "same-origin",
@@ -296,6 +312,27 @@
       }
     }
   }
+
+  // Efraim, the mouse, hides beneath the last car (casita.css). He uses only room that is already there: the
+  // spare space below the list, then the empty space under that car's round control (keeping 6 px from it).
+  // 56 pt, or 48 pt on short screens or when 56 doesn't fit; hidden only if 48 doesn't. Nothing moves for him.
+  const efraim = $("efraim");
+  function placeEfraim() {
+    const cars = [...$("doors").querySelectorAll(".door")].filter((d) => !d.hidden);
+    const go = cars.length ? cars[cars.length - 1].querySelector(".go") : null;
+    if ($("doors").hidden || $("spare-below").hidden || !go) { efraim.hidden = true; return; }
+    const below = $("spare-below").getBoundingClientRect().height;
+    const under = $("doors").getBoundingClientRect().bottom - go.getBoundingClientRect().bottom - 6;
+    const sizes = matchMedia("(max-height: 700px)").matches ? [48] : [56, 48];
+    const size = sizes.find((h) => h <= below + under);
+    efraim.hidden = !size;
+    if (!size) return;
+    efraim.classList.toggle("small", size === 48);
+    efraim.style.setProperty("--efraim-up", Math.max(0, size - below) + "px");
+  }
+  const watchRoom = new ResizeObserver(placeEfraim);
+  watchRoom.observe($("doors"));
+  watchRoom.observe($("spare-below"));
 
   drawBrand();
   api("GET", "/api/brand").then((b) => { VOICE.setBrand(b); drawBrand(); }).catch(() => {});

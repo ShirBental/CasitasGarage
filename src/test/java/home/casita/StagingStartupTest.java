@@ -87,11 +87,11 @@ class StagingStartupTest {
             assertThat(app.containsBean("merossLocalCredentials")).isFalse();
             assertThat(app.containsBean("merossSession")).isFalse();
             assertThat(app.containsBean("merossCloudApi")).isFalse();
-            // Sign-in is bound to watson on the tailnet, and the security store is Firestore with the family seeded.
+            // Sign-in is bound to the public host name with browser keys, and the security store is Firestore with the family seeded.
             CasitaSecurityProperties security = app.getBean(CasitaSecurityProperties.class);
-            assertThat(security.rpId()).isEqualTo("watson.example-tailnet.ts.net");
-            assertThat(security.allowedOrigins()).containsExactly("https://watson.example-tailnet.ts.net");
-            assertThat(security.deviceIdentity()).isEqualTo(CasitaSecurityProperties.DeviceIdentityMode.TAILSCALE);
+            assertThat(security.rpId()).isEqualTo("casita.example.org");
+            assertThat(security.allowedOrigins()).containsExactly("https://casita.example.org");
+            assertThat(security.deviceIdentity()).isEqualTo(CasitaSecurityProperties.DeviceIdentityMode.BROWSER);
             assertThat(app.getBean(SecurityStore.class).getClass().getSimpleName()).isEqualTo("FirestoreSecurityStore");
         }
     }
@@ -119,9 +119,9 @@ class StagingStartupTest {
     }
 
     @Test
-    void stagingWithThePlaceholderTailnetDoesNotStart() {
-        assertThatThrownBy(() -> start(staging("casita.security.rp-id=watson.<verified-tailnet>.ts.net",
-                "casita.security.allowed-origins=https://watson.<verified-tailnet>.ts.net")))
+    void stagingWithThePlaceholderHostDoesNotStart() {
+        assertThatThrownBy(() -> start(staging("casita.security.rp-id=<PUBLIC_HOST>",
+                "casita.security.allowed-origins=https://<PUBLIC_HOST>")))
                 .hasMessageContaining("Staging guard").hasMessageContaining("rp-id");
     }
 
