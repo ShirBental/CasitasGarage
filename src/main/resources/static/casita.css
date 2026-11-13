@@ -128,14 +128,17 @@ h1, h2 { font-weight: 600; margin: 0; }
 .hairline { height: 1px; background: var(--hairline); }
 
 /* Efraim: the provided watercolor art, unchanged (482 x 362, transparent; the mouse spans x 17-480, y 9-340
-   across all 9 frames). A box his size crops the empty canvas away, and he sits on the hairline above History at its right
-   end. He takes no room: app.js shows him only while the spare space below the doors is already tall enough
-   (48 pt when it is under 60), so the layout is exactly what it is without him and he never covers a door,
-   its button or any text. On a screen with no spare room he simply isn't there. Taps pass through him.
+   across all 9 frames). A box his size crops the empty canvas away. He belongs to the vehicle list: his top on
+   its bottom edge, right-aligned under the last car's round control, as if hiding beneath it. He takes no room
+   of his own. app.js lifts him (--efraim-up) into the empty space under that control only as far as the space
+   below the list falls short, never closer than 6 px to the control, and hides him only when even 48 pt
+   doesn't fit; so the page never grows or scrolls because of him and History never moves. At most 78 pt wide,
+   he stays inside the control's column (68 pt + its 16 pt gap), clear of the car's text. Taps pass through.
    Still frame for reduced motion. */
-.spare.below { position: relative; }
+.doors { position: relative; }
 .efraim {
-  --efraim-h: 56px; position: absolute; right: 6px; bottom: -1px; overflow: hidden; pointer-events: none;
+  --efraim-h: 56px; position: absolute; right: 0; top: calc(100% - var(--efraim-up, 0px));
+  overflow: hidden; pointer-events: none;
   width: calc(var(--efraim-h) * 464 / 332); height: var(--efraim-h);
 }
 .efraim.small { --efraim-h: 48px; }
@@ -231,7 +234,6 @@ button.row .when::after { content: "›"; margin-left: 8px; font-size: 1.2rem; c
   .door .state { font-size: 1.2rem; margin-top: 6px; }
   .go { width: 62px; height: 62px; }
   .companion { width: 176px; }
-  .efraim { --efraim-h: 48px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
