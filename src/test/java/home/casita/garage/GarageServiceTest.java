@@ -571,13 +571,18 @@ class GarageServiceTest {
 
     /** Ford with its own travel time and sensor lag, as live mode requires. */
     private void newGarage(Duration travel, Duration lag) {
+        newGarage(travel, lag, false);
+    }
+
+    /** @param sight whether rule 10's settle by sight is switched on for Ford ({@code casita.garage.settle-by-sight}) */
+    private void newGarage(Duration travel, Duration lag, boolean sight) {
         door = new FakeDoor();
         activity = new InMemoryActivityLog();
         pushes = new CopyOnWriteArrayList<>();
         clock = new MutableClock(Instant.parse("2026-10-15T21:00:00Z"));
         tasks = new ManualTasks(clock);
         garage = new GarageService("Ford", door, DoorControl.SIMULATED, activity, pushes::add, tasks, clock,
-                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", travel), Map.of("Ford", lag)));
+                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", travel), Map.of("Ford", lag), sight ? java.util.Set.of("Ford") : java.util.Set.of()));
     }
 
     /**
@@ -1052,9 +1057,10 @@ class GarageServiceTest {
 
     @Test
     void theAppOffersACheckedCloseExactlyWhenTheServerWouldSendIt() {
+        for (boolean sight : new boolean[] {false, true})
         for (Map.Entry<String, Scenario> e : scenarios().entrySet()) {
             for (long t = 0; t <= 60; t++) {
-                newGarage(TRAVEL, LAG);
+                newGarage(TRAVEL, LAG, sight);
                 e.getValue().play(t);
                 tasks.runDue();
                 GarageStatus status = garage.status();
@@ -1069,14 +1075,16 @@ class GarageServiceTest {
     @Test
     void anOrdinaryCloseIsOfferedExactlyWhenTheServerWouldSendIt() {
         // Siri's close: no look. Offered (canClose) exactly when it would be sent, in every scenario, at every second.
+        for (boolean sight : new boolean[] {false, true})
         for (Map.Entry<String, Scenario> e : scenarios().entrySet()) {
             for (long t = 0; t <= 60; t++) {
-                newGarage(TRAVEL, LAG);
+                newGarage(TRAVEL, LAG, sight);
                 e.getValue().play(t);
                 tasks.runDue();
                 GarageStatus status = garage.status();
                 Outcome outcome = garage.close("Shir").outcome();
-                assertThat(outcome == Outcome.MOVING).as(e.getKey() + " at " + t + " s: " + status + " -> " + outcome).isEqualTo(status.canClose());
+                assertThat(outcome == Outcome.MOVING).as(e.getKey() + (sight ? " (by sight)" : "") + " at " + t + " s: " + status + " -> " + outcome)
+                        .isEqualTo(status.canClose());
             }
         }
     }
@@ -1168,8 +1176,8 @@ class GarageServiceTest {
     /* ---------- rule 10: Casita saw its own open move the reading, so it knows when the door stopped ---------- */
 
     /** The first second, after an open at 0 s, at which an ordinary close is sent, with nobody asking for the status. */
-    private long firstOrdinaryCloseAfterOpen(Duration travel, Duration lag, long flipAt) {
-        newGarage(travel, lag);
+    private long firstOrdinaryCloseAfterOpen(Duration travel, Duration lag, long flipAt, boolean sight) {
+        newGarage(travel, lag, sight);
         garage.open("Shir");
         for (long t = 1; t <= 120; t++) {
             clock.advance(Duration.ofSeconds(1));
@@ -1181,11 +1189,32 @@ class GarageServiceTest {
     }
 
     @Test
+    void byDefaultSiriWaitsTheFullTravelTimePlusLagAfterAnOpen() {
+        // Settle by sight is off unless switched on for the door: a prompt reading changes nothing, Siri's close waits
+        // for the open's check at 10 + 25 + 2 s.
+        assertThat(firstOrdinaryCloseAfterOpen(TRAVEL, Duration.ofSeconds(25), 3, false)).isEqualTo(37);
+        assertThat(firstOrdinaryCloseAfterOpen(TRAVEL, Duration.ofSeconds(30), 25, false)).isEqualTo(42);
+    }
+
+    @Test
+    void byDefaultAStaleClosedCatchUpIsNeverTakenForTheOpensOwnChange() {
+        // Tony's B1, as the readings show it: the door is really up (opened by the wall button) but the reading is stale
+        // at "closed", so Casita's open is a press that closes it. The reading then catches up to "not closed" (the old
+        // wall open) at 6 s: to the sensor, exactly like the open's own change. With settle by sight off, that sighting
+        // proves nothing: no close until the open's check.
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        long[] now = {0};
+        tick(26, () -> { if (++now[0] == 6) door.open = true; tasks.runDue(); });
+        assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.BUSY); // 26 s: 6 + 10 has long passed
+        assertThat(door.commands).containsExactly(true);
+    }
+
+    @Test
     void siriCanCloseOnceTheDoorWasSeenMovingAndHasHadItsTravelTime() {
-        // Opened by Siri, nobody looking at the app. The reading leaves "closed" at 3 s and is seen then (here by the
-        // close being tried every second), so the door stopped by 13 s. The configured lag (25 s) is a worst case it
-        // didn't need: before, the first ordinary close was at 10 + 25 + 2 s.
-        assertThat(firstOrdinaryCloseAfterOpen(TRAVEL, Duration.ofSeconds(25), 3)).isEqualTo(13);
+        // Only for a door with settle by sight switched on. Opened by Siri, nobody looking at the app. The reading leaves
+        // "closed" at 3 s and is seen then (here by the close being tried every second), so the door stopped by 13 s.
+        assertThat(firstOrdinaryCloseAfterOpen(TRAVEL, Duration.ofSeconds(25), 3, true)).isEqualTo(13);
         assertThat(door.commands).containsExactly(true, false);
         assertThat(activity.recent(10)).extracting(ActivityEvent::outcome)
                 .containsSubsequence(Outcome.MOVING, Outcome.OPEN_INFERRED, Outcome.MOVING);
@@ -1194,7 +1223,7 @@ class GarageServiceTest {
 
     @Test
     void beforeTheDoorWasSeenMovingAnOrdinaryCloseExplainsTheWait() {
-        newGarage(TRAVEL, Duration.ofSeconds(25));
+        newGarage(TRAVEL, Duration.ofSeconds(25), true);
         garage.open("Shir");
         tick(5, tasks::runDue);
         CommandResult tooSoon = garage.close("Shir");
@@ -1209,15 +1238,16 @@ class GarageServiceTest {
     }
 
     @Test
-    void aStaleClosedReadingStillMeansTheFullWait() {
-        // Toyota-like: the reading leaves "closed" only at 25 s, so the door could have been moving until 35 s.
-        assertThat(firstOrdinaryCloseAfterOpen(TRAVEL, Duration.ofSeconds(30), 25)).isEqualTo(35);
+    void bySightALateChangeCountsFromWhenItIsSeen() {
+        // The reading leaves "closed" only at 25 s. The door started at 0 s, but Casita can only count from what it saw:
+        // 25 + 10. (The full wait would be the check at 10 + 30 + 2.)
+        assertThat(firstOrdinaryCloseAfterOpen(TRAVEL, Duration.ofSeconds(30), 25, true)).isEqualTo(35);
     }
 
     @Test
     void aSecondChangeDuringTheOpenMeansTheFullWait() {
         // The wall button reversed it: Casita saw more than its own change, so its sighting proves nothing.
-        newGarage(TRAVEL, LAG);
+        newGarage(TRAVEL, LAG, true);
         garage.open("Shir");
         long[] now = {0};
         tick(30, () -> {
@@ -1234,7 +1264,7 @@ class GarageServiceTest {
     @Test
     void theWatchAloneSeesTheChange() {
         // Nobody asks at all until 15 s: the watch saw the change at 4 s (its reads at 2, 4, 6 s...), so 14 s was enough.
-        newGarage(TRAVEL, Duration.ofSeconds(25));
+        newGarage(TRAVEL, Duration.ofSeconds(25), true);
         garage.open("Shir");
         long[] now = {0};
         tick(15, () -> { if (++now[0] == 3) door.open = true; tasks.runDue(); });
@@ -1243,7 +1273,7 @@ class GarageServiceTest {
 
     @Test
     void theWatchSeesAReversalAfterTheOpenWasSeen() {
-        newGarage(TRAVEL, LAG);
+        newGarage(TRAVEL, LAG, true);
         garage.open("Shir");
         long[] now = {0};
         tick(20, () -> {
@@ -1259,7 +1289,7 @@ class GarageServiceTest {
 
     @Test
     void anOpenOfUnknownOutcomeIsNotWatchedAndGetsTheFullWait() {
-        newGarage(TRAVEL, LAG);
+        newGarage(TRAVEL, LAG, true);
         door.timeoutAfterDelivery = true;
         assertThat(garage.open("Shir").outcome()).isEqualTo(Outcome.UNCONFIRMED);
         door.timeoutAfterDelivery = false;
@@ -1284,7 +1314,7 @@ class GarageServiceTest {
 
     @Test
     void aFailedReadDuringTheWatchChangesNothing() {
-        newGarage(TRAVEL, LAG);
+        newGarage(TRAVEL, LAG, true);
         garage.open("Shir");
         door.readFails = true;
         tick(6, tasks::runDue);
@@ -1296,6 +1326,61 @@ class GarageServiceTest {
         assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.BUSY); // 17 s: seen 9 s ago
         clock.advance(Duration.ofSeconds(1));
         assertThat(garage.close("Shir").outcome()).isEqualTo(Outcome.MOVING);
+    }
+
+    @Test
+    void theWatchDoesntReadAgainRightAfterSomeoneElseDid() {
+        newGarage(TRAVEL, LAG);
+        garage.open("Shir");
+        int[] reads = {0};
+        DoorDevice counting = new DoorDevice() {
+            @Override public Reading read() throws DoorException { reads[0]++; return door.read(); }
+            @Override public void command(boolean open) throws DoorException { door.command(open); }
+        };
+        garage = new GarageService("Ford", counting, DoorControl.SIMULATED, activity, pushes::add, tasks, clock,
+                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", TRAVEL), Map.of("Ford", LAG)));
+        garage.open("Shir");
+        reads[0] = 0;
+        clock.advance(Duration.ofMillis(1500));
+        garage.status();          // the app reads at 1.5 s
+        clock.advance(Duration.ofMillis(500));
+        tasks.runDue();           // the watch's tick at 2 s: skipped, read 0.5 s ago
+        assertThat(reads[0]).isEqualTo(1);
+        clock.advance(Duration.ofSeconds(2));
+        tasks.runDue();           // 4 s: reads
+        assertThat(reads[0]).isEqualTo(2);
+    }
+
+    @Test
+    void anUnexpectedErrorDuringTheWatchDoesntEndIt() {
+        newGarage(TRAVEL, LAG);
+        boolean[] fail = {false};
+        int[] reads = {0};
+        DoorDevice flaky = new DoorDevice() {
+            @Override public Reading read() throws DoorException {
+                reads[0]++;
+                if (fail[0]) { fail[0] = false; throw new IllegalStateException("bug"); }
+                return door.read();
+            }
+            @Override public void command(boolean open) throws DoorException { door.command(open); }
+        };
+        garage = new GarageService("Ford", flaky, DoorControl.SIMULATED, activity, pushes::add, tasks, clock,
+                new GarageProperties(TRAVEL, GRACE, true, Map.of("Ford", TRAVEL), Map.of("Ford", LAG)));
+        garage.open("Shir");
+        fail[0] = true;
+        int before = reads[0];
+        tick(2, tasks::runDue); // the watch's read throws
+        tick(2, tasks::runDue); // and it reads again
+        assertThat(reads[0]).isEqualTo(before + 2);
+    }
+
+    @Test
+    void settleBySightIsOffUnlessListedPerDoor() {
+        assertThat(new GarageProperties(TRAVEL, GRACE, true).settlesBySight("Ford")).isFalse();
+        GarageProperties ford = new GarageProperties(TRAVEL, GRACE, true, Map.of(), Map.of(), java.util.Set.of("Ford"));
+        assertThat(ford.settlesBySight("Ford")).isTrue();
+        assertThat(ford.settlesBySight("ford")).isTrue();
+        assertThat(ford.settlesBySight("Toyota")).isFalse();
     }
 
     @Test

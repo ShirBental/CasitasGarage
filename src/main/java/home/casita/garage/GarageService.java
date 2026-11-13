@@ -51,14 +51,15 @@ import org.slf4j.LoggerFactory;
  *       when a command of unknown fate could still land. The person's word alone never moves a door: a reading of "closed" (a sensor that
  *       hasn't caught up with an open) still refuses, because the opener could take the close as a button press. The
  *       check is recorded ({@code CHECKED}) with who made it, before the close.</li>
- *   <li><b>Seen moving, then stopped.</b> While its own acknowledged command is pending, Casita reads the sensor every
- *       {@link #WATCH_EVERY} until its check is due (the app or Siri may not be asking). If it sees the reading leave "closed" during its own
- *       open, with no other change since that open, the door began moving no later than that reading, so it has stopped
- *       one {@code travelTime} after it. From then on the open is done ({@code OPEN_INFERRED}) and the door counts as
- *       settled without waiting for {@code sensorLag}, for any close, with or without a person's look. This rests on the
- *       sensor never reporting "not closed" before the door has left the closed position (a hardware check). A reading
- *       that stays "closed", an open of unknown outcome, or a second change all leave the full wait in place. A watched
- *       close that reads "closed" is checked at once.</li>
+ *   <li><b>Watching, and (only where switched on) seen moving, then stopped.</b> While its own acknowledged command is
+ *       pending, Casita reads the sensor every {@link #WATCH_EVERY} until its check is due (the app or Siri may not be
+ *       asking). A watched close that reads "closed" is checked at once. For a door listed in
+ *       {@code casita.garage.settle-by-sight} (none by default), an open whose reading Casita saw leave "closed", with
+ *       no other change since, counts as settled one {@code travelTime} after that sighting instead of after
+ *       {@code travelTime + sensorLag}. Off by default because a binary sensor can't prove it: a reading that was stale at
+ *       "closed" when the open was sent (the door really up) makes the open a press that closes it, and the reading's
+ *       late catch-up then looks exactly like the open's own change. Only a supervised test per door can rule that
+ *       out.</li>
  * </ol>
  *
  * <h2>What Casita reports</h2>
@@ -98,6 +99,8 @@ public class GarageService {
     private final Duration travelTime;
     /** Travel time plus how long the reading can trail the door: what settling and checks wait for. */
     private final Duration settleTime;
+    /** Rule 10's settle by sight, for this door ({@code casita.garage.settle-by-sight}); off by default. */
+    private final boolean settleBySight;
 
     // All guarded by this.
     private Movement pending;
@@ -113,6 +116,8 @@ public class GarageService {
      * the open (rule 10); null otherwise, and cleared by any later change, a new movement or a resume.
      */
     private Instant seenOpenAt;
+    /** When the sensor was last read successfully, so the watch doesn't read again right after someone else did. */
+    private Instant lastReadAt;
     /** The action of the movement that ended stuck or lost, while commands are held; null when not held. */
     private Action heldAfter;
 
@@ -132,6 +137,7 @@ public class GarageService {
         this.properties = properties;
         this.travelTime = properties.travelTime(name);
         this.settleTime = travelTime.plus(properties.sensorLag(name));
+        this.settleBySight = properties.settlesBySight(name);
     }
 
     public String name() {
@@ -184,7 +190,7 @@ public class GarageService {
             return new GarageStatus(sawChange ? DoorState.OPENING : DoorState.CHECKING, lastSensorChange, false, false, held(),
                     mayCloseIfChecked() && sawChange && travelledSinceSeenNotClosed() && !deviceSawARecentChange(reading));
         }
-        return new GarageStatus(DoorState.NOT_CLOSED, since(reading), false, properties.allowRemoteClose() && !held(), held());
+        return new GarageStatus(DoorState.NOT_CLOSED, since(reading), false, mayCloseIfChecked(), held());
     }
 
     /**
@@ -372,10 +378,14 @@ public class GarageService {
     synchronized void watch(long id) {
         Movement m = pending;
         if (m == null || m.id() != id || isDue(m)) return;
+        if (lastReadAt != null && clock.instant().isBefore(lastReadAt.plus(WATCH_EVERY))) {
+            watchLater(m); // read just now (the app polling, a command): no need for another
+            return;
+        }
         DoorDevice.Reading reading;
         try {
             reading = readSensor();
-        } catch (DoorException e) {
+        } catch (DoorException | RuntimeException e) {
             watchLater(m);
             return;
         }
@@ -391,7 +401,7 @@ public class GarageService {
      * travel time ago, and the reading, just read, still says not closed.
      */
     private boolean seenStopped(Movement m, DoorDevice.Reading reading) {
-        return m.acknowledged() && m.action() == Action.OPEN && reading.open() && seenOpenAt != null
+        return settleBySight && m.acknowledged() && m.action() == Action.OPEN && reading.open() && seenOpenAt != null
                 && seenOpenAt.isAfter(m.startedAt()) && onlyItsOwnChange(m) && settledBySight() && !deviceSawARecentChange(reading);
     }
 
@@ -461,6 +471,7 @@ public class GarageService {
     /** Reads the sensor and notes when Casita first saw its current value. */
     private DoorDevice.Reading readSensor() throws DoorException {
         DoorDevice.Reading reading = door.read();
+        lastReadAt = clock.instant();
         if (lastSensorOpen == null) {
             lastSensorOpen = reading.open();
             lastSensorChange = clock.instant(); // just started: history unknown
@@ -515,7 +526,7 @@ public class GarageService {
 
     /** Rule 10: the reading left "closed" during Casita's own open, was seen doing so at least the travel time ago, and hasn't changed since. */
     private boolean settledBySight() {
-        return seenOpenAt != null && Boolean.TRUE.equals(lastSensorOpen) && !clock.instant().isBefore(seenOpenAt.plus(travelTime));
+        return settleBySight && seenOpenAt != null && Boolean.TRUE.equals(lastSensorOpen) && !clock.instant().isBefore(seenOpenAt.plus(travelTime));
     }
 
     private Instant dueAt(Movement m) {
