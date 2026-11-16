@@ -9,12 +9,14 @@
   const COMMAND_TIMEOUT_MS = 10000;
   const CONFIRM_FRESH_MS = 15000;        // "I've looked at the door" counts only if answered within this
   const CHECKS = ["CLOSED_CONFIRMED", "OPEN_INFERRED", "STUCK", "LOST", "SUPERSEDED"];
-  const MOVING = ["OPENING", "CLOSING", "CHECKING"];
+  // Not settled: the app polls every second and the control waits (unless the server says a command may go).
+  const MOVING = ["OPENING", "CLOSING", "CHECKING", "WAITING_FOR_SENSOR"];
 
   let doors = null;               // /api/doors
   let events = [];                // /api/activity, newest first
   let offline = false;
   const local = {};               // per door: { sending, watchAfter, resultAt }
+  const replies = {};             // per door: the newest command reply's status, until a newer poll (poller.js withReplies)
 
   /* ---------- reading /api/doors (works with the one-controlled-door API and the per-door one) ---------- */
 
@@ -28,6 +30,9 @@
   function commandPath(d, action) {
     return d.key ? `/api/doors/${encodeURIComponent(d.key)}/${action}` : `/api/${action}`;
   }
+
+  /** The door with its own travel time, for VOICE.shown. */
+  const withTravel = (d) => Object.assign({}, d, { travelTimeSeconds: travelOf(d) });
 
   /** Activity for one door. Entries without a door are from the one-controlled-door API: the first door's. */
   const eventsFor = (d) => events.filter((e) => (e.door ? e.door === keyOf(d) || e.door === d.name : d === first()));
@@ -67,7 +72,10 @@
     // a pending request or a guess. He is idle again once movement ends, fails or held (STUCK, LOST: the
     // server then reports a settled state with held), or becomes unknown (CHECKING, UNKNOWN, offline). His
     // expression is decoration, never evidence of what a door is doing.
-    const moving = (d) => (d.door === "OPENING" || d.door === "CLOSING") && !(d.status && d.status.held);
+    const moving = (d) => {
+      const shown = VOICE.shown(withTravel(d), Date.now());
+      return (shown === "OPENING" || shown === "CLOSING") && !(d.status && d.status.held);
+    };
     $("companion").classList.toggle("is-excited", doors.doors.some(moving));
   }
 
@@ -78,16 +86,17 @@
     const me = stateOf(k);
     const status = d.status;                       // null: the server doesn't control this door
     const held = !!(status && status.held);
-    const [word, tone] = VOICE.state(d, held);
+    const view = Object.assign({}, d, { door: VOICE.shown(withTravel(d), Date.now()) });
+    const [word, tone] = VOICE.state(view, held);
 
     section.className = "door " + tone + (d.controllable ? "" : " unavailable");
     section.dataset.key = k;
     q(".name").textContent = d.name;
     q(".word").textContent = word;
-    q(".detail").textContent = VOICE.detail(d, held);
+    q(".detail").textContent = VOICE.detail(view, held);
 
     // Moving: an estimate from the configured travel time, labelled so. Never a sensor reading.
-    const moving = (d.door === "OPENING" || d.door === "CLOSING") && d.since && !held;
+    const moving = (view.door === "OPENING" || view.door === "CLOSING") && d.since && !held;
     q(".estimate").classList.toggle("shown", !!moving);
     if (moving) {
       const travel = travelOf(d);
@@ -110,16 +119,17 @@
       // Travelled, but the sensor's delay isn't over: closing now needs the person to look at the door first.
       verb = VOICE.control.close; action = canAct ? "close-checked" : "";
       note = canAct ? VOICE.closeIfChecked() : VOICE.controlOff(d.name);
-    } else if (MOVING.includes(d.door)) {
-      verb = VOICE.control.busy;
     } else if (held) {
       verb = VOICE.control.open;
     } else if (status.canOpen) {
+      // The server's word decides, whatever the door is shown as: it says so only when the command would go now.
       verb = VOICE.control.open; action = canAct ? "open" : "";
       if (!canAct) note = VOICE.controlOff(d.name);
     } else if (status.canClose) {
       verb = VOICE.control.close; action = canAct ? "close" : "";
       if (!canAct) note = VOICE.controlOff(d.name);
+    } else if (MOVING.includes(view.door)) {
+      verb = VOICE.control.busy;
     } else {
       verb = d.door === "NOT_CLOSED" ? VOICE.control.close : VOICE.control.open;
     }
@@ -181,12 +191,14 @@
   // backoff after failures). What to do with the answer: here.
   const poller = CasitaPoller.create({
     async load(signal) {
+      const startedAt = Date.now();
       const d = await api("GET", "/api/doors", signal);
       const e = await api("GET", "/api/activity", signal);
-      return { doors: d, events: e };
+      return { doors: d, events: e, startedAt };
     },
     apply(data) {
-      doors = data.doors;
+      // A poll that left before a command's reply doesn't know about the command: that door shows the reply instead.
+      doors = CasitaPoller.withReplies(data.doors, data.startedAt, replies, keyOf);
       events = data.events;
       offline = false;
       draw();
@@ -238,6 +250,11 @@
       if (response.status === 401) { window.location.href = "/login"; return; }
       if (!response.ok) throw new Error("HTTP " + response.status);
       const result = await response.json();
+      // The reply's status is the server's word right after the command: drawn now, not after the next poll.
+      if (result.status) {
+        replies[keyOf(d)] = { at: Date.now(), status: result.status };
+        if (doors) doors = CasitaPoller.withReplies(doors, -Infinity, replies, keyOf);
+      }
       if (result.outcome === "UNCONFIRMED") showResult(d, VOICE.unconfirmed(), true);
       else if (result.outcome !== "MOVING") { showResult(d, result.message); me.watchAfter = null; }   // refused: nothing was sent
     } catch (err) {
@@ -246,6 +263,7 @@
     } finally {
       clearTimeout(timeout);
       me.sending = false;
+      draw();
       poller.fastFor(FAST_AFTER_COMMAND_MS);
       refresh();
     }

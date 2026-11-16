@@ -125,6 +125,38 @@ before the door settled. It changes no timing and proves nothing about presence.
 The app offers Close exactly in the allowed cases. `GarageServiceTest#anOrdinaryCloseIsOfferedExactlyWhenTheServerWouldSendIt`
 (and the checked variant) check it for every second from 0 to 60 s of ten scenarios.
 
+## What the app shows, and why it no longer sticks on "Opening" (2026-11-16)
+
+Toyota used to show "Opening…" for 41–43 s, sometimes over a minute, after the door had stopped. Two causes:
+
+1. **The status reported a command as moving until its check** (`travel + lag + grace`: 6 + 35 + 2 = 43 s for
+   Toyota). Close was allowed from 6 s (rule 9), but the app drew any `OPENING` as "busy", so the button stayed
+   off.
+2. **`/api/doors` read Ford, then Toyota**, each bounded only by Meross's 8 s timeout. A slow opener pushed the reply
+   past the app's 10 s poll timeout; the app then showed "can't reach home" and backed off for up to a minute.
+
+Now:
+
+| Shown | When | Commands |
+|---|---|---|
+| `OPENING` / `CLOSING` | within the door's travel time of the movement, never longer | none (one movement at a time) |
+| `NOT_CLOSED` ("Open") | Casita's open has travelled and the reading says not closed | Close at once (rule 9) |
+| `CLOSED` | the reading says closed (during Casita's close too) | Open at once (rule 10); "All tucked in" still waits for the check |
+| `WAITING_FOR_SENSOR` | the command has travelled, the reading doesn't show it yet | none: the reading would make it a press |
+| `CHECKING` | a command of unknown fate (until its check), or just after a restart | none |
+| `UNKNOWN` | the opener didn't answer (Meross's 8 s timeout; `/api/doors` waits at most 6 s per request, doors read side by side) | none |
+
+A command's reply is built from the reading the command was decided on: it doesn't read the opener again. The app
+also never shows "Opening…" past the travel time (plus a second), whatever the last reply said.
+
+**The hardware limit that remains.** The MSG200 gives a binary reading, its `System.All` reading for Toyota trails
+the door (seen at 25 s and more when opening), it reports no change time (`lmTime` 0), and whether a `SET` acts as a
+button press is unknown. So nothing is sent toward the state the reading reports: Close after Open becomes possible
+the moment Toyota's reading leaves "closed", not before, however long ago the door stopped. Casita no longer adds
+any wait of its own on top of that, and shows "Waiting for sensor" meanwhile. The opener's push notifications
+(signed, already received, not used) may report the change sooner: using them as observations needs a trace of their
+payload on our MSG200 first.
+
 ## Remaining limits (with a mechanism)
 
 - **A stale "closed" reading blocks Close until it changes.** That is up to 25 s on Toyota, as seen once. A close against

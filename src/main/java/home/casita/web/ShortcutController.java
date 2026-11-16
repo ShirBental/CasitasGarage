@@ -197,6 +197,7 @@ class ShortcutController {
             case NOT_CLOSED -> name + " is open.";
             case OPENING -> name + " is opening; it isn't confirmed yet.";
             case CLOSING -> name + " is closing; it isn't confirmed yet.";
+            case WAITING_FOR_SENSOR -> name + " should have finished moving, but its sensor hasn't caught up yet.";
             case CHECKING -> "I'm still checking on " + name + ".";
             case UNKNOWN -> "I can't see " + name + " right now.";
         } + held;

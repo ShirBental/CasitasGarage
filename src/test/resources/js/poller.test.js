@@ -309,6 +309,31 @@ test("a success after failures is drawn and polling carries on", async () => {
   eq(await h.loadsDuring(5000), 1, "every 5 s again");
 });
 
+/* ---------- command replies against older polls ---------- */
+
+test("a poll that left before a command's reply never overwrites that door", async () => {
+  const keyOf = (d) => d.key;
+  const poll = { doors: [
+    { key: "ford", door: "CLOSED", since: "a", status: { door: "CLOSED", canOpen: true } },
+    { key: "toyota", door: "CLOSED", since: "b", status: { door: "CLOSED", canOpen: true } },
+  ] };
+  const replies = { ford: { at: 2000, status: { door: "OPENING", since: "c", canOpen: false, canClose: false } } };
+
+  const older = CasitaPoller.withReplies(poll, 1500, replies, keyOf);     // left before the reply
+  eq(older.doors[0].door, "OPENING", "Ford from the reply");
+  eq(older.doors[0].status.canOpen, false, "no second Open offered");
+  eq(older.doors[1].door, "CLOSED", "Toyota untouched");
+  eq(!!replies.ford, true, "reply kept until a newer poll");
+
+  const newer = CasitaPoller.withReplies(poll, 2500, replies, keyOf);     // left after it
+  eq(newer.doors[0].door, "CLOSED", "the newer poll wins");
+  eq(!!replies.ford, false, "reply forgotten");
+
+  const now = CasitaPoller.withReplies(poll, -Infinity, { toyota: { at: 1, status: { door: "UNKNOWN" } } }, keyOf);
+  eq(now.doors[1].door, "UNKNOWN", "applied at once");
+  eq(poll.doors[1].door, "CLOSED", "the poll's own data isn't changed");
+});
+
 /* ---------- runner ---------- */
 
 const RESULTS = {};

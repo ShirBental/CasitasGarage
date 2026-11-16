@@ -44,9 +44,23 @@ const VOICE = (function () {
         case "NOT_CLOSED": return ["Open", "not-closed"];
         case "OPENING": return ["Opening…", "moving"];
         case "CLOSING": return ["Closing…", "moving"];
+        case "WAITING_FOR_SENSOR": return ["Waiting for sensor", "quiet"];
         case "CHECKING": return ["Checking…", "quiet"];
         default: return ["Unknown", "quiet"];
       }
+    },
+
+    /**
+     * The state to show for a door at {@code nowMs}: the server's, except that "Opening…" / "Closing…" never outlast the
+     * door's travel time (plus a second for the poll): past it, the door is shown as waiting for the sensor. The server
+     * stops reporting movement after the travel time too; this covers a reply that arrived late or a page left open.
+     */
+    shown(view, nowMs) {
+      const moving = view.door === "OPENING" || view.door === "CLOSING";
+      const travel = view.travelTimeSeconds;
+      if (!moving || !view.since || !travel) return view.door;
+      const elapsedS = (nowMs - new Date(view.since).getTime()) / 1000;
+      return elapsedS > travel + 1 ? "WAITING_FOR_SENSOR" : view.door;
     },
 
     /** One short line under the big word. Moving doors get an estimate instead (see secondsLeft). */
@@ -56,6 +70,7 @@ const VOICE = (function () {
         case "CLOSED":
         case "NOT_CLOSED": return view.since ? "Since " + time(view.since) : "";
         case "CHECKING": return "Waiting for the sensor";
+        case "WAITING_FOR_SENSOR": return "It should have finished moving. The sensor hasn't caught up yet.";
         case "UNKNOWN": return `The sensor can't confirm where ${view.name} is.`;
         default: return "";
       }
