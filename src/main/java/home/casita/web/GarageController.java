@@ -73,8 +73,15 @@ class GarageController {
     private final GarageProperties garageProperties;
     private final SecurityStore store;
     private final Duration statusWait;
-    /** At most one status read per door at a time: a request while one is out waits for that same read. */
-    private final ConcurrentHashMap<String, CompletableFuture<GarageStatus>> reading = new ConcurrentHashMap<>();
+    /** A door's status read on the pool, and when it started (System.nanoTime). */
+    private record Read(CompletableFuture<GarageStatus> status, long startedAt) {}
+
+    /**
+     * At most one status read per door at a time: a request while one is out waits for that same read, but never past
+     * {@code statusWait} after it started, so a door that has stopped answering costs the first request the wait and
+     * every later one nothing (it's UNKNOWN at once), and the other door's status stays as fresh as its own reads.
+     */
+    private final ConcurrentHashMap<String, Read> reading = new ConcurrentHashMap<>();
 
     @org.springframework.beans.factory.annotation.Autowired
     GarageController(Garage garage, ActivityLog activity, GarageProperties garageProperties, SecurityStore store) {
@@ -118,34 +125,34 @@ class GarageController {
     @GetMapping("/doors")
     Doors doors() {
         List<GarageService> all = garage.doors();
-        List<CompletableFuture<GarageStatus>> reads = all.stream().map(this::read).toList();
-        long deadline = System.nanoTime() + statusWait.toNanos();
+        List<Read> reads = all.stream().map(this::read).toList();
         List<DoorView> doors = new ArrayList<>();
-        for (int i = 0; i < all.size(); i++) doors.add(view(all.get(i), awaitStatus(all.get(i), reads.get(i), deadline)));
+        for (int i = 0; i < all.size(); i++) doors.add(view(all.get(i), awaitStatus(all.get(i), reads.get(i))));
         return new Doors(doors.get(0).control(), doors.get(0).travelTimeSeconds(), doors);
     }
 
     @GetMapping("/doors/{door}")
     DoorView door(@PathVariable String door) {
         GarageService d = find(door);
-        return view(d, awaitStatus(d, read(d), System.nanoTime() + statusWait.toNanos()));
+        return view(d, awaitStatus(d, read(d)));
     }
 
     /**
      * The door's status read, on the pool: the one already out for this door if there is one, so a slow opener never
      * piles reads up (they would hold the pool and the other door) and never gets a burst of them when it answers again.
      */
-    private CompletableFuture<GarageStatus> read(GarageService door) {
+    private Read read(GarageService door) {
         return reading.compute(door.key(), (key, out) -> {
-            if (out != null && !out.isDone()) return out;
-            return CompletableFuture.supplyAsync(door::status, READS);
+            if (out != null && !out.status().isDone()) return out;
+            return new Read(CompletableFuture.supplyAsync(door::status, READS), System.nanoTime());
         });
     }
 
-    /** The status, or UNKNOWN (no command possible, held as it is) if the door hasn't answered by {@code deadline}. */
-    private static GarageStatus awaitStatus(GarageService door, CompletableFuture<GarageStatus> read, long deadline) {
+    /** The status, or UNKNOWN (no command possible, held as it is) if the read hasn't answered within the wait. */
+    private GarageStatus awaitStatus(GarageService door, Read read) {
         try {
-            return read.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            long left = read.startedAt() + statusWait.toNanos() - System.nanoTime();
+            return read.status().get(Math.max(0, left), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
             return new GarageStatus(DoorState.UNKNOWN, null, false, false, door.isHeld());
         } catch (InterruptedException e) {

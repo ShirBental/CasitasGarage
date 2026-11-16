@@ -154,5 +154,27 @@ const CasitaPoller = (function () {
     };
   }
 
-  return { create, DEFAULTS };
+  /**
+   * Command replies against polls, per door. A command's reply carries the door's status as the server answered it; a
+   * poll that left before that reply can't know about the command, so for that door the reply is shown instead. A poll
+   * that left after it is newer: it is shown, and the reply is forgotten. Never invents a state: every door shown is
+   * one the server sent.
+   *
+   * @param doorsReply    /api/doors as a poll (or the page) has it
+   * @param pollStartedAt when that poll left (ms; -Infinity to apply every reply)
+   * @param replies       { doorKey: { at, status } }, the newest command reply per door; superseded entries are removed
+   * @param keyOf         a door's key
+   */
+  function withReplies(doorsReply, pollStartedAt, replies, keyOf) {
+    const doors = doorsReply.doors.map((d) => {
+      const k = keyOf(d);
+      const r = replies[k];
+      if (!r) return d;
+      if (pollStartedAt > r.at) { delete replies[k]; return d; }
+      return Object.assign({}, d, { door: r.status.door, since: r.status.since, status: r.status });
+    });
+    return Object.assign({}, doorsReply, { doors });
+  }
+
+  return { create, DEFAULTS, withReplies };
 })();

@@ -16,6 +16,7 @@
   let events = [];                // /api/activity, newest first
   let offline = false;
   const local = {};               // per door: { sending, watchAfter, resultAt }
+  const replies = {};             // per door: the newest command reply's status, until a newer poll (poller.js withReplies)
 
   /* ---------- reading /api/doors (works with the one-controlled-door API and the per-door one) ---------- */
 
@@ -190,12 +191,14 @@
   // backoff after failures). What to do with the answer: here.
   const poller = CasitaPoller.create({
     async load(signal) {
+      const startedAt = Date.now();
       const d = await api("GET", "/api/doors", signal);
       const e = await api("GET", "/api/activity", signal);
-      return { doors: d, events: e };
+      return { doors: d, events: e, startedAt };
     },
     apply(data) {
-      doors = data.doors;
+      // A poll that left before a command's reply doesn't know about the command: that door shows the reply instead.
+      doors = CasitaPoller.withReplies(data.doors, data.startedAt, replies, keyOf);
       events = data.events;
       offline = false;
       draw();
@@ -247,6 +250,11 @@
       if (response.status === 401) { window.location.href = "/login"; return; }
       if (!response.ok) throw new Error("HTTP " + response.status);
       const result = await response.json();
+      // The reply's status is the server's word right after the command: drawn now, not after the next poll.
+      if (result.status) {
+        replies[keyOf(d)] = { at: Date.now(), status: result.status };
+        if (doors) doors = CasitaPoller.withReplies(doors, -Infinity, replies, keyOf);
+      }
       if (result.outcome === "UNCONFIRMED") showResult(d, VOICE.unconfirmed(), true);
       else if (result.outcome !== "MOVING") { showResult(d, result.message); me.watchAfter = null; }   // refused: nothing was sent
     } catch (err) {
@@ -255,6 +263,7 @@
     } finally {
       clearTimeout(timeout);
       me.sending = false;
+      draw();
       poller.fastFor(FAST_AFTER_COMMAND_MS);
       refresh();
     }

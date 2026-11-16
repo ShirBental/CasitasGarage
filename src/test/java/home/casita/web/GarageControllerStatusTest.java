@@ -100,9 +100,13 @@ class GarageControllerStatusTest {
                 sent.add(open);
             }
         };
-        GarageController controller = controller(door(0, false), counted, Duration.ofMillis(200));
+        GarageController controller = controller(door(0, false), counted, Duration.ofMillis(500));
+        assertThat(controller.doors().doors().get(1).door()).isEqualTo(DoorState.UNKNOWN); // the first poll waits once
         for (int i = 0; i < 8; i++) { // more polls than the pool has threads
+            long started = System.nanoTime();
             GarageController.Doors doors = controller.doors();
+            long tookMs = (System.nanoTime() - started) / 1_000_000;
+            assertThat(tookMs).as("poll " + i + " doesn't wait again for the hung read").isLessThan(200);
             assertThat(doors.doors().get(0).door()).as("poll " + i).isEqualTo(DoorState.CLOSED);
             assertThat(doors.doors().get(1).door()).isEqualTo(DoorState.UNKNOWN);
         }
