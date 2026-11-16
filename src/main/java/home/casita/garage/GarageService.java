@@ -64,10 +64,12 @@ import org.slf4j.LoggerFactory;
  * </ol>
  *
  * <h2>What Casita reports</h2>
- * The sensor proves only "closed". So the status ({@link DoorState}) is {@code CLOSED} (proven),
- * {@code NOT_CLOSED} (settled; open is inferred, never verified), {@code OPENING} / {@code CLOSING}
- * (a command is being checked), {@code CHECKING} (moving or not is unknown) or {@code UNKNOWN} (the
- * sensor can't be read). In the activity log, every {@code MOVING} or {@code UNCONFIRMED} command is
+ * The sensor proves only "closed". So the status ({@link DoorState}) is {@code CLOSED} (the sensor says so),
+ * {@code NOT_CLOSED} (open is inferred, never verified), {@code OPENING} / {@code CLOSING} (only within the door's
+ * travel time of the movement), {@code WAITING_FOR_SENSOR} (Casita's command has had the travel time, the reading
+ * doesn't show its result yet), {@code CHECKING} (moving or not is unknown: a command of unknown fate, or just
+ * started) or {@code UNKNOWN} (the sensor can't be read). The status is what the reading shows now; the check
+ * (below) is what the history and the family are told. Commands never wait on how a status is presented. In the activity log, every {@code MOVING} or {@code UNCONFIRMED} command is
  * followed by exactly one check: {@code CLOSED_CONFIRMED}, {@code OPEN_INFERRED}, {@code STUCK} (not
  * where it was sent after travel time + grace) or {@code LOST} (sensor unreadable). The check is
  * scheduled, and an overdue one also runs before any status or command, so no movement stays
@@ -114,8 +116,11 @@ public class GarageService {
     private Instant closedSeenAt;
     /** When the sensor was last read successfully, so the watch doesn't read again right after someone else did. */
     private Instant lastReadAt;
-    /** The action of the movement that ended stuck or lost, while commands are held; null when not held. */
-    private Action heldAfter;
+    /**
+     * The action of the movement that ended stuck or lost, while commands are held; null when not held. Written under
+     * this; volatile so {@link #isHeld} can answer while a slow read holds the lock.
+     */
+    private volatile Action heldAfter;
 
     /**
      * @param name    the door's name (Ford, Toyota), in its activity entries and notifications
@@ -162,26 +167,49 @@ public class GarageService {
             log.warn("Can't read the {} door: {}", name, e.getMessage());
             return new GarageStatus(DoorState.UNKNOWN, null, false, false, held());
         }
+        return statusFrom(reading);
+    }
 
-        m = pending; // the read may have ended it (rule 10: a close that didn't stay closed)
+    /**
+     * The status from a reading Casita has just taken; reads nothing, so a command can answer at once. "Opening" and
+     * "closing" last only the door's travel time: after it, the door is shown as its reading shows it, or as waiting for
+     * the sensor when the reading doesn't show the command's result yet. {@code canOpen} / {@code canClose} are exactly
+     * what {@link #move} would let through now.
+     */
+    private GarageStatus statusFrom(DoorDevice.Reading reading) {
+        Movement m = pending; // a read may have ended it (rule 10: a close that didn't stay closed)
         if (m != null) {
             if (!m.acknowledged()) return new GarageStatus(DoorState.CHECKING, m.startedAt(), false, false, held());
-            // "Not closed" proves nothing about an opening door: closable from travel time (rule 9), settled at the check.
+            boolean travelledNow = !clock.instant().isBefore(m.startedAt().plus(travelTime));
             if (m.action() == Action.OPEN) {
-                return new GarageStatus(DoorState.OPENING, m.startedAt(), false,
-                        mayClose() && reading.open() && travelled(m) && onlyItsOwnChange(m) && !deviceSawARecentChange(reading), held());
+                // Still "closed" after the travel time: the reading hasn't caught up (or the door didn't move). No command
+                // may go against it: a close toward "closed", or an open toward a door that may be open, could be a press.
+                if (!reading.open()) {
+                    return new GarageStatus(travelledNow ? DoorState.WAITING_FOR_SENSOR : DoorState.OPENING, m.startedAt(), false, false, held());
+                }
+                if (!travelledNow) return new GarageStatus(DoorState.OPENING, m.startedAt(), false, false, held());
+                if (!onlyItsOwnChange(m)) {
+                    // It moved again since the open (the wall button?): a newer movement, closable only after its check.
+                    return new GarageStatus(travelledSinceSeenNotClosed() ? DoorState.NOT_CLOSED : DoorState.OPENING, lastSensorChange,
+                            false, false, held());
+                }
+                // Travelled and reading "not closed": the open is done as far as anything can tell; closable (rule 9).
+                return new GarageStatus(DoorState.NOT_CLOSED, m.startedAt(), false, mayClose() && !deviceSawARecentChange(reading), held());
             }
-            if (reading.open()) return new GarageStatus(DoorState.CLOSING, m.startedAt(), false, false, held());
-            // Reads "closed": an open may go now, but the close isn't confirmed until its check (rule 10): still closing.
-            return new GarageStatus(DoorState.CLOSING, closedSeenAt, !held(), false, held());
+            // The sensor says closed: shown closed, and an open may go (rule 10). The history confirms it at the check.
+            if (!reading.open()) return new GarageStatus(DoorState.CLOSED, closedSeenAt != null ? closedSeenAt : clock.instant(), mayOpen(), false, held());
+            return new GarageStatus(travelledNow ? DoorState.WAITING_FOR_SENSOR : DoorState.CLOSING, m.startedAt(), false, false, held());
         }
 
         if (!reading.open()) {
-            return new GarageStatus(DoorState.CLOSED, since(reading), !held(), false, held());
+            return new GarageStatus(DoorState.CLOSED, since(reading), mayOpen(), false, held());
         }
         if (!settled()) {
-            return new GarageStatus(sawChange ? DoorState.OPENING : DoorState.CHECKING, lastSensorChange, false,
-                    mayClose() && sawChange && travelledSinceSeenNotClosed() && !deviceSawARecentChange(reading), held());
+            if (sawChange && travelledSinceSeenNotClosed()) {
+                // A change Casita saw, a travel time ago: the door has stopped as far as it can know; closable (rule 9).
+                return new GarageStatus(DoorState.NOT_CLOSED, lastSensorChange, false, mayClose() && !deviceSawARecentChange(reading), held());
+            }
+            return new GarageStatus(sawChange ? DoorState.OPENING : DoorState.CHECKING, lastSensorChange, false, false, held());
         }
         return new GarageStatus(DoorState.NOT_CLOSED, since(reading), false, mayClose(), held());
     }
@@ -209,6 +237,16 @@ public class GarageService {
 
     private boolean held() {
         return heldAfter != null;
+    }
+
+    /** Whether commands are held, without waiting for a read in progress: for a status that couldn't wait for one. */
+    public boolean isHeld() {
+        return heldAfter != null;
+    }
+
+    /** Whether an open could go through at all (commands on, nothing held), before the reading and timing. */
+    private boolean mayOpen() {
+        return control != DoorControl.OFF && !held();
     }
 
     public synchronized CommandResult open(String who) {
@@ -290,10 +328,10 @@ public class GarageService {
             if (travelledOpen != null) {
                 // The open is still pending (it isn't checked yet): the sensor may simply not have caught up.
                 return result(Outcome.BUSY, "The sensor still says closed, so I can't send a close yet: it hasn't caught up "
-                        + "with the door. Give it a few seconds.");
+                        + "with the door. Give it a few seconds.", reading);
             }
             record(who, action, Outcome.ALREADY);
-            return result(Outcome.ALREADY, wantOpen ? "It isn't closed, so there's nothing to open." : "It's already closed.");
+            return result(Outcome.ALREADY, wantOpen ? "It isn't closed, so there's nothing to open." : "It's already closed.", reading);
         }
         if (travelledOpen != null) {
             // The sensor has left "closed" since the open and the door has had its full travel time: that open is done.
@@ -301,7 +339,7 @@ public class GarageService {
             // that one change is all Casita has seen since the open: anything more (the wall button reversing it, then
             // opening it again) is a newer movement, which may still be under way.
             if (!onlyItsOwnChange(travelledOpen) || deviceSawARecentChange(reading)) {
-                return result(Outcome.BUSY, "The door has moved again since I opened it. Give it a few more seconds.");
+                return result(Outcome.BUSY, "The door has moved again since I opened it. Give it a few more seconds.", reading);
             }
             pending = null;
             if (lastSensorChange == null || lastSensorChange.isAfter(travelledOpen.startedAt())) lastSensorChange = travelledOpen.startedAt();
@@ -309,12 +347,12 @@ public class GarageService {
         }
         if (reading.open() && !settled()) {
             if (!travelledSinceSeenNotClosed() || deviceSawARecentChange(reading)) {
-                return result(Outcome.BUSY, "The door may still be moving. Give it a few more seconds.");
+                return result(Outcome.BUSY, "The door may still be moving. Give it a few more seconds.", reading);
             }
             if (!sawChange && travelledOpen == null) {
                 // Just started or resumed: Casita didn't see this door open, and a command from before (one whose fate was
                 // unknown) could still land, so wait for the full settle, look or no look.
-                return result(Outcome.BUSY, "I've only just started watching this door. Give it a few more seconds.");
+                return result(Outcome.BUSY, "I've only just started watching this door. Give it a few more seconds.", reading);
             }
             // Rule 9: the door has had its travel time since the last movement Casita knows of.
             if (checkedByPerson) record(who, Action.CLOSE, Outcome.CHECKED);
@@ -327,7 +365,7 @@ public class GarageService {
             // Nothing was sent: a close being superseded keeps its own check.
             log.warn("Couldn't {} {}, nothing was sent: {}", action, name, e.getMessage());
             record(who, action, Outcome.ERROR);
-            return result(Outcome.ERROR, "I couldn't reach the door. Nothing was sent, so nothing moved.");
+            return result(Outcome.ERROR, "I couldn't reach the door. Nothing was sent, so nothing moved.", reading);
         } catch (DoorException e) {
             log.warn("{} command for {} may or may not have gone through: {}", action, name, e.getMessage());
             if (closeToSupersede != null) supersede(closeToSupersede);
@@ -335,14 +373,15 @@ public class GarageService {
             record(who, action, Outcome.UNCONFIRMED);
             notifier.send("I'm not sure the " + name + " door got " + who + "'s " + verb(action)
                     + " command. I'll check in a few seconds.");
-            return result(Outcome.UNCONFIRMED, "I'm not sure the door got that. I'll check in a few seconds and let you know.");
+            return result(Outcome.UNCONFIRMED, "I'm not sure the door got that. I'll check in a few seconds and let you know.", reading);
         }
 
         if (closeToSupersede != null) supersede(closeToSupersede);
         start(new Movement(id, action, who, clock.instant(), true, sensorChanges));
         record(who, action, Outcome.MOVING);
         notifier.send((wantOpen ? "Opening the " : "Closing the ") + name + " door for " + who);
-        return result(Outcome.MOVING, wantOpen ? "Opening up for you." : "Closing up.");
+        // Answered at once from the reading just taken: no further read of the opener before the reply.
+        return result(Outcome.MOVING, wantOpen ? "Opening up for you." : "Closing up.", reading);
     }
 
     private void start(Movement m) {
@@ -527,6 +566,11 @@ public class GarageService {
 
     private CommandResult result(Outcome outcome, String message) {
         return new CommandResult(outcome, message, status());
+    }
+
+    /** A reply with the status from a reading taken just now, without reading the opener again. */
+    private CommandResult result(Outcome outcome, String message, DoorDevice.Reading reading) {
+        return new CommandResult(outcome, message, statusFrom(reading));
     }
 
     private static String verb(Action action) {

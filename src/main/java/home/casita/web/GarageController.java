@@ -1,8 +1,18 @@
 package home.casita.web;
 
 import java.security.Principal;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -44,17 +54,40 @@ class GarageController {
     static final int ACTIVITY_LIMIT = 20;
     /** How far back a per-door activity request looks (the in-memory log keeps 500). */
     static final int ACTIVITY_SCAN = 500;
+    /**
+     * How long {@code /api/doors} waits for the doors' readings, read side by side. A door that hasn't answered by then
+     * is shown {@code UNKNOWN} (nothing can be done to it from that answer), so one slow opener never holds up the
+     * other door or the app, whose polls give up after 10 s. Its read goes on, bounded by Meross's own time-out.
+     */
+    static final Duration STATUS_WAIT = Duration.ofSeconds(6);
+
+    private static final AtomicInteger READERS = new AtomicInteger();
+    private static final ExecutorService READS = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "casita-status-" + READERS.incrementAndGet());
+        t.setDaemon(true);
+        return t;
+    });
 
     private final Garage garage;
     private final ActivityLog activity;
     private final GarageProperties garageProperties;
     private final SecurityStore store;
+    private final Duration statusWait;
+    /** At most one status read per door at a time: a request while one is out waits for that same read. */
+    private final ConcurrentHashMap<String, CompletableFuture<GarageStatus>> reading = new ConcurrentHashMap<>();
 
+    @org.springframework.beans.factory.annotation.Autowired
     GarageController(Garage garage, ActivityLog activity, GarageProperties garageProperties, SecurityStore store) {
+        this(garage, activity, garageProperties, store, STATUS_WAIT);
+    }
+
+    /** For tests: a shorter wait for the doors' readings. */
+    GarageController(Garage garage, ActivityLog activity, GarageProperties garageProperties, SecurityStore store, Duration statusWait) {
         this.garage = garage;
         this.activity = activity;
         this.garageProperties = garageProperties;
         this.store = store;
+        this.statusWait = statusWait;
     }
 
     /**
@@ -84,13 +117,44 @@ class GarageController {
     /** Every door, each with its own status, control and whether it is live. */
     @GetMapping("/doors")
     Doors doors() {
-        List<DoorView> doors = garage.doors().stream().map(this::view).toList();
+        List<GarageService> all = garage.doors();
+        List<CompletableFuture<GarageStatus>> reads = all.stream().map(this::read).toList();
+        long deadline = System.nanoTime() + statusWait.toNanos();
+        List<DoorView> doors = new ArrayList<>();
+        for (int i = 0; i < all.size(); i++) doors.add(view(all.get(i), awaitStatus(all.get(i), reads.get(i), deadline)));
         return new Doors(doors.get(0).control(), doors.get(0).travelTimeSeconds(), doors);
     }
 
     @GetMapping("/doors/{door}")
     DoorView door(@PathVariable String door) {
-        return view(find(door));
+        GarageService d = find(door);
+        return view(d, awaitStatus(d, read(d), System.nanoTime() + statusWait.toNanos()));
+    }
+
+    /**
+     * The door's status read, on the pool: the one already out for this door if there is one, so a slow opener never
+     * piles reads up (they would hold the pool and the other door) and never gets a burst of them when it answers again.
+     */
+    private CompletableFuture<GarageStatus> read(GarageService door) {
+        return reading.compute(door.key(), (key, out) -> {
+            if (out != null && !out.isDone()) return out;
+            return CompletableFuture.supplyAsync(door::status, READS);
+        });
+    }
+
+    /** The status, or UNKNOWN (no command possible, held as it is) if the door hasn't answered by {@code deadline}. */
+    private static GarageStatus awaitStatus(GarageService door, CompletableFuture<GarageStatus> read, long deadline) {
+        try {
+            return read.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException e) {
+            return new GarageStatus(DoorState.UNKNOWN, null, false, false, door.isHeld());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new GarageStatus(DoorState.UNKNOWN, null, false, false, door.isHeld());
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof RuntimeException r) throw r;
+            throw new IllegalStateException(e.getCause());
+        }
     }
 
     @PostMapping("/doors/{door}/open")
@@ -152,8 +216,7 @@ class GarageController {
         return activity.recent(ACTIVITY_SCAN).stream().filter(e -> name.equals(e.door())).limit(ACTIVITY_LIMIT).toList();
     }
 
-    private DoorView view(GarageService door) {
-        GarageStatus status = door.status();
+    private DoorView view(GarageService door, GarageStatus status) {
         return new DoorView(door.key(), door.name(), door.control().id(), door.control().live(),
                 door.control() != DoorControl.OFF, status.door(), status.since(),
                 garageProperties.travelTime(door.name()).toSeconds(), status);

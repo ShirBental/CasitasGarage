@@ -27,6 +27,7 @@ import home.casita.garage.DoorControl;
 import home.casita.garage.DoorException;
 import home.casita.garage.DoorRoster;
 import home.casita.garage.DoorState;
+import home.casita.garage.GarageStatus;
 import home.casita.garage.Garage;
 import home.casita.garage.GarageProperties;
 import home.casita.garage.GarageService;
@@ -98,10 +99,13 @@ class LiveDoorsTest {
     }
 
     @Test
-    void fordIsReportedOpenOnlyAfterItsOwnTravelTimeAndLag() {
+    void fordIsShownOpeningOnlyForItsTravelTimeThenOpenAndCheckedAfterItsLag() {
         ford.open("Shir");
-        advance(20 + 5 + 1);                     // 26 s: still before its check at 20 + 5 + 2
+        advance(19);                             // within its travel time
         assertThat(ford.status().door()).isEqualTo(DoorState.OPENING);
+        advance(7);                              // 26 s: travelled, reading not closed; its check is at 20 + 5 + 2
+        assertThat(ford.status().door()).isEqualTo(DoorState.NOT_CLOSED);
+        assertThat(ford.status().canClose()).isTrue();
         advance(1);                              // 27 s
         assertThat(ford.status().door()).isEqualTo(DoorState.NOT_CLOSED); // the app shows "Open"
         assertThat(ford.status().held()).isFalse();
@@ -113,8 +117,10 @@ class LiveDoorsTest {
         // Toyota's reading still says closed for 25 s after it starts opening.
         toyota.open("Shir");
         advance(18 + 2);                         // where a check without the lag would read "closed" and hold it
-        assertThat(toyota.status().door()).isEqualTo(DoorState.OPENING);
-        assertThat(toyota.status().held()).isFalse();
+        GarageStatus waiting = toyota.status();
+        assertThat(waiting.door()).isEqualTo(DoorState.WAITING_FOR_SENSOR); // travelled: not shown "opening" any more
+        assertThat(waiting.canClose()).isFalse();     // the reading says closed: a close could be a press
+        assertThat(waiting.held()).isFalse();
         advance(25);                             // 45 s = 18 + 25 + 2: checked
         assertThat(toyota.status().door()).isEqualTo(DoorState.NOT_CLOSED);
         assertThat(toyota.status().held()).isFalse();
@@ -175,7 +181,8 @@ class LiveDoorsTest {
         assertThat(toyota.open("Hubby").outcome()).isEqualTo(Outcome.MOVING);
         advance(24);                             // 27 s: Ford checked; Toyota still within its 45 s
         assertThat(ford.status().door()).isEqualTo(DoorState.NOT_CLOSED);
-        assertThat(toyota.status().door()).isEqualTo(DoorState.OPENING);
+        assertThat(ford.status().canClose()).isTrue();
+        assertThat(toyota.status().door()).isEqualTo(DoorState.WAITING_FOR_SENSOR); // travelled; its reading still lags
     }
 
     /* ---------- no duplicates, no overlaps, no retries ---------- */
